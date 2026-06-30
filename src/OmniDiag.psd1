@@ -20,7 +20,13 @@
         'Core/Registry.psm1',
         'Core/HealthScore.psm1',
         'Core/Engine.psm1',
-        'Cli/OmniConsole.psm1'
+        'Reporting/Json.psm1',
+        'Reporting/Csv.psm1',
+        'Reporting/Html.psm1',
+        'Reporting/Package.psm1',
+        'Reporting/Report.psm1',
+        'Cli/OmniConsole.psm1',
+        'UI/OmniDiagGui.psm1'
     )
 
     FunctionsToExport = @(
@@ -35,7 +41,13 @@
         'Test-OmniIsAdministrator', 'New-OmniContext', 'Get-OmniModule',
         'Invoke-OmniSession', 'Get-OmniHealthScore',
         # Console
-        'Get-OmniStatusColor', 'New-OmniConsoleProgressCallback', 'Write-OmniConsoleDashboard'
+        'Get-OmniStatusColor', 'New-OmniConsoleProgressCallback', 'Write-OmniConsoleDashboard',
+        # Reporting
+        'Export-OmniReport', 'Export-OmniHtmlReport', 'Export-OmniJsonReport',
+        'Export-OmniCsvReport', 'Export-OmniEventCsvReport', 'Export-OmniReportPackage',
+        'ConvertTo-OmniFindingTable', 'ConvertTo-OmniEventTable',
+        # GUI
+        'Show-OmniDiagWindow', 'Set-OmniTheme', 'Get-OmniThemePalette'
     )
 
     CmdletsToExport   = @()
@@ -47,7 +59,7 @@
             Tags         = @('Windows', 'Diagnostics', 'IT', 'Sysadmin', 'Troubleshooting', 'EventLog')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/OWNER/OmniDiag'
-            ReleaseNotes = 'Milestone 3: Network, Storage, Windows Health, Security, and Performance modules added to the Milestone 1 core engine / plugin architecture and the Milestone 2 Event Log engine. Seven built-in diagnostic modules total.'
+            ReleaseNotes = 'Milestone 5: WPF GUI (Show-OmniDiagWindow) with dashboard, left navigation, dark/light themes, background-runspace scanning with a working Cancel button, and one-click report export - completing Version 1. Builds on the M1 core engine, M2 Event Log engine, seven M1-M3 diagnostic modules, and the M4 reporting engine.'
         }
     }
 }

@@ -23,7 +23,8 @@
     Skip modules in these categories.
 
 .PARAMETER Gui
-    Reserved for the WPF interface (later milestone). Falls back to console for now.
+    Launch the WPF graphical interface (dashboard, dark/light, live progress, cancel,
+    one-click report export) instead of the console experience. Windows only.
 
 .PARAMETER Quiet
     Suppress streaming log output; show only the final dashboard.
@@ -33,6 +34,9 @@
 
 .EXAMPLE
     .\OmniDiag.ps1 -Range Last24Hours -IncludeCategory System
+
+.EXAMPLE
+    .\OmniDiag.ps1 -Gui
 #>
 [CmdletBinding()]
 param(
@@ -41,7 +45,15 @@ param(
     [string[]] $IncludeCategory,
     [string[]] $ExcludeCategory,
     [switch] $Gui,
-    [switch] $Quiet
+    [switch] $Quiet,
+
+    # Reporting
+    [switch] $Report,
+    [ValidateSet('Html', 'Json', 'Csv', 'Zip')]
+    [string[]] $ReportFormat = @('Html', 'Json', 'Csv'),
+    [string] $ReportPath,
+    [string] $BrandName,
+    [switch] $AcceptPrivacyNotice
 )
 
 Set-StrictMode -Version Latest
@@ -74,16 +86,49 @@ if (-not (Test-OmniIsAdministrator)) {
 }
 
 if ($Gui) {
-    Write-Host 'The WPF GUI is not available in this milestone yet; running the console experience.' -ForegroundColor Yellow
+    if (-not $isWindowsHost) {
+        Write-Error 'The GUI requires Windows (WPF). Use the console mode on this OS.'
+        exit 1
+    }
+    Write-Host 'Launching OmniDiag GUI...' -ForegroundColor Cyan
+    Show-OmniDiagWindow
+    return
 }
 
-# --- Run -------------------------------------------------------------------
+# --- Run (console) ---------------------------------------------------------
 $progress = New-OmniConsoleProgressCallback
 $session = Invoke-OmniDiag -Range $Range -IncludeCategory $IncludeCategory -ExcludeCategory $ExcludeCategory `
     -ProgressCallback $progress -Quiet:$Quiet
 
 Write-OmniConsoleDashboard -Session $session
 Write-Host ("Structured log written to: {0}" -f $session.LogPath) -ForegroundColor DarkGray
+
+# --- Reporting (with privacy warning) --------------------------------------
+if ($Report) {
+    Write-Host ''
+    Write-Host 'PRIVACY NOTICE' -ForegroundColor Yellow
+    Write-Host '  Reports are generated and stored locally - nothing is uploaded.' -ForegroundColor Yellow
+    Write-Host '  They may contain usernames, device names, file paths, domains, and' -ForegroundColor Yellow
+    Write-Host '  other internal information. Review before sharing.' -ForegroundColor Yellow
+
+    $proceed = $AcceptPrivacyNotice
+    if (-not $proceed) {
+        $answer = Read-Host 'Generate report(s) now? [Y/N]'
+        $proceed = ($answer -match '^(y|yes)$')
+    }
+
+    if ($proceed) {
+        $params = @{ Session = $session; Format = $ReportFormat }
+        if ($ReportPath) { $params.OutputDirectory = $ReportPath }
+        if ($BrandName)  { $params.BrandName = $BrandName }
+        $reportSet = Export-OmniReport @params
+        Write-Host ''
+        Write-Host "Report(s) written to: $($reportSet.OutputDirectory)" -ForegroundColor Green
+        foreach ($f in $reportSet.Files) { Write-Host "  $f" -ForegroundColor Gray }
+    } else {
+        Write-Host 'Report generation skipped.' -ForegroundColor DarkGray
+    }
+}
 
 # Make the session available to the caller for scripting/automation.
 $session

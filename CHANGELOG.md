@@ -6,6 +6,42 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Milestone 5: WPF GUI
+- `src/UI/MainWindow.xaml`: Fluent-style window — top bar (range picker, Run Scan,
+  Cancel, Export, Theme), left navigation (Dashboard / All Findings), dashboard with
+  0–100 score, summary, top recommendations and module-results grid, a findings
+  DataGrid with per-severity row coloring, and a status bar with a progress bar.
+- `src/UI/OmniDiagGui.psm1` (`Show-OmniDiagWindow`): runtime XAML loading, dark/light
+  theming via `Set-OmniTheme` / `Get-OmniThemePalette` (DynamicResource brushes),
+  and a responsive scan that runs in a **background runspace** with progress polled
+  by a `DispatcherTimer`; the Cancel button drives the engine's `CancellationToken`.
+  One-click export reuses the Milestone 4 reporters behind a privacy confirmation.
+- STA handling: runs directly under Windows PowerShell 5.1 (STA) and hosts the window
+  in a dedicated STA runspace under PowerShell 7 (MTA). Importing the module is safe
+  on headless/Server Core hosts (WPF assemblies load only when the window opens).
+- Launcher `-Gui` now launches the interface; added a `-Gui` example.
+- OS-independent GUI tests (XAML structure, theme palettes); the real WPF load
+  self-skips off Windows/STA.
+
+### Added — Milestone 4: Reporting engine
+- `src/Reporting/` exporters consuming an `OmniDiag.Session`:
+  - **JSON** (`Export-OmniJsonReport`) — full structured session, UTF-8 no BOM.
+  - **CSV** (`Export-OmniCsvReport`, `Export-OmniEventCsvReport`) — flattened
+    findings table and grouped event table.
+  - **HTML** (`Export-OmniHtmlReport`) — self-contained report (inline CSS, no
+    external resources): executive summary with 0–100 score, device information,
+    top recommendations, failures/errors, warnings, event-log analysis (timeline +
+    top groups), per-module breakdown, passed checks, and a privacy notice. All
+    user-derived text is HTML-encoded to prevent injection.
+  - **ZIP** (`Export-OmniReportPackage`) — bundles HTML + JSON + CSVs + raw log +
+    README.
+- `Export-OmniReport` coordinator: writes any combination of formats with a
+  consistent, sanitized base name; optional `BrandName` branding.
+- Launcher gains `-Report`, `-ReportFormat`, `-ReportPath`, `-BrandName`, and
+  `-AcceptPrivacyNotice`, with an interactive privacy warning before export.
+- OS-independent reporting tests (synthetic session), including an HTML-injection
+  safety check.
+
 ### Added — Milestone 3: Diagnostic modules
 - **Network** module: adapter/IP/DNS/gateway inventory plus reachability probes
   (gateway, internet-by-IP, DNS resolution) with correlated diagnosis — including

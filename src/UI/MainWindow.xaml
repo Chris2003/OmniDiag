@@ -1,0 +1,197 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Name="OmniWindow"
+        Title="OmniDiag - One Tool. Complete Diagnostics."
+        Height="760" Width="1180" MinHeight="560" MinWidth="900"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource BrushWindowBg}"
+        TextElement.Foreground="{DynamicResource BrushText}"
+        FontFamily="Segoe UI" FontSize="13">
+
+    <Window.Resources>
+        <!-- Brushes are set in code (Set-OmniTheme) for dark/light; defaults here
+             keep the designer/preview usable. -->
+        <SolidColorBrush x:Key="BrushWindowBg" Color="#0F1419"/>
+        <SolidColorBrush x:Key="BrushPanel"   Color="#1A212B"/>
+        <SolidColorBrush x:Key="BrushPanel2"  Color="#212A36"/>
+        <SolidColorBrush x:Key="BrushText"    Color="#E6EDF3"/>
+        <SolidColorBrush x:Key="BrushMuted"   Color="#8B98A5"/>
+        <SolidColorBrush x:Key="BrushAccent"  Color="#4493F8"/>
+        <SolidColorBrush x:Key="BrushLine"    Color="#2D3742"/>
+
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource BrushPanel2}"/>
+            <Setter Property="Foreground" Value="{DynamicResource BrushText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BrushLine}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14,7"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="DataGrid">
+            <Setter Property="Background" Value="{DynamicResource BrushPanel}"/>
+            <Setter Property="Foreground" Value="{DynamicResource BrushText}"/>
+            <Setter Property="RowBackground" Value="{DynamicResource BrushPanel}"/>
+            <Setter Property="AlternatingRowBackground" Value="{DynamicResource BrushPanel2}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BrushLine}"/>
+            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BrushLine}"/>
+            <Setter Property="AutoGenerateColumns" Value="False"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="HeadersVisibility" Value="Column"/>
+            <Setter Property="CanUserAddRows" Value="False"/>
+        </Style>
+
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="{DynamicResource BrushPanel2}"/>
+            <Setter Property="Foreground" Value="{DynamicResource BrushMuted}"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Top bar -->
+        <Border Grid.Row="0" Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="0,0,0,1" Padding="16,12">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="OmniDiag" FontSize="20" FontWeight="Bold"/>
+                    <TextBlock Text="One Tool. Complete Diagnostics." Foreground="{DynamicResource BrushMuted}" Margin="12,0,0,0" VerticalAlignment="Bottom"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <ComboBox x:Name="CmbRange" Width="130" Margin="0,0,8,0" VerticalContentAlignment="Center">
+                        <ComboBoxItem Content="Last 24 Hours"/>
+                        <ComboBoxItem Content="Last 7 Days" IsSelected="True"/>
+                        <ComboBoxItem Content="Last 30 Days"/>
+                    </ComboBox>
+                    <Button x:Name="BtnScan" Content="Run Scan" Background="{DynamicResource BrushAccent}"/>
+                    <Button x:Name="BtnCancel" Content="Cancel" IsEnabled="False"/>
+                    <Button x:Name="BtnExport" Content="Export Report" IsEnabled="False"/>
+                    <Button x:Name="BtnTheme" Content="Theme"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Body: left nav + content -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="200"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="0,0,1,0">
+                <ListBox x:Name="NavList" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource BrushText}" Margin="6">
+                    <ListBoxItem Content="Dashboard" IsSelected="True"/>
+                    <ListBoxItem Content="All Findings"/>
+                </ListBox>
+            </Border>
+
+            <Grid Grid.Column="1" Margin="16">
+                <!-- Dashboard panel -->
+                <ScrollViewer x:Name="PanelDashboard" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="1" CornerRadius="8" Padding="22,16" Margin="0,0,16,0">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <TextBlock x:Name="TxtScore" Text="--" FontSize="52" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="TxtGrade" Text="Not scanned" Foreground="{DynamicResource BrushMuted}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="TxtComputer" Text="Computer: -"/>
+                                <TextBlock x:Name="TxtUser" Text="User: -" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="TxtRange" Text="Range: -" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="TxtDuration" Text="Duration: -" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="TxtCounts" Text="Run a scan to see results." Margin="0,8,0,0" Foreground="{DynamicResource BrushMuted}"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <TextBlock Text="Top Recommendations" FontSize="15" FontWeight="SemiBold" Margin="0,22,0,8"/>
+                        <ItemsControl x:Name="ItemsRecommendations">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding Recommendation}" Foreground="{DynamicResource BrushMuted}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock Text="Module Results" FontSize="15" FontWeight="SemiBold" Margin="0,18,0,8"/>
+                        <DataGrid x:Name="GridModules" MaxHeight="280">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="2*"/>
+                                <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="*"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*"/>
+                                <DataGridTextColumn Header="Findings" Binding="{Binding Findings}" Width="Auto"/>
+                                <DataGridTextColumn Header="ms" Binding="{Binding DurationMs}" Width="Auto"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Findings panel -->
+                <DataGrid x:Name="GridFindings" Visibility="Collapsed">
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Severity}" Value="Critical">
+                                    <Setter Property="Foreground" Value="#FF6B6B"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Severity}" Value="Error">
+                                    <Setter Property="Foreground" Value="#FFA657"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Severity}" Value="Warning">
+                                    <Setter Property="Foreground" Value="#F5C518"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Severity}" Value="Pass">
+                                    <Setter Property="Foreground" Value="#3FB950"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.RowStyle>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Severity" Binding="{Binding Severity}" Width="Auto"/>
+                        <DataGridTextColumn Header="Component" Binding="{Binding Component}" Width="*"/>
+                        <DataGridTextColumn Header="Finding" Binding="{Binding Title}" Width="2*"/>
+                        <DataGridTextColumn Header="Likely Cause" Binding="{Binding LikelyCause}" Width="2*"/>
+                        <DataGridTextColumn Header="Recommendation" Binding="{Binding Recommendation}" Width="2*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+        </Grid>
+
+        <!-- Status bar -->
+        <Border Grid.Row="2" Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="0,1,0,0" Padding="16,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="320"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="TxtStatus" Grid.Column="0" Text="Ready." VerticalAlignment="Center" Foreground="{DynamicResource BrushMuted}"/>
+                <ProgressBar x:Name="ProgressBarMain" Grid.Column="1" Height="14" Minimum="0" Maximum="100" Value="0"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

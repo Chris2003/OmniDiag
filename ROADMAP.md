@@ -7,8 +7,8 @@ gated on review before the next begins.
 - [x] **M1** Core engine, plugin architecture, health scoring, logging, System Information
 - [x] **M2** Event Log collection & analysis (grouping, Event-ID translation, findings)
 - [x] **M3** Network, Storage, Windows Health, Security, Performance modules
-- [ ] **M4** Reporting engine: HTML, JSON, CSV, ZIP package
-- [ ] **M5** WPF GUI: dashboard, left navigation, dark/light, progress, cancel
+- [x] **M4** Reporting engine: HTML, JSON, CSV, ZIP package
+- [x] **M5** WPF GUI: dashboard, left navigation, dark/light, progress, cancel
 
 ## Version 2 — Repair & richer output
 - [ ] Repair Center (flush DNS, reset Winsock, IP release/renew, restart services,
