@@ -12,6 +12,7 @@ editing the engine.
 | **Public API** | `src/OmniDiag.psm1` | `Invoke-OmniDiag` and version helpers. The single call the CLI/GUI use. |
 | **Core** | `src/Core/` | Data models, logging, plugin registry, orchestration engine, health scoring. |
 | **Modules** | `src/Modules/` | Diagnostic plugins. One `.psm1` per module. Discovered at runtime. |
+| **Event Log subsystem** | `src/EventLog/` | Knowledge base (channels + Event-ID translation catalog) and the analysis pipeline (collection, grouping, timeline, finding/pattern generation) used by the Event Logs module. Not plugins; imported by the module. |
 | **Reporting** | `src/Reporting/` | HTML / JSON / CSV / ZIP exporters _(Milestone 4)_. |
 | **UI** | `src/UI/` | WPF (XAML) front-end _(Milestone 5)_. |
 | **CLI** | `src/Cli/` | Console presentation (dashboard + progress). |

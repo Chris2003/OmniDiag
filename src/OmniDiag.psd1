@@ -47,7 +47,7 @@
             Tags         = @('Windows', 'Diagnostics', 'IT', 'Sysadmin', 'Troubleshooting', 'EventLog')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/OWNER/OmniDiag'
-            ReleaseNotes = 'Milestone 1: core engine, plugin architecture, System Information module, console runner.'
+            ReleaseNotes = 'Milestone 3: Network, Storage, Windows Health, Security, and Performance modules added to the Milestone 1 core engine / plugin architecture and the Milestone 2 Event Log engine. Seven built-in diagnostic modules total.'
         }
     }
 }
