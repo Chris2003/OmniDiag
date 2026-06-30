@@ -1,0 +1,107 @@
+<#
+.SYNOPSIS
+    OmniDiag root module: public entry points and high-level orchestration.
+
+.DESCRIPTION
+    Loaded via OmniDiag.psd1. The Core and CLI submodules are imported as nested
+    modules (see the manifest), so their functions are available here and are
+    re-exported per the manifest's FunctionsToExport list.
+
+    Diagnostic modules under src/Modules are NOT loaded here; they are runtime
+    plugins discovered by Get-OmniModule, which keeps the core closed to change
+    when new modules are added.
+#>
+
+Set-StrictMode -Version Latest
+
+# Default plugin directory (sibling 'Modules' folder).
+$script:OmniModulesPath = Join-Path $PSScriptRoot 'Modules'
+
+function Get-OmniVersion {
+    <# .SYNOPSIS Returns the OmniDiag version from the module manifest. #>
+    [OutputType([version])]
+    param()
+    $manifest = Join-Path $PSScriptRoot 'OmniDiag.psd1'
+    return [version]((Import-PowerShellDataFile -Path $manifest).ModuleVersion)
+}
+
+function Invoke-OmniDiag {
+    <#
+    .SYNOPSIS
+        Runs an end-to-end OmniDiag diagnostic session.
+
+    .DESCRIPTION
+        Convenience wrapper that builds a logger and context, discovers plugin
+        modules, runs the session, and returns the OmniDiag.Session object. This
+        is the single call the CLI launcher and (later) the GUI use to kick off
+        a scan.
+
+    .PARAMETER ModulesPath
+        Folder(s) to discover diagnostic modules in. Defaults to src/Modules.
+
+    .PARAMETER Range
+        Time-range preset for time-aware modules (e.g. Event Logs).
+
+    .PARAMETER IncludeCategory / ExcludeCategory
+        Optional category filters.
+
+    .PARAMETER LogPath
+        Path for the structured .jsonl log. Defaults to a per-run file under
+        the user's temp folder.
+
+    .PARAMETER CancellationToken
+        Cooperative cancellation token (used by the GUI's Cancel button).
+
+    .PARAMETER ProgressCallback
+        Scriptblock invoked on module start/finish (see Invoke-OmniSession).
+
+    .PARAMETER Quiet
+        Suppress console logging from the logger.
+
+    .EXAMPLE
+        $session = Invoke-OmniDiag -Range Last7Days
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [string[]] $ModulesPath = $script:OmniModulesPath,
+        [ValidateSet('Last24Hours', 'Last7Days', 'Last30Days')]
+        [string] $Range = 'Last7Days',
+        [string[]] $IncludeCategory,
+        [string[]] $ExcludeCategory,
+        [string] $LogPath,
+        [System.Threading.CancellationToken] $CancellationToken = ([System.Threading.CancellationToken]::None),
+        [scriptblock] $ProgressCallback,
+        [switch] $Quiet
+    )
+
+    if (-not $LogPath) {
+        $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+        $LogPath = Join-Path ([System.IO.Path]::GetTempPath()) "OmniDiag/omnidiag-$stamp.jsonl"
+    }
+
+    $logger = New-OmniLogger -Path $LogPath -MinimumLevel Info -Console:(-not $Quiet)
+    $logger.Info("OmniDiag $(Get-OmniVersion) starting.", 'OmniDiag')
+
+    $timeRange = Get-OmniTimeRange -Preset $Range
+    $context = New-OmniContext -Logger $logger -TimeRange $timeRange -CancellationToken $CancellationToken
+
+    $registrations = Get-OmniModule -Path $ModulesPath -Logger $logger
+    if (@($registrations).Count -eq 0) {
+        $logger.Warn("No diagnostic modules found under: $($ModulesPath -join ', ')", 'OmniDiag')
+    }
+
+    $params = @{
+        Registration = $registrations
+        Context      = $context
+    }
+    if ($ProgressCallback) { $params.ProgressCallback = $ProgressCallback }
+    if ($IncludeCategory)  { $params.IncludeCategory = $IncludeCategory }
+    if ($ExcludeCategory)  { $params.ExcludeCategory = $ExcludeCategory }
+
+    $session = Invoke-OmniSession @params
+    Add-Member -InputObject $session -MemberType NoteProperty -Name LogPath -Value $LogPath -Force
+    return $session
+}
+
+Export-ModuleMember -Function @('Get-OmniVersion', 'Invoke-OmniDiag')
