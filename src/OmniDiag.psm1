@@ -104,4 +104,8 @@ function Invoke-OmniDiag {
     return $session
 }
 
-Export-ModuleMember -Function @('Get-OmniVersion', 'Invoke-OmniDiag')
+# NOTE: Do NOT call Export-ModuleMember here. When the root module calls it, the
+# explicit list overrides the manifest's FunctionsToExport and the nested-module
+# functions (Test-OmniIsAdministrator, Invoke-OmniSession, reporting, GUI, etc.)
+# never reach the caller. Letting the manifest's FunctionsToExport govern exports
+# correctly publishes all public functions across the root and nested modules.

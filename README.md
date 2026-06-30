@@ -150,6 +150,28 @@ it with `.\OmniDiag.ps1 -Gui`.
 
 > _Captured screenshots will be added here; run `-Gui` on a Windows host to preview._
 
+## Troubleshooting
+
+**`The term '...' is not recognized` when launching.** Make sure you're running an
+up-to-date copy — an earlier build limited the module's exported functions and could
+fail at startup. Re-import with `Import-Module .\src\OmniDiag.psd1 -Force` (or just
+re-run `.\OmniDiag.ps1`).
+
+**Scripts won't run / "running of scripts is disabled."** Set an execution policy for
+your session: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
+
+**Downloaded a ZIP and files are "blocked."** Files extracted from an internet ZIP
+carry Windows' Mark of the Web and may be blocked on stricter execution policies.
+Clear it once with:
+
+```powershell
+Get-ChildItem -Recurse .\ | Unblock-File
+```
+
+**"running without administrator rights."** This is informational, not an error — some
+checks are skipped without elevation. Re-run from an elevated prompt for a full scan
+(see Quick start).
+
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Found a security
