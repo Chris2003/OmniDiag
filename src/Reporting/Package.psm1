@@ -21,8 +21,8 @@ function Export-OmniReportPackage {
     .PARAMETER Path
         Destination .zip path.
 
-    .PARAMETER BrandName
-        Optional branding passed to the HTML report.
+    .PARAMETER BrandName / BrandLogo / BrandColor
+        Optional branding passed to the HTML (and best-effort PDF) report.
 
     .OUTPUTS
         The written .zip path (string).
@@ -32,16 +32,27 @@ function Export-OmniReportPackage {
     param(
         [Parameter(Mandatory)] [pscustomobject] $Session,
         [Parameter(Mandatory)] [string] $Path,
-        [string] $BrandName
+        [string] $BrandName,
+        [string] $BrandLogo,
+        [string] $BrandColor
     )
 
     $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("OmniDiag-pkg-" + [System.IO.Path]::GetRandomFileName())
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
     try {
-        Export-OmniHtmlReport -Session $Session -Path (Join-Path $staging 'report.html') -BrandName $BrandName | Out-Null
+        Export-OmniHtmlReport -Session $Session -Path (Join-Path $staging 'report.html') -BrandName $BrandName -BrandLogo $BrandLogo -BrandColor $BrandColor | Out-Null
         Export-OmniJsonReport -Session $Session -Path (Join-Path $staging 'data.json') | Out-Null
         Export-OmniCsvReport  -Session $Session -Path (Join-Path $staging 'findings.csv') | Out-Null
         Export-OmniEventCsvReport -Session $Session -Path (Join-Path $staging 'events.csv') | Out-Null
+
+        # Best-effort PDF: include it when a Chromium browser is available; never fatal.
+        $pdfIncluded = $false
+        if (Find-OmniChromium) {
+            try {
+                Export-OmniPdfReport -Session $Session -Path (Join-Path $staging 'report.pdf') -BrandName $BrandName -BrandLogo $BrandLogo -BrandColor $BrandColor | Out-Null
+                $pdfIncluded = $true
+            } catch { }
+        }
 
         # Include the raw structured log when available.
         if ($Session.PSObject.Properties.Name -contains 'LogPath' -and $Session.LogPath -and (Test-Path -LiteralPath $Session.LogPath)) {
@@ -56,6 +67,7 @@ Computer : $($Session.Host.ComputerName)
 
 Contents:
   report.html        Human-readable report (open in a browser)
+  report.pdf         Print-ready PDF report$(if ($pdfIncluded) { '' } else { ' (omitted: no Chromium browser found)' })
   data.json          Full structured session data
   findings.csv       All findings across modules
   events.csv         Grouped event-log table (if event data was collected)

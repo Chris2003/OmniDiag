@@ -64,10 +64,12 @@ param(
 
     # Reporting
     [switch] $Report,
-    [ValidateSet('Html', 'Json', 'Csv', 'Zip')]
+    [ValidateSet('Html', 'Json', 'Csv', 'Pdf', 'Zip')]
     [string[]] $ReportFormat = @('Html', 'Json', 'Csv'),
     [string] $ReportPath,
     [string] $BrandName,
+    [string] $BrandLogo,
+    [string] $BrandColor,
     [switch] $AcceptPrivacyNotice,
 
     # Repair Center
@@ -138,12 +140,15 @@ if ($Report) {
 
     if ($proceed) {
         $params = @{ Session = $session; Format = $ReportFormat }
-        if ($ReportPath) { $params.OutputDirectory = $ReportPath }
-        if ($BrandName)  { $params.BrandName = $BrandName }
+        if ($ReportPath)  { $params.OutputDirectory = $ReportPath }
+        if ($BrandName)   { $params.BrandName = $BrandName }
+        if ($BrandLogo)   { $params.BrandLogo = $BrandLogo }
+        if ($BrandColor)  { $params.BrandColor = $BrandColor }
         $reportSet = Export-OmniReport @params
         Write-Host ''
         Write-Host "Report(s) written to: $($reportSet.OutputDirectory)" -ForegroundColor Green
         foreach ($f in $reportSet.Files) { Write-Host "  $f" -ForegroundColor Gray }
+        foreach ($w in $reportSet.Warnings) { Write-Host "  ! $w" -ForegroundColor Yellow }
     } else {
         Write-Host 'Report generation skipped.' -ForegroundColor DarkGray
     }

@@ -26,6 +26,7 @@
         'Reporting/Json.psm1',
         'Reporting/Csv.psm1',
         'Reporting/Html.psm1',
+        'Reporting/Pdf.psm1',
         'Reporting/Package.psm1',
         'Reporting/Report.psm1',
         'Cli/OmniConsole.psm1',
@@ -58,6 +59,7 @@
         # Reporting
         'Export-OmniReport', 'Export-OmniHtmlReport', 'Export-OmniJsonReport',
         'Export-OmniCsvReport', 'Export-OmniEventCsvReport', 'Export-OmniReportPackage',
+        'Export-OmniPdfReport', 'Find-OmniChromium',
         'ConvertTo-OmniFindingTable', 'ConvertTo-OmniEventTable',
         # Shared reporting helper (used cross-module by the HTML exporter, so it
         # must be globally resolvable, not just private to Json.psm1).

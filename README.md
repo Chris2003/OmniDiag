@@ -45,6 +45,7 @@ OmniDiag is being built in milestones. **Current: Milestone 6 — Repair Center.
 | Event Log collection & analysis (grouping, Event-ID translation, patterns) | ✅ Milestone 2 |
 | Network / Storage / Security / Health / Performance modules | ✅ Milestone 3 |
 | HTML / JSON / CSV / ZIP reports | ✅ Milestone 4 |
+| PDF reports + branding (logo / accent color) | ✅ Milestone 6 |
 | WPF GUI (dashboard, light/dark toggle, cancel) | ✅ Milestone 5 |
 | Repair Center — console + GUI tab (10 repairs, dry-run, confirmation, restore points) | ✅ Milestone 6 |
 | PDF reports, report branding, remote diagnostics | 🔜 Milestone 6+ |
@@ -71,6 +72,9 @@ Start-Process pwsh -Verb RunAs -ArgumentList '-File', "$PWD\OmniDiag.ps1"
 
 # Scan and generate reports (prompts with a privacy notice first)
 .\OmniDiag.ps1 -Report -ReportFormat Html,Json,Csv,Zip -ReportPath .\reports
+
+# Branded PDF report (PDF needs Microsoft Edge or Chrome; falls back with a notice if absent)
+.\OmniDiag.ps1 -Report -ReportFormat Pdf,Html -BrandName "Acme IT" -BrandColor "#0969DA" -BrandLogo .\logo.png
 
 # Launch the graphical interface (dashboard, dark/light, cancel, export)
 .\OmniDiag.ps1 -Gui

@@ -21,6 +21,27 @@ function Get-OmniHtmlEncode {
     return [System.Net.WebUtility]::HtmlEncode([string]$Value)
 }
 
+function Get-OmniBrandLogoTag {
+    <# .SYNOPSIS Internal: build an inline (base64) <img> for a branding logo, or '' . #>
+    param([string] $LogoPath)
+    if ([string]::IsNullOrWhiteSpace($LogoPath) -or -not (Test-Path -LiteralPath $LogoPath)) { return '' }
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($LogoPath)
+        $ext = [System.IO.Path]::GetExtension($LogoPath).TrimStart('.').ToLowerInvariant()
+        $mime = switch ($ext) {
+            'png'  { 'image/png' }
+            'jpg'  { 'image/jpeg' }
+            'jpeg' { 'image/jpeg' }
+            'gif'  { 'image/gif' }
+            'svg'  { 'image/svg+xml' }
+            'webp' { 'image/webp' }
+            default { 'image/png' }
+        }
+        $b64 = [System.Convert]::ToBase64String($bytes)
+        return "<img class='brand-logo' alt='logo' src='data:$mime;base64,$b64'>"
+    } catch { return '' }
+}
+
 function Get-OmniSeverityClass {
     param([string] $Severity)
     switch ($Severity) {
@@ -73,6 +94,12 @@ function Export-OmniHtmlReport {
     .PARAMETER BrandName
         Optional organization name shown in the header (branding).
 
+    .PARAMETER BrandLogo
+        Optional path to a logo image (png/jpg/gif/svg/webp) embedded in the header.
+
+    .PARAMETER BrandColor
+        Optional accent color (#RRGGBB) that overrides the report's highlight color.
+
     .OUTPUTS
         The written file path (string).
     #>
@@ -81,7 +108,9 @@ function Export-OmniHtmlReport {
     param(
         [Parameter(Mandatory)] [pscustomobject] $Session,
         [Parameter(Mandatory)] [string] $Path,
-        [string] $BrandName
+        [string] $BrandName,
+        [string] $BrandLogo,
+        [string] $BrandColor
     )
 
     $s = $Session.Summary
@@ -120,20 +149,37 @@ ul.recs{list-style:none;padding:0}ul.recs li{background:var(--panel);border:1px 
 .tl{border-left:2px solid var(--line);padding-left:14px;margin-left:6px}
 .tl .ev{margin-bottom:8px}.tl .t{color:var(--muted);font-size:12px}
 footer{margin-top:28px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:12px}
+.brand-logo{max-height:46px;max-width:220px;margin-bottom:8px;display:block}
+@media print{
+ body{background:#fff;color:#1a1f24}
+ .wrap{max-width:none;padding:0}
+ .card{background:#fff;border-color:#d5dbe2;break-inside:avoid}
+ table{background:#fff}th{background:#f3f5f7;color:#5a6472}
+ th,td{border-color:#d5dbe2}
+ ul.recs li{background:#fff;border-color:#d5dbe2}
+ .privacy{background:#fff7e6;border-color:#e0b85c;color:#7a5a16}
+ tr,li,.ev,.card{break-inside:avoid}h2{break-after:avoid}
+ @page{margin:14mm}
+}
 </style>
 '@
 
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.Append("<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'><title>OmniDiag Report</title>")
     [void]$sb.Append($css)
+    # Optional branding accent color (validated hex) overrides the report highlight.
+    if ($BrandColor -and ($BrandColor -match '^#[0-9a-fA-F]{6}$')) {
+        [void]$sb.Append("<style>:root{--info:$BrandColor}</style>")
+    }
     [void]$sb.Append("</head><body><div class='wrap'>")
 
     # --- Header ---
+    $logoTag = Get-OmniBrandLogoTag -LogoPath $BrandLogo
     $brand = if ($BrandName) { "<div class='tag'>Prepared for " + (Get-OmniHtmlEncode $BrandName) + "</div>" } else { '' }
     $scoreNum = if ($s) { $s.Score } else { 'n/a' }
     $gradeCls = if ($s) { Get-OmniGradeClass $s.Grade } else { 'info' }
     $gradeTxt = if ($s) { Get-OmniHtmlEncode $s.Grade } else { 'Unknown' }
-    [void]$sb.Append("<header><div><h1>OmniDiag Report</h1><div class='tag'>One Tool. Complete Diagnostics.</div>$brand</div>")
+    [void]$sb.Append("<header><div>$logoTag<h1>OmniDiag Report</h1><div class='tag'>One Tool. Complete Diagnostics.</div>$brand</div>")
     [void]$sb.Append("<div class='score'><div class='num txt-$gradeCls'>$scoreNum</div><div class='lbl'>Health / 100 &middot; $gradeTxt</div></div></header>")
 
     # --- Executive summary ---

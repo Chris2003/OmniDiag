@@ -6,6 +6,26 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Milestone 6: PDF reports + richer branding
+- **PDF report** format (`src/Reporting/Pdf.psm1`, `Export-OmniPdfReport`): renders the
+  existing HTML report to PDF via a headless Chromium browser (Microsoft Edge, which ships
+  on Windows 10/11, or Google Chrome) using `--print-to-pdf`. No binaries are bundled.
+  `Find-OmniChromium` locates the browser; the run is bounded (never hangs) and tries both
+  modern and legacy headless modes. Added `Pdf` to `Export-OmniReport`, the launcher's
+  `-ReportFormat`, and the GUI one-click export; ZIP packages include the PDF best-effort.
+- **Richer branding**: `Export-OmniHtmlReport` / `Export-OmniReport` now accept `-BrandLogo`
+  (a logo image embedded as base64 in the report header) and `-BrandColor` (a validated
+  `#RRGGBB` accent that overrides the report highlight), alongside the existing `-BrandName`.
+  Branding flows into HTML, PDF, and ZIP.
+- **Print-friendly output**: the HTML report gained an `@media print` stylesheet, so the PDF
+  (and any printed HTML) renders on a white, ink-friendly background while the on-screen
+  report stays dark.
+- **Graceful PDF degradation**: PDF is the only format with an external dependency, so
+  `Export-OmniReport` soft-fails it - if no browser is found (or headless rendering is
+  blocked, e.g. in an elevated session), the other formats still succeed and the reason is
+  recorded in a new `Warnings` list on the returned `OmniDiag.ReportSet` and surfaced in the
+  CLI/GUI.
+
 ### Added — Milestone 6: Repair Center GUI tab
 - A **Repair Center** tab in the WPF GUI (third left-nav entry): a checkbox grid of the
   repair catalog with risk-colored rows, recommended repairs pre-checked after a scan,

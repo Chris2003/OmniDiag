@@ -15,8 +15,8 @@ gated on review before the next begins.
       services, Print Spooler, clear temp, SFC, DISM, Windows Update reset, restart
       Explorer) — console + engine **and a GUI Repair Center tab**, with dry-run,
       confirmation, and a restore point before risky repairs.
-- [ ] PDF reports
-- [ ] Optional branding on reports
+- [x] **M6** PDF reports (headless Edge/Chrome rendering of the HTML report)
+- [x] **M6** Optional branding on reports (organization name + logo + accent color)
 - [ ] Remote diagnostics over PowerShell Remoting
 
 ## Version 3 — Enterprise integrations

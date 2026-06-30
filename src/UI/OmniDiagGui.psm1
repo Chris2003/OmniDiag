@@ -447,9 +447,11 @@ function Invoke-OmniWindow {
         if ($answer -ne 'Yes') { return }
         try {
             $outDir = Join-Path (Get-Location) 'reports'
-            $set = Export-OmniReport -Session $ui.Session -OutputDirectory $outDir -Format Html, Json, Csv, Zip
+            $set = Export-OmniReport -Session $ui.Session -OutputDirectory $outDir -Format Html, Json, Csv, Pdf, Zip
             $ui.Controls.TxtStatus.Text = "Reports written to $($set.OutputDirectory)"
-            [System.Windows.MessageBox]::Show("Reports written to:`n$($set.OutputDirectory)", 'OmniDiag', 'OK', 'Information') | Out-Null
+            $dialog = "Reports written to:`n$($set.OutputDirectory)"
+            if (@($set.Warnings).Count -gt 0) { $dialog += "`n`n" + ($set.Warnings -join "`n") }
+            [System.Windows.MessageBox]::Show($dialog, 'OmniDiag', 'OK', 'Information') | Out-Null
             try { Invoke-Item -LiteralPath $set.OutputDirectory } catch { }
         } catch {
             [System.Windows.MessageBox]::Show("Export failed: $($_.Exception.Message)", 'OmniDiag', 'OK', 'Error') | Out-Null
