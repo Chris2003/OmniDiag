@@ -6,6 +6,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Module exports: the root module (`src/OmniDiag.psm1`) called
+  `Export-ModuleMember -Function 'Get-OmniVersion', 'Invoke-OmniDiag'`, which
+  overrides the manifest's `FunctionsToExport` and limited the public surface to
+  just those two functions. As a result the nested-module functions
+  (`Test-OmniIsAdministrator`, `Invoke-OmniSession`, the reporting and GUI
+  functions, the console dashboard, etc.) were silently dropped, and running
+  `OmniDiag.ps1` failed with **"The term 'Test-OmniIsAdministrator' is not
+  recognized."** Removed the root-module `Export-ModuleMember` call so the
+  manifest governs exports; all 30 public functions are now exported as intended.
+
 ### Added — Milestone 5: WPF GUI
 - `src/UI/MainWindow.xaml`: Fluent-style window — top bar (range picker, Run Scan,
   Cancel, Export, Theme), left navigation (Dashboard / All Findings), dashboard with
