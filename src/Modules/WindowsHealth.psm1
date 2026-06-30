@@ -64,7 +64,7 @@ function Invoke-OmniModuleScan {
     $cfg = $Context.Config
 
     # --- Pending reboot ---------------------------------------------------
-    $reasons = Test-OmniPendingReboot
+    $reasons = @(Test-OmniPendingReboot)
     Set-OmniResultMetric -Result $result -Name 'PendingReboot' -Value ($reasons.Count -gt 0)
     if ($reasons.Count -gt 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'A system restart is pending' -Severity 'Warning' `
@@ -140,7 +140,7 @@ function Invoke-OmniModuleScan {
         }
     }
 
-    if (($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+    if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Windows health checks passed' -Severity 'Pass' `
             -Component 'Health' -Detail 'No pending reboot, device errors, or stopped automatic services detected.')
     }

@@ -27,7 +27,7 @@ $script:OmniUiRoot = $PSScriptRoot
 
 function Get-OmniThemePalette {
     [OutputType([hashtable])]
-    param([ValidateSet('Dark', 'Light')] [string] $Name = 'Dark')
+    param([ValidateSet('Dark', 'Light')] [string] $Name = 'Light')
     if ($Name -eq 'Light') {
         return @{
             BrushWindowBg = '#F5F7FA'; BrushPanel = '#FFFFFF'; BrushPanel2 = '#EEF1F5'
@@ -41,7 +41,7 @@ function Get-OmniThemePalette {
 }
 
 function Set-OmniTheme {
-    param([Parameter(Mandatory)] $Window, [ValidateSet('Dark', 'Light')] [string] $Name = 'Dark')
+    param([Parameter(Mandatory)] $Window, [ValidateSet('Dark', 'Light')] [string] $Name = 'Light')
     $palette = Get-OmniThemePalette -Name $Name
     foreach ($key in $palette.Keys) {
         $color = [System.Windows.Media.ColorConverter]::ConvertFromString($palette[$key])
@@ -50,13 +50,21 @@ function Set-OmniTheme {
 }
 
 function Get-OmniGradeColor {
+    # Mid-saturation values chosen to stay legible on both the light (default) and
+    # dark panel backgrounds.
     param([string] $Grade)
     switch ($Grade) {
-        'Healthy'  { '#3FB950' }
-        'Warning'  { '#F5C518' }
-        'Critical' { '#FF6B6B' }
+        'Healthy'  { '#2DA44E' }
+        'Warning'  { '#B7791F' }
+        'Critical' { '#E5484D' }
         default    { '#8B98A5' }
     }
+}
+
+function Get-OmniThemeButtonLabel {
+    <# .SYNOPSIS Internal: label for the theme toggle - names the theme it switches TO. #>
+    param([ValidateSet('Dark', 'Light')] [string] $Current)
+    if ($Current -eq 'Dark') { 'Light Mode' } else { 'Dark Mode' }
 }
 
 function Update-OmniDashboard {
@@ -87,9 +95,46 @@ function Update-OmniDashboard {
     $c.GridFindings.ItemsSource = @(ConvertTo-OmniFindingTable -Session $Session)
 }
 
+function Update-OmniRepairCatalog {
+    <#
+    .SYNOPSIS
+        Internal: (re)populate the Repair Center grid (UI thread only).
+
+    .DESCRIPTION
+        Discovers the repair catalog via Invoke-OmniRepairCenter. When a Session is
+        supplied, repairs relevant to its findings are flagged Recommended and pre-checked.
+        Row objects are PSCustomObjects so the checkbox column can two-way bind to Selected.
+    #>
+    param([Parameter(Mandatory)] [hashtable] $Ui, [pscustomobject] $Session)
+
+    $logger = New-OmniLogger -MinimumLevel Error
+    $catalog = if ($Session) {
+        @(Invoke-OmniRepairCenter -Session $Session -RepairsPath $Ui.RepairsPath -Logger $logger)
+    } else {
+        @(Invoke-OmniRepairCenter -RepairsPath $Ui.RepairsPath -Logger $logger)
+    }
+
+    $rows = @($catalog | ForEach-Object {
+        [pscustomobject]@{
+            Selected     = [bool]$_.Recommended
+            Mark         = if ($_.Recommended) { [char]0x2605 } else { '' }   # star
+            Name         = $_.Name
+            Category     = $_.Category
+            Risk         = $_.Risk
+            Admin        = if ($_.RequiresAdmin) { 'Yes' } else { '' }
+            Recommended  = [bool]$_.Recommended
+            RestorePoint = [bool]$_.RestorePoint
+            Reboot       = [bool]$_.RebootHint
+        }
+    })
+
+    $Ui.RepairCatalog = $rows
+    $Ui.Controls.RepairGrid.ItemsSource = $rows
+}
+
 function Invoke-OmniWindow {
     <# .SYNOPSIS Internal: build and show the window (must run on an STA thread). #>
-    param([string] $RootManifest, [string] $ModulesPath, [string] $Theme = 'Dark')
+    param([string] $RootManifest, [string] $ModulesPath, [string] $RepairsPath, [string] $Theme = 'Light')
 
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml -ErrorAction Stop
 
@@ -101,23 +146,38 @@ function Invoke-OmniWindow {
     $names = @('BtnScan','BtnCancel','BtnExport','BtnTheme','CmbRange','NavList',
                'PanelDashboard','GridFindings','TxtScore','TxtGrade','TxtComputer',
                'TxtUser','TxtRange','TxtDuration','TxtCounts','ItemsRecommendations',
-               'GridModules','ProgressBarMain','TxtStatus')
+               'GridModules','ProgressBarMain','TxtStatus',
+               'PanelRepair','RepairGrid','RepairResultGrid','BtnRunRepairs','BtnRepairCancel',
+               'BtnRepairRecommended','BtnRepairClear','ChkRepairDryRun','TxtRepairBanner','TxtRepairAdminNote')
     $controls = @{}
     foreach ($n in $names) { $controls[$n] = $window.FindName($n) }
 
     # Shared GUI state (module scope so event handlers can reach it).
     $script:OmniUi = @{
-        Window      = $window
-        Controls    = $controls
-        Theme       = $Theme
-        Manifest    = $RootManifest
-        ModulesPath = $ModulesPath
-        Scan        = $null
-        Session     = $null
-        Timer       = $null
+        Window        = $window
+        Controls      = $controls
+        Theme         = $Theme
+        Manifest      = $RootManifest
+        ModulesPath   = $ModulesPath
+        RepairsPath   = $RepairsPath
+        Scan          = $null
+        Session       = $null
+        Timer         = $null
+        Repair        = $null
+        RepairTimer   = $null
+        RepairCatalog = @()
     }
 
     Set-OmniTheme -Window $window -Name $Theme
+    $controls.BtnTheme.Content = Get-OmniThemeButtonLabel -Current $Theme
+
+    # Populate the repair catalog (no session yet) and note elevation state.
+    if (-not (Test-OmniIsAdministrator)) {
+        $controls.TxtRepairAdminNote.Text =
+            'Not elevated: repairs marked "Yes" under Admin will be skipped - re-run OmniDiag elevated for the full set. ' +
+            $controls.TxtRepairAdminNote.Text
+    }
+    Update-OmniRepairCatalog -Ui $script:OmniUi
 
     # --- Progress poll timer ---------------------------------------------
     $timer = [System.Windows.Threading.DispatcherTimer]::new()
@@ -142,6 +202,7 @@ function Invoke-OmniWindow {
             } else {
                 $ui.Session = $sync.Session
                 Update-OmniDashboard -Ui $ui -Session $sync.Session
+                Update-OmniRepairCatalog -Ui $ui -Session $sync.Session   # light up recommended repairs
                 $cancelledNote = if ($sync.Session.Cancelled) { ' (cancelled)' } else { '' }
                 $ui.Controls.TxtStatus.Text = "Scan complete$cancelledNote. Score $($sync.Session.Summary.Score)/100."
                 $ui.Controls.BtnExport.IsEnabled = $true
@@ -152,6 +213,49 @@ function Invoke-OmniWindow {
         }
     })
     $script:OmniUi.Timer = $timer
+
+    # --- Repair progress poll timer --------------------------------------
+    $repairTimer = [System.Windows.Threading.DispatcherTimer]::new()
+    $repairTimer.Interval = [TimeSpan]::FromMilliseconds(200)
+    $repairTimer.Add_Tick({
+        $ui = $script:OmniUi
+        $job = $ui.Repair
+        if (-not $job) { return }
+        $sync = $job.Sync
+        $ui.Controls.ProgressBarMain.Value = [double]$sync.Progress
+        $ui.Controls.TxtStatus.Text = if ($sync.Current) { "Repairing: $($sync.Current)" } else { 'Working...' }
+
+        if ($sync.Done) {
+            $ui.RepairTimer.Stop()
+            try { $job.PowerShell.EndInvoke($job.Handle) } catch { }
+            $job.PowerShell.Dispose(); $job.Runspace.Dispose(); $job.Cts.Dispose()
+            $ui.Repair = $null
+
+            if ($sync.Error) {
+                $ui.Controls.TxtStatus.Text = "Repairs failed: $($sync.Error)"
+                $ui.Controls.TxtRepairBanner.Text = "Error: $($sync.Error)"
+            } else {
+                $rs = $sync.Session
+                $ui.Controls.RepairResultGrid.ItemsSource = @($rs.Results | ForEach-Object {
+                    $failed = @($_.Steps | Where-Object { -not $_.Succeeded })
+                    $detail = if ($_.Error) { $_.Error }
+                              elseif ($failed.Count -gt 0) { $failed[0].Description }
+                              else { "$($_.Steps.Count) step(s) ok" }
+                    [pscustomobject]@{ Name = $_.Name; Status = $_.Status; Detail = $detail }
+                })
+                $banner = ''
+                if ($rs.DryRun) { $banner += 'Dry run complete - no changes were made. ' }
+                if ($rs.RestorePoint) { $banner += "Restore point: $($rs.RestorePoint.Status). " }
+                if ($rs.RebootRequired) { $banner += 'A RESTART is required to finish applying one or more repairs.' }
+                $ui.Controls.TxtRepairBanner.Text = $banner
+                $ui.Controls.TxtStatus.Text = 'Repairs complete.'
+            }
+            $ui.Controls.BtnRunRepairs.IsEnabled = $true
+            $ui.Controls.BtnRepairCancel.IsEnabled = $false
+            $ui.Controls.ProgressBarMain.Value = 100
+        }
+    })
+    $script:OmniUi.RepairTimer = $repairTimer
 
     # --- Scan ------------------------------------------------------------
     $controls.BtnScan.Add_Click({
@@ -222,19 +326,114 @@ function Invoke-OmniWindow {
         $ui = $script:OmniUi
         $ui.Theme = if ($ui.Theme -eq 'Dark') { 'Light' } else { 'Dark' }
         Set-OmniTheme -Window $ui.Window -Name $ui.Theme
+        $ui.Controls.BtnTheme.Content = Get-OmniThemeButtonLabel -Current $ui.Theme
     })
 
     # --- Navigation ------------------------------------------------------
     $controls.NavList.Add_SelectionChanged({
         $ui = $script:OmniUi
-        $sel = $ui.Controls.NavList.SelectedIndex
-        if ($sel -eq 1) {
-            $ui.Controls.PanelDashboard.Visibility = 'Collapsed'
-            $ui.Controls.GridFindings.Visibility = 'Visible'
-        } else {
-            $ui.Controls.PanelDashboard.Visibility = 'Visible'
-            $ui.Controls.GridFindings.Visibility = 'Collapsed'
+        $sel = $ui.Controls.NavList.SelectedIndex   # 0 Dashboard, 1 Findings, 2 Repair
+        $ui.Controls.PanelDashboard.Visibility = if ($sel -eq 0) { 'Visible' } else { 'Collapsed' }
+        $ui.Controls.GridFindings.Visibility   = if ($sel -eq 1) { 'Visible' } else { 'Collapsed' }
+        $ui.Controls.PanelRepair.Visibility    = if ($sel -eq 2) { 'Visible' } else { 'Collapsed' }
+    })
+
+    # --- Repair: selection helpers ---------------------------------------
+    $controls.BtnRepairRecommended.Add_Click({
+        $ui = $script:OmniUi
+        foreach ($r in @($ui.Controls.RepairGrid.ItemsSource)) { $r.Selected = [bool]$r.Recommended }
+        $ui.Controls.RepairGrid.Items.Refresh()
+    })
+    $controls.BtnRepairClear.Add_Click({
+        $ui = $script:OmniUi
+        foreach ($r in @($ui.Controls.RepairGrid.ItemsSource)) { $r.Selected = $false }
+        $ui.Controls.RepairGrid.Items.Refresh()
+    })
+
+    # --- Repair: cancel --------------------------------------------------
+    $controls.BtnRepairCancel.Add_Click({
+        $ui = $script:OmniUi
+        if ($ui.Repair) {
+            $ui.Controls.TxtStatus.Text = 'Cancelling repairs...'
+            $ui.Repair.Cts.Cancel()
+            $ui.Controls.BtnRepairCancel.IsEnabled = $false
         }
+    })
+
+    # --- Repair: run selected --------------------------------------------
+    $controls.BtnRunRepairs.Add_Click({
+        $ui = $script:OmniUi
+        if ($ui.Repair) { return }   # already running
+
+        $rows = @($ui.Controls.RepairGrid.ItemsSource | Where-Object { $_.Selected })
+        if ($rows.Count -eq 0) {
+            [System.Windows.MessageBox]::Show('Select at least one repair to run.', 'OmniDiag Repair', 'OK', 'Information') | Out-Null
+            return
+        }
+        $names = @($rows | ForEach-Object { $_.Name })
+        $dryRun = [bool]$ui.Controls.ChkRepairDryRun.IsChecked
+
+        # Single summary confirmation.
+        $list = ($rows | ForEach-Object { "  - $($_.Name)  [$($_.Risk)]" }) -join "`n"
+        $msg = "About to run $($rows.Count) repair(s):`n`n$list"
+        if (-not $dryRun -and @($rows | Where-Object { $_.RestorePoint }).Count -gt 0) {
+            $msg += "`n`nA System Restore point will be created first."
+        }
+        if (@($rows | Where-Object { $_.Reboot }).Count -gt 0) {
+            $msg += "`n`nOne or more repairs will require a reboot to fully apply."
+        }
+        $msg += if ($dryRun) { "`n`nDRY RUN: nothing will be changed.`n`nProceed?" } else { "`n`nProceed?" }
+        if ([System.Windows.MessageBox]::Show($msg, 'OmniDiag Repair - Confirm', 'YesNo', 'Warning') -ne 'Yes') { return }
+
+        $sync = [hashtable]::Synchronized(@{ Progress = 0; Current = ''; Done = $false; Session = $null; Error = $null })
+        $cts = [System.Threading.CancellationTokenSource]::new()
+
+        $rs = [runspacefactory]::CreateRunspace()
+        $rs.ApartmentState = 'STA'
+        $rs.ThreadOptions = 'ReuseThread'
+        $rs.Open()
+
+        $bg = {
+            param($SyncHash, $Token, $Names, $DryRun, $Manifest, $RepairsPath)
+            try {
+                Import-Module $Manifest -Force -DisableNameChecking
+                $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+                $logPath = Join-Path ([System.IO.Path]::GetTempPath()) "OmniDiag/omnidiag-repair-$stamp.jsonl"
+                $log = New-OmniLogger -Path $logPath -MinimumLevel Info -Console:$false
+                # Re-discover in THIS runspace: registration PSModuleInfo objects are
+                # runspace-affine, so we pass repair Names across the boundary, not objects.
+                $all = @(Get-OmniRepair -Path $RepairsPath -Logger $log)
+                $chosen = @($all | Where-Object { $Names -contains $_.Name })
+                $cb = {
+                    param($p)
+                    $SyncHash.Current = $p.Name
+                    $SyncHash.Progress = $p.PercentComplete
+                }.GetNewClosure()
+                $ctx = New-OmniRepairContext -Logger $log -DryRun:$DryRun -CancellationToken $Token
+                $SyncHash.Session = Invoke-OmniRepair -Registration $chosen -Context $ctx -ProgressCallback $cb
+            } catch {
+                $SyncHash.Error = $_.Exception.Message
+            } finally {
+                $SyncHash.Done = $true
+            }
+        }
+
+        $ps = [PowerShell]::Create()
+        $ps.Runspace = $rs
+        [void]$ps.AddScript($bg).AddParameters(@{
+            SyncHash = $sync; Token = $cts.Token; Names = $names; DryRun = $dryRun
+            Manifest = $ui.Manifest; RepairsPath = $ui.RepairsPath
+        })
+        $handle = $ps.BeginInvoke()
+
+        $ui.Repair = @{ Sync = $sync; Cts = $cts; PowerShell = $ps; Runspace = $rs; Handle = $handle }
+        $ui.Controls.RepairResultGrid.ItemsSource = @()
+        $ui.Controls.TxtRepairBanner.Text = ''
+        $ui.Controls.BtnRunRepairs.IsEnabled = $false
+        $ui.Controls.BtnRepairCancel.IsEnabled = $true
+        $ui.Controls.ProgressBarMain.Value = 0
+        $ui.Controls.TxtStatus.Text = if ($dryRun) { 'Starting repairs (dry run)...' } else { 'Starting repairs...' }
+        $ui.RepairTimer.Start()
     })
 
     # --- Export ----------------------------------------------------------
@@ -265,6 +464,11 @@ function Invoke-OmniWindow {
             try { $ui.Timer.Stop() } catch { }
             try { $ui.Scan.PowerShell.Dispose(); $ui.Scan.Runspace.Dispose() } catch { }
         }
+        if ($ui.Repair) {
+            try { $ui.Repair.Cts.Cancel() } catch { }
+            try { $ui.RepairTimer.Stop() } catch { }
+            try { $ui.Repair.PowerShell.Dispose(); $ui.Repair.Runspace.Dispose() } catch { }
+        }
     })
 
     [void]$window.ShowDialog()
@@ -281,19 +485,23 @@ function Show-OmniDiagWindow {
     .PARAMETER ModulesPath
         Diagnostic module folder. Defaults to the sibling Modules folder.
 
+    .PARAMETER RepairsPath
+        Repair plugin folder. Defaults to the sibling Repairs folder.
+
     .PARAMETER Theme
-        Initial theme: Dark (default) or Light.
+        Initial theme: Light (default) or Dark.
     #>
     [CmdletBinding()]
     param(
         [string] $RootManifest = (Join-Path (Split-Path $script:OmniUiRoot -Parent) 'OmniDiag.psd1'),
         [string] $ModulesPath  = (Join-Path (Split-Path $script:OmniUiRoot -Parent) 'Modules'),
-        [ValidateSet('Dark', 'Light')] [string] $Theme = 'Dark'
+        [string] $RepairsPath  = (Join-Path (Split-Path $script:OmniUiRoot -Parent) 'Repairs'),
+        [ValidateSet('Dark', 'Light')] [string] $Theme = 'Light'
     )
 
     $apartment = [System.Threading.Thread]::CurrentThread.GetApartmentState()
     if ($apartment -eq 'STA') {
-        Invoke-OmniWindow -RootManifest $RootManifest -ModulesPath $ModulesPath -Theme $Theme
+        Invoke-OmniWindow -RootManifest $RootManifest -ModulesPath $ModulesPath -RepairsPath $RepairsPath -Theme $Theme
         return
     }
 
@@ -306,10 +514,10 @@ function Show-OmniDiagWindow {
     $ps = [PowerShell]::Create()
     $ps.Runspace = $rs
     [void]$ps.AddScript({
-        param($Manifest, $ModulesPath, $Theme)
+        param($Manifest, $ModulesPath, $RepairsPath, $Theme)
         Import-Module $Manifest -Force -DisableNameChecking
-        Show-OmniDiagWindow -RootManifest $Manifest -ModulesPath $ModulesPath -Theme $Theme
-    }).AddParameters(@{ Manifest = $RootManifest; ModulesPath = $ModulesPath; Theme = $Theme })
+        Show-OmniDiagWindow -RootManifest $Manifest -ModulesPath $ModulesPath -RepairsPath $RepairsPath -Theme $Theme
+    }).AddParameters(@{ Manifest = $RootManifest; ModulesPath = $ModulesPath; RepairsPath = $RepairsPath; Theme = $Theme })
     try {
         $ps.Invoke()   # blocks until the window closes
     } finally {

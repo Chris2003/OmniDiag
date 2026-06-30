@@ -11,13 +11,18 @@
 
 Set-StrictMode -Version Latest
 
-# Penalty applied to the running score per finding, by severity.
-$script:OmniSeverityPenalty = @{
-    Critical    = 30
-    Error       = 12
-    Warning     = 4
-    Information = 0
-    Pass        = 0
+# Per-severity score penalty model. The penalty for a severity SATURATES as the
+# count grows: penalty = Cap * (1 - Decay^count). The first finding of a severity
+# costs the most; each additional one adds less, approaching (never exceeding) Cap.
+# This keeps a large volume of lower-severity findings - e.g. weeks of historical
+# Event Log errors - from instantly zeroing an otherwise-serviceable machine, while
+# still letting genuine Critical findings drive the score down hard.
+$script:OmniSeverityWeight = @{
+    Critical    = @{ Cap = 60; Decay = 0.55 }
+    Error       = @{ Cap = 35; Decay = 0.82 }
+    Warning     = @{ Cap = 18; Decay = 0.88 }
+    Information = @{ Cap = 0;  Decay = 1.0 }
+    Pass        = @{ Cap = 0;  Decay = 1.0 }
 }
 
 function Get-OmniHealthScore {
@@ -47,14 +52,23 @@ function Get-OmniHealthScore {
     }
     end {
         $counts = [ordered]@{ Critical = 0; Error = 0; Warning = 0; Information = 0; Pass = 0 }
-        $score = 100.0
         $findings = [System.Collections.Generic.List[object]]::new()
 
         foreach ($r in $all) {
             foreach ($f in $r.Findings) {
                 $findings.Add($f)
                 if ($counts.Contains($f.Severity)) { $counts[$f.Severity]++ }
-                $score -= ($script:OmniSeverityPenalty[$f.Severity])
+            }
+        }
+
+        # Reduce the score by a saturating penalty per severity (see the weight
+        # table above): penalty = Cap * (1 - Decay^count).
+        $score = 100.0
+        foreach ($sev in @('Critical', 'Error', 'Warning')) {
+            $n = $counts[$sev]
+            if ($n -gt 0) {
+                $w = $script:OmniSeverityWeight[$sev]
+                $score -= [double]$w.Cap * (1.0 - [math]::Pow([double]$w.Decay, $n))
             }
         }
 
@@ -63,8 +77,8 @@ function Get-OmniHealthScore {
         $score = [int][math]::Round($score)
 
         $grade = switch ($score) {
-            { $_ -ge 90 } { 'Healthy'; break }
-            { $_ -ge 70 } { 'Warning'; break }
+            { $_ -ge 80 } { 'Healthy'; break }
+            { $_ -ge 50 } { 'Warning'; break }
             default       { 'Critical' }
         }
 

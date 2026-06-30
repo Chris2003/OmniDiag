@@ -35,7 +35,7 @@ interface**, interprets the results, and tells you the **likely cause** and the
 
 ## Status
 
-OmniDiag is being built in milestones. **Current: Milestone 5 — WPF GUI.**
+OmniDiag is being built in milestones. **Current: Milestone 6 — Repair Center.**
 
 | Capability | State |
 |---|---|
@@ -45,8 +45,9 @@ OmniDiag is being built in milestones. **Current: Milestone 5 — WPF GUI.**
 | Event Log collection & analysis (grouping, Event-ID translation, patterns) | ✅ Milestone 2 |
 | Network / Storage / Security / Health / Performance modules | ✅ Milestone 3 |
 | HTML / JSON / CSV / ZIP reports | ✅ Milestone 4 |
-| WPF GUI (dashboard, dark/light, cancel) | ✅ Milestone 5 |
-| Repair Center, PDF reports | 🔜 Milestone 6 |
+| WPF GUI (dashboard, light/dark toggle, cancel) | ✅ Milestone 5 |
+| Repair Center — console + GUI tab (10 repairs, dry-run, confirmation, restore points) | ✅ Milestone 6 |
+| PDF reports, report branding, remote diagnostics | 🔜 Milestone 6+ |
 
 See [ROADMAP.md](ROADMAP.md) for the full version plan.
 
@@ -73,7 +74,18 @@ Start-Process pwsh -Verb RunAs -ArgumentList '-File', "$PWD\OmniDiag.ps1"
 
 # Launch the graphical interface (dashboard, dark/light, cancel, export)
 .\OmniDiag.ps1 -Gui
+
+# Scan, then open the Repair Center (confirmation-gated fixes for what was found)
+.\OmniDiag.ps1 -Repair
+
+# Preview repairs without changing anything (dry run)
+.\OmniDiag.ps1 -Repair -RepairDryRun
 ```
+
+> **Repair Center:** repairs are always opt-in and confirmed per action. Each shows its
+> risk (Safe / Moderate / Destructive) and whether it needs elevation or a reboot, and a
+> System Restore point is created before system-altering repairs. Run elevated for the
+> full set (SFC, DISM, Winsock/Windows Update reset, service restarts).
 
 > **GUI note:** WPF requires an STA thread. Windows PowerShell 5.1 is STA, so the GUI
 > runs directly. PowerShell 7 is MTA — OmniDiag automatically hosts the window in a
@@ -127,9 +139,11 @@ OmniDiag/
 │   ├── Core/               # models, logging, registry, engine, scoring
 │   ├── EventLog/           # event-log knowledge base + analysis pipeline
 │   ├── Modules/            # diagnostic plugins (one .psm1 each)
+│   ├── Repair/             # repair core: models, registry, engine
+│   ├── Repairs/            # repair plugins (one .psm1 each)
 │   ├── Reporting/          # HTML/JSON/CSV/ZIP exporters
 │   ├── UI/                 # WPF GUI (runtime XAML + runspace threading)
-│   └── Cli/                # console presentation
+│   └── Cli/                # console presentation (scan + repair)
 ├── Tests/                  # Pester tests
 ├── docs/  assets/  reports/  tools/
 └── .github/workflows/      # CI
@@ -145,8 +159,10 @@ Invoke-Pester -Path .\Tests
 ## Screenshots
 
 The GUI provides a left-nav dashboard with a 0–100 health score, live scan progress
-with a working Cancel button, dark/light themes, and one-click report export. Launch
-it with `.\OmniDiag.ps1 -Gui`.
+with a working Cancel button, a light/dark theme toggle (light by default), one-click
+report export, and a **Repair Center** tab — a checkbox grid of repairs (relevant ones
+pre-checked after a scan) with a dry-run toggle, summary confirmation, and live progress.
+Launch it with `.\OmniDiag.ps1 -Gui`.
 
 > _Captured screenshots will be added here; run `-Gui` on a Windows host to preview._
 

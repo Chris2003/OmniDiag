@@ -10,9 +10,11 @@ gated on review before the next begins.
 - [x] **M4** Reporting engine: HTML, JSON, CSV, ZIP package
 - [x] **M5** WPF GUI: dashboard, left navigation, dark/light, progress, cancel
 
-## Version 2 — Repair & richer output
-- [ ] Repair Center (flush DNS, reset Winsock, IP release/renew, restart services,
-      Print Spooler, clear temp, SFC, DISM, Windows Update reset, restart Explorer)
+## Version 2 — Repair & richer output (in progress)
+- [x] **M6** Repair Center (flush DNS, reset Winsock, IP release/renew, restart
+      services, Print Spooler, clear temp, SFC, DISM, Windows Update reset, restart
+      Explorer) — console + engine **and a GUI Repair Center tab**, with dry-run,
+      confirmation, and a restore point before risky repairs.
 - [ ] PDF reports
 - [ ] Optional branding on reports
 - [ ] Remote diagnostics over PowerShell Remoting

@@ -29,8 +29,23 @@
 .PARAMETER Quiet
     Suppress streaming log output; show only the final dashboard.
 
+.PARAMETER Repair
+    After the scan, open the interactive Repair Center: a confirmation-gated menu of
+    system repairs (flush DNS, reset Winsock, restart services, clear temp, SFC, DISM,
+    Windows Update reset, and more), with the repairs relevant to your findings flagged.
+
+.PARAMETER RepairDryRun
+    Open the Repair Center in dry-run mode: every selected repair only describes what it
+    would do - no changes are made. Implies -Repair.
+
 .EXAMPLE
     .\OmniDiag.ps1
+
+.EXAMPLE
+    .\OmniDiag.ps1 -Repair
+
+.EXAMPLE
+    .\OmniDiag.ps1 -Repair -RepairDryRun
 
 .EXAMPLE
     .\OmniDiag.ps1 -Range Last24Hours -IncludeCategory System
@@ -53,7 +68,11 @@ param(
     [string[]] $ReportFormat = @('Html', 'Json', 'Csv'),
     [string] $ReportPath,
     [string] $BrandName,
-    [switch] $AcceptPrivacyNotice
+    [switch] $AcceptPrivacyNotice,
+
+    # Repair Center
+    [switch] $Repair,
+    [switch] $RepairDryRun
 )
 
 Set-StrictMode -Version Latest
@@ -128,6 +147,11 @@ if ($Report) {
     } else {
         Write-Host 'Report generation skipped.' -ForegroundColor DarkGray
     }
+}
+
+# --- Repair Center ---------------------------------------------------------
+if ($Repair -or $RepairDryRun) {
+    Invoke-OmniRepairConsole -Session $session -DryRun:$RepairDryRun | Out-Null
 }
 
 # Make the session available to the caller for scripting/automation.

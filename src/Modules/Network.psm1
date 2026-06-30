@@ -218,7 +218,7 @@ function Invoke-OmniModuleScan {
     }
 
     # Positive finding when nothing notable surfaced.
-    if (($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+    if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Network connectivity looks healthy' -Severity 'Pass' `
             -Component 'Network' -Detail 'Gateway, internet, and DNS probes succeeded.')
     }

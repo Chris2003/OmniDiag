@@ -104,6 +104,42 @@ function Invoke-OmniDiag {
     return $session
 }
 
+function Invoke-OmniRepairCenter {
+    <#
+    .SYNOPSIS
+        Discovers repair plugins and (optionally) flags those recommended for a session.
+
+    .DESCRIPTION
+        Automation-friendly companion to Invoke-OmniDiag: returns the repair catalog as
+        registrations (annotated with Recommended when a Session is supplied) without
+        running anything. Feed the result to Invoke-OmniRepair to execute, or to
+        Invoke-OmniRepairConsole for the interactive experience.
+
+    .PARAMETER Session
+        An OmniDiag.Session from Invoke-OmniDiag; used to flag Recommended repairs.
+
+    .PARAMETER RepairsPath
+        Folder of repair plugins. Defaults to src/Repairs.
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [pscustomobject] $Session,
+        [string] $RepairsPath = (Join-Path $PSScriptRoot 'Repairs'),
+        [pscustomobject] $Logger
+    )
+
+    if (-not $Logger) {
+        $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+        $logFile = Join-Path ([System.IO.Path]::GetTempPath()) "OmniDiag/omnidiag-repair-$stamp.jsonl"
+        $Logger = New-OmniLogger -Path $logFile -MinimumLevel Info -Console:$false
+    }
+
+    $repairs = @(Get-OmniRepair -Path $RepairsPath -Logger $Logger)
+    if ($Session) { $repairs = @(Get-OmniApplicableRepair -Registration $repairs -Session $Session) }
+    return $repairs
+}
+
 # NOTE: Do NOT call Export-ModuleMember here. When the root module calls it, the
 # explicit list overrides the manifest's FunctionsToExport and the nested-module
 # functions (Test-OmniIsAdministrator, Invoke-OmniSession, reporting, GUI, etc.)

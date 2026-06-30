@@ -153,7 +153,7 @@ function Invoke-OmniModuleScan {
         }
     } catch { $log.Debug("Disk performance counter unavailable: $($_.Exception.Message)", 'Storage') }
 
-    if (($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+    if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Storage is healthy' -Severity 'Pass' `
             -Component 'Storage' -Detail 'All disks report healthy SMART status with adequate free space.')
     }

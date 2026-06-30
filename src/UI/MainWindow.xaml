@@ -10,14 +10,15 @@
 
     <Window.Resources>
         <!-- Brushes are set in code (Set-OmniTheme) for dark/light; defaults here
-             keep the designer/preview usable. -->
-        <SolidColorBrush x:Key="BrushWindowBg" Color="#0F1419"/>
-        <SolidColorBrush x:Key="BrushPanel"   Color="#1A212B"/>
-        <SolidColorBrush x:Key="BrushPanel2"  Color="#212A36"/>
-        <SolidColorBrush x:Key="BrushText"    Color="#E6EDF3"/>
-        <SolidColorBrush x:Key="BrushMuted"   Color="#8B98A5"/>
-        <SolidColorBrush x:Key="BrushAccent"  Color="#4493F8"/>
-        <SolidColorBrush x:Key="BrushLine"    Color="#2D3742"/>
+             keep the designer/preview usable. These mirror the Light palette,
+             which is the default theme. -->
+        <SolidColorBrush x:Key="BrushWindowBg" Color="#F5F7FA"/>
+        <SolidColorBrush x:Key="BrushPanel"   Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="BrushPanel2"  Color="#EEF1F5"/>
+        <SolidColorBrush x:Key="BrushText"    Color="#1A1F24"/>
+        <SolidColorBrush x:Key="BrushMuted"   Color="#5A6472"/>
+        <SolidColorBrush x:Key="BrushAccent"  Color="#0969DA"/>
+        <SolidColorBrush x:Key="BrushLine"    Color="#D5DBE2"/>
 
         <Style TargetType="Button">
             <Setter Property="Background" Value="{DynamicResource BrushPanel2}"/>
@@ -85,7 +86,7 @@
                     <Button x:Name="BtnScan" Content="Run Scan" Background="{DynamicResource BrushAccent}"/>
                     <Button x:Name="BtnCancel" Content="Cancel" IsEnabled="False"/>
                     <Button x:Name="BtnExport" Content="Export Report" IsEnabled="False"/>
-                    <Button x:Name="BtnTheme" Content="Theme"/>
+                    <Button x:Name="BtnTheme" Content="Dark Mode"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -101,6 +102,7 @@
                 <ListBox x:Name="NavList" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource BrushText}" Margin="6">
                     <ListBoxItem Content="Dashboard" IsSelected="True"/>
                     <ListBoxItem Content="All Findings"/>
+                    <ListBoxItem Content="Repair Center"/>
                 </ListBox>
             </Border>
 
@@ -157,16 +159,16 @@
                         <Style TargetType="DataGridRow">
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding Severity}" Value="Critical">
-                                    <Setter Property="Foreground" Value="#FF6B6B"/>
+                                    <Setter Property="Foreground" Value="#E5484D"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding Severity}" Value="Error">
-                                    <Setter Property="Foreground" Value="#FFA657"/>
+                                    <Setter Property="Foreground" Value="#D9730D"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding Severity}" Value="Warning">
-                                    <Setter Property="Foreground" Value="#F5C518"/>
+                                    <Setter Property="Foreground" Value="#B7791F"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding Severity}" Value="Pass">
-                                    <Setter Property="Foreground" Value="#3FB950"/>
+                                    <Setter Property="Foreground" Value="#2DA44E"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -179,6 +181,73 @@
                         <DataGridTextColumn Header="Recommendation" Binding="{Binding Recommendation}" Width="2*"/>
                     </DataGrid.Columns>
                 </DataGrid>
+
+                <!-- Repair Center panel -->
+                <Grid x:Name="PanelRepair" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button x:Name="BtnRunRepairs" Content="Run Selected" Background="{DynamicResource BrushAccent}"/>
+                        <Button x:Name="BtnRepairCancel" Content="Cancel" IsEnabled="False"/>
+                        <Button x:Name="BtnRepairRecommended" Content="Select Recommended"/>
+                        <Button x:Name="BtnRepairClear" Content="Clear"/>
+                        <CheckBox x:Name="ChkRepairDryRun" Content="Dry run (preview only)" VerticalAlignment="Center"
+                                  Margin="6,0,0,0" Foreground="{DynamicResource BrushText}"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="TxtRepairAdminNote" Grid.Row="1" Margin="0,0,0,8" TextWrapping="Wrap"
+                               Foreground="{DynamicResource BrushMuted}"
+                               Text="Repairs are confirmed before they run. A System Restore point is created before system-altering repairs."/>
+
+                    <DataGrid x:Name="RepairGrid" Grid.Row="2" IsReadOnly="False" AutoGenerateColumns="False"
+                              CanUserAddRows="False" HeadersVisibility="Column">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Risk}" Value="Destructive">
+                                        <Setter Property="Foreground" Value="#E5484D"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Risk}" Value="Moderate">
+                                        <Setter Property="Foreground" Value="#B7791F"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Risk}" Value="Safe">
+                                        <Setter Property="Foreground" Value="#2DA44E"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridCheckBoxColumn Header="Run" Width="Auto"
+                                Binding="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            <DataGridTextColumn Header="" Binding="{Binding Mark}" Width="Auto" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Repair" Binding="{Binding Name}" Width="2*" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="*" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Risk" Binding="{Binding Risk}" Width="Auto" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Admin" Binding="{Binding Admin}" Width="Auto" IsReadOnly="True"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <StackPanel Grid.Row="3" Margin="0,12,0,4">
+                        <TextBlock Text="Results" FontSize="15" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="TxtRepairBanner" TextWrapping="Wrap" Margin="0,4,0,0"
+                                   Foreground="{DynamicResource BrushMuted}"/>
+                    </StackPanel>
+
+                    <DataGrid x:Name="RepairResultGrid" Grid.Row="4" MaxHeight="220" AutoGenerateColumns="False"
+                              CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Repair" Binding="{Binding Name}" Width="2*"/>
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="Auto"/>
+                            <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="3*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
             </Grid>
         </Grid>
 

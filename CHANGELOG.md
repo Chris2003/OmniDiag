@@ -6,7 +6,75 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Milestone 6: Repair Center GUI tab
+- A **Repair Center** tab in the WPF GUI (third left-nav entry): a checkbox grid of the
+  repair catalog with risk-colored rows, recommended repairs pre-checked after a scan,
+  "Select Recommended" / "Clear" helpers, and a **Dry run** toggle. A single summary
+  dialog confirms the selected repairs (with restore-point and reboot notes) before they
+  run; results populate a grid with a reboot/restore-point banner.
+- Repairs run in a **background STA runspace** (mirroring the scan), so the window stays
+  responsive and the Cancel button drives the engine's `CancellationToken` even during
+  long repairs (SFC/DISM). The runspace re-discovers repairs by name (registration objects
+  are runspace-affine) and reuses the tested `Invoke-OmniRepair` engine unchanged.
+- `Show-OmniDiagWindow` gains a `-RepairsPath` parameter (defaults to `src/Repairs`).
+
+### Added — Milestone 6: Repair Center (Version 2, first increment)
+- **Repair plugin architecture** mirroring the diagnostic side: repairs are drop-in
+  `.psm1` plugins in `src/Repairs/`, each exporting `Get-OmniRepairManifest` and
+  `Invoke-OmniRepairAction` (and an optional `Test-OmniRepairApplicable`), discovered
+  and run in isolated session state by `Get-OmniRepair`. The core stays closed.
+- **Repair core** (`src/Repair/`): result models + the `Invoke-OmniRepairStep` runner
+  (dry-run aware, captures output/exit code, logs every step), `New-OmniRepairContext`,
+  `Get-OmniApplicableRepair` (flags repairs relevant to a scan's findings), the
+  `New-OmniRestorePoint` helper (fails soft when System Restore is unavailable), and
+  the `Invoke-OmniRepair` engine (per-repair error capture, admin-gated skipping,
+  cancellation, and ONE System Restore checkpoint up front for a batch that needs it).
+- **Ten built-in repairs:** Flush DNS, Release/Renew IP, Reset Winsock, Restart Print
+  Spooler, Restart Explorer, Clear Temporary Files, Restart Stopped Automatic Services,
+  Reset Windows Update, Run SFC, and DISM /RestoreHealth — classified Safe / Moderate /
+  Destructive, with admin and reboot requirements declared per repair.
+- **Interactive console** (`Invoke-OmniRepairConsole`): catalog grouped by category with
+  recommended repairs starred, numbered selection, and **per-action confirmation**
+  showing each repair's risk, restore-point, and reboot implications.
+- **Safety:** every repair supports a **dry-run** that describes without executing; the
+  engine is `SupportsShouldProcess`; a restore point is created before system-altering
+  repairs; admin-only repairs are skipped gracefully when not elevated.
+- Launcher gains `-Repair` and `-RepairDryRun`; `Invoke-OmniRepairCenter` exposes the
+  annotated catalog for automation. New OS-independent Pester suites (24 tests) cover
+  the models, registry, engine, and every catalog plugin — all via dry-run/harmless
+  fakes so the suite never changes the host.
+
+### Changed
+- Health score is now far more meaningful. The old model subtracted a flat penalty
+  per finding (Critical 30 / Error 12 / Warning 4) with no ceiling, so ~9 Errors —
+  routine for weeks of historical Event Log entries — zeroed the score on an
+  otherwise-serviceable machine. The score now uses a **saturating penalty per
+  severity** (`penalty = Cap * (1 - Decay^count)`): the first finding of a severity
+  costs the most and each additional one adds less, so a flood of lower-severity
+  findings can no longer bottom out the score while genuine Critical findings still
+  dominate. Grade bands retuned to Healthy ≥ 80, Warning ≥ 50, Critical < 50. A
+  clean machine still scores 100; a single Critical no longer reads as Healthy.
+- GUI now defaults to the **Light** theme. The top-bar theme button is a labelled
+  toggle (`Dark Mode` / `Light Mode`) that names the theme it will switch to, and
+  the dashboard/findings status colors were retuned to stay legible on both themes.
+
 ### Fixed
+- HTML report generation failing with **"The term 'Write-OmniTextFile' is not
+  recognized."** `Write-OmniTextFile` (the shared UTF-8/no-BOM writer in
+  `Reporting/Json.psm1`) is called cross-module by the HTML exporter, but it was
+  missing from the manifest's `FunctionsToExport`, so it never reached the global
+  scope where a function running in `Html.psm1`'s module scope could resolve it.
+  Added it to `FunctionsToExport`.
+- Diagnostic modules crashing with **"The property 'Count' cannot be found on
+  this object."** under `Set-StrictMode -Version Latest`. Every module ended with
+  `(($result.Findings | Where-Object {...}).Count -eq 0)`; when the filter matched
+  nothing the pipeline yields `$null`, and `$null.Count` throws under strict mode —
+  so any module with no warning-or-higher findings (commonly Network, Storage, and
+  Windows Health on a healthy host) failed instead of reporting *Healthy*. Wrapped
+  the filter in `@(...)` across all six modules. Also wrapped
+  `Test-OmniPendingReboot`'s result (`@(Test-OmniPendingReboot)`) in Windows Health,
+  which returned an empty `[string[]]` that unrolled to `$null` and hit the same
+  strict-mode `.Count` failure when no reboot was pending.
 - Module exports: the root module (`src/OmniDiag.psm1`) called
   `Export-ModuleMember -Function 'Get-OmniVersion', 'Invoke-OmniDiag'`, which
   overrides the manifest's `FunctionsToExport` and limited the public surface to

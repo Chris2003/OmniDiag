@@ -20,18 +20,22 @@
         'Core/Registry.psm1',
         'Core/HealthScore.psm1',
         'Core/Engine.psm1',
+        'Repair/RepairModels.psm1',
+        'Repair/RepairRegistry.psm1',
+        'Repair/RepairEngine.psm1',
         'Reporting/Json.psm1',
         'Reporting/Csv.psm1',
         'Reporting/Html.psm1',
         'Reporting/Package.psm1',
         'Reporting/Report.psm1',
         'Cli/OmniConsole.psm1',
+        'Cli/OmniRepairConsole.psm1',
         'UI/OmniDiagGui.psm1'
     )
 
     FunctionsToExport = @(
         # Root
-        'Invoke-OmniDiag', 'Get-OmniVersion',
+        'Invoke-OmniDiag', 'Get-OmniVersion', 'Invoke-OmniRepairCenter',
         # Models
         'New-OmniFinding', 'New-OmniResult', 'Add-OmniFinding', 'Set-OmniResultMetric',
         'Complete-OmniResult', 'Get-OmniTimeRange', 'Get-OmniSeverityRank', 'Get-OmniSeverityNames',
@@ -40,12 +44,24 @@
         # Registry / engine / scoring
         'Test-OmniIsAdministrator', 'New-OmniContext', 'Get-OmniModule',
         'Invoke-OmniSession', 'Get-OmniHealthScore',
+        # Repair Center (models, registry, engine, console). Cross-module helpers
+        # (Invoke-OmniRepairStep, the result factories, Get-OmniRepairRiskNames,
+        # New-OmniRestorePoint) MUST be exported so plugins/engine can resolve them
+        # globally - same lesson as Write-OmniTextFile.
+        'New-OmniRepairResult', 'Add-OmniRepairStep', 'Invoke-OmniRepairStep',
+        'Complete-OmniRepairResult', 'Get-OmniRepairRiskNames',
+        'Get-OmniRepair', 'New-OmniRepairContext', 'Get-OmniApplicableRepair',
+        'New-OmniRestorePoint', 'Invoke-OmniRepair',
+        'Invoke-OmniRepairConsole', 'Write-OmniRepairSummary',
         # Console
         'Get-OmniStatusColor', 'New-OmniConsoleProgressCallback', 'Write-OmniConsoleDashboard',
         # Reporting
         'Export-OmniReport', 'Export-OmniHtmlReport', 'Export-OmniJsonReport',
         'Export-OmniCsvReport', 'Export-OmniEventCsvReport', 'Export-OmniReportPackage',
         'ConvertTo-OmniFindingTable', 'ConvertTo-OmniEventTable',
+        # Shared reporting helper (used cross-module by the HTML exporter, so it
+        # must be globally resolvable, not just private to Json.psm1).
+        'Write-OmniTextFile',
         # GUI
         'Show-OmniDiagWindow', 'Set-OmniTheme', 'Get-OmniThemePalette'
     )

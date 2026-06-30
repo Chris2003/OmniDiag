@@ -165,7 +165,7 @@ function Invoke-OmniModuleScan {
             -Recommendation 'Re-run OmniDiag as Administrator for a complete security assessment.')
     }
 
-    if (($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+    if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Security posture looks good' -Severity 'Pass' `
             -Component 'Security' -Detail 'Defender, firewall, and platform protections are in expected states.')
     }

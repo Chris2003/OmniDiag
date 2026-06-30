@@ -114,7 +114,7 @@ function Invoke-OmniModuleScan {
         }
     } catch { $log.Warn("Get-Process failed: $($_.Exception.Message)", 'Performance') }
 
-    if (($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+    if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Performance is within normal limits' -Severity 'Pass' `
             -Component 'Performance' -Detail 'CPU and memory pressure are within expected thresholds.')
     }

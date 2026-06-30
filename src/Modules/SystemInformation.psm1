@@ -186,7 +186,7 @@ function Invoke-OmniModuleScan {
 
     # Always record at least one positive finding so the module reads as 'Healthy'
     # when nothing is wrong (keeps the dashboard honest).
-    if (($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+    if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding `
             -Title 'System inventory collected' -Severity 'Pass' -Component 'System' `
             -Detail 'Hardware, firmware, and OS details were collected without issues.')
