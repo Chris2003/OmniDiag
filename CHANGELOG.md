@@ -6,6 +6,42 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Milestone 3: Diagnostic modules
+- **Network** module: adapter/IP/DNS/gateway inventory plus reachability probes
+  (gateway, internet-by-IP, DNS resolution) with correlated diagnosis — including
+  the "gateway reachable but DNS failing ⇒ DNS server issue" case — and firewall,
+  proxy, VPN, and DNS-cache checks. Public-IP lookup is opt-in (`CheckPublicIP`).
+- **Storage** module: physical-disk SMART/health, SSD wear and temperature, volume
+  health and free-space thresholds, and best-effort disk-queue performance.
+- **Windows Health** module: pending-reboot detection, Device Manager problem
+  devices, stopped automatic services, Windows Update service state, startup count;
+  optional opt-in SFC/DISM deep checks.
+- **Security** module: Defender state/signature age, registered AV, firewall,
+  BitLocker (admin), Secure Boot, TPM/Credential Guard, UAC, RDP exposure, and
+  local administrators (admin).
+- **Performance** module: sampled CPU/memory/disk pressure, best-effort GPU, and
+  top CPU/memory processes.
+- Probes use `System.Net.NetworkInformation.Ping` / `System.Net.Dns` for
+  cross-version consistency; every module fails soft per-check and self-bootstraps.
+- Integration tests covering discovery, manifests, and clean execution of all five
+  modules through the engine.
+
+### Added — Milestone 2: Event Log engine
+- Event Log knowledge base (`src/EventLog/EventLogCatalog.psm1`): 14 collection
+  channel definitions and a curated Event-ID translation catalog (~45 entries
+  across boot/power, crash, disk, service, network, authentication, update,
+  Defender, profile, and Group Policy categories) with severity overrides.
+- Event Log analyzer (`src/EventLog/EventLogAnalyzer.psm1`): bounded per-channel
+  collection (`Get-OmniEventRecord`), repeat collapsing with first/last-seen and
+  counts (`Group-OmniEventRecord`), lifecycle timeline (`Get-OmniEventTimeline`),
+  and finding generation with cross-event pattern detection (brute-force logons,
+  service flapping, repeated unexpected shutdowns) via `New-OmniEventFinding`.
+- **Event Logs** diagnostic module (`src/Modules/EventLogs.psm1`): collects across
+  all channels within the session time range, honors cancellation between channels,
+  skips admin-only channels gracefully, and emits an executive summary, interpreted
+  findings, and structured timeline/group data for reporting.
+- Pester tests for the catalog, analyzer (synthetic records), and the module.
+
 ## [0.1.0] - 2026-06-29 — Milestone 1: Core engine
 
 ### Added

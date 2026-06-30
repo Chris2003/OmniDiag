@@ -35,15 +35,15 @@ interface**, interprets the results, and tells you the **likely cause** and the
 
 ## Status
 
-OmniDiag is being built in milestones. **Current: Milestone 1 — core engine.**
+OmniDiag is being built in milestones. **Current: Milestone 3 — diagnostic modules.**
 
 | Capability | State |
 |---|---|
 | Core engine, plugin architecture, health scoring | ✅ Milestone 1 |
 | Structured logging, console runner | ✅ Milestone 1 |
 | System Information module | ✅ Milestone 1 |
-| Event Log collection & analysis | 🔜 Milestone 2 |
-| Network / Storage / Security / Health / Performance modules | 🔜 Milestone 3 |
+| Event Log collection & analysis (grouping, Event-ID translation, patterns) | ✅ Milestone 2 |
+| Network / Storage / Security / Health / Performance modules | ✅ Milestone 3 |
 | HTML / JSON / CSV / ZIP reports | 🔜 Milestone 4 |
 | WPF GUI (dashboard, dark/light, cancel) | 🔜 Milestone 5 |
 | Repair Center, PDF reports | 🔜 Milestone 6 |
@@ -87,7 +87,8 @@ OmniDiag.ps1  ──>  Invoke-OmniDiag  ──>  Engine (Invoke-OmniSession)
                                             │
                  ┌──────────────────────────┴──────────────────────────┐
                  ▼                          ▼                           ▼
-        SystemInformation          (Network, Storage, …)        (your module)
+          7 built-in diagnostic modules                          (your module)
+  System · EventLogs · Network · Storage · Health · Security · Performance
                  │                          │                           │
                  └─── each returns an OmniDiag.Result of Findings ──────┘
                                             │
@@ -111,6 +112,7 @@ OmniDiag/
 │   ├── OmniDiag.psd1       # module manifest
 │   ├── OmniDiag.psm1       # public entry points
 │   ├── Core/               # models, logging, registry, engine, scoring
+│   ├── EventLog/           # event-log knowledge base + analysis pipeline
 │   ├── Modules/            # diagnostic plugins (one .psm1 each)
 │   ├── Reporting/          # HTML/JSON/CSV/ZIP (Milestone 4)
 │   ├── UI/                 # WPF GUI (Milestone 5)
