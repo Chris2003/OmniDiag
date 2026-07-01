@@ -16,7 +16,7 @@ editing the engine.
 | **Repairs** | `src/Repairs/` | Repair plugins. One `.psm1` per repair. Discovered at runtime, exactly like diagnostic modules. |
 | **Event Log subsystem** | `src/EventLog/` | Knowledge base (channels + Event-ID translation catalog) and the analysis pipeline (collection, grouping, timeline, finding/pattern generation) used by the Event Logs module. Not plugins; imported by the module. |
 | **Reporting** | `src/Reporting/` | HTML / JSON / CSV / **PDF** / ZIP exporters + `Export-OmniReport` coordinator. PDF is generated **natively** (`Pdf.psm1`, standard PDF fonts) — no browser or external dependency. Consume a session; emit no side effects beyond writing files. |
-| **UI** | `src/UI/` | WPF front-end: runtime-loaded XAML (`MainWindow.xaml`) + `Show-OmniDiagWindow`. Left-nav panels: **Dashboard**, **All Findings**, **Diagnostics** (toggle scanners on/off, or run one individually), **Repair Center**. Scans run in a background runspace; a DispatcherTimer polls a synchronized hashtable for progress; Cancel drives the engine's CancellationToken. Report export and per-scanner selection are wired here. STA-hosted when launched from MTA (PowerShell 7). |
+| **UI** | `src/UI/` | WPF front-end: runtime-loaded XAML (`MainWindow.xaml`) + `Show-OmniDiagWindow`. Left-nav panels: **Dashboard** (health score, a DxDiag-style System Information panel via `Get-OmniSystemInfo`, recommendations, module results), **All Findings**, **Diagnostics** (toggle scanners on/off, or run one individually), **Repair Center**. Scans run in a background runspace; a DispatcherTimer polls a synchronized hashtable for progress; Cancel drives the engine's CancellationToken. Report export and per-scanner selection are wired here. STA-hosted when launched from MTA (PowerShell 7). |
 | **CLI** | `src/Cli/` | Console presentation (dashboard + progress). |
 
 ## Core building blocks
@@ -39,6 +39,11 @@ editing the engine.
   per-module errors, and finalizes timing/status.
 * **Health scoring** (`Core/HealthScore.psm1`) — `Get-OmniHealthScore` turns results
   into the 0-100 score, severity counts, per-category status, and top recommendations.
+* **Registry scan** (`Core/RegistryScan.psm1`) — `Get-OmniInvalidRegistryEntry` (read-only,
+  CCleaner-style detection of invalid/obsolete entries), `Export-OmniRegistryBackup` (writes a
+  `.reg` backup of affected keys), and `Remove-OmniRegistryEntry`. Shared by the **Registry
+  Health** scanner (reporting) and the **Clean Invalid Registry Entries** repair (backup, then
+  remove) so detection lives in exactly one place.
 
 ## The plugin contract
 

@@ -18,7 +18,7 @@ Describe 'GUI XAML structure' {
     It 'defines all controls the GUI code binds to' {
         $raw = Get-Content -LiteralPath $script:XamlPath -Raw
         foreach ($n in @('BtnScan','BtnCancel','BtnExport','BtnTheme','CmbRange','NavList',
-                         'PanelDashboard','GridFindings','GridModules','ItemsRecommendations',
+                         'PanelDashboard','PanelSysInfo','GridFindings','GridModules','ItemsRecommendations',
                          'TxtScore','TxtGrade','TxtCounts','ProgressBarMain','TxtStatus')) {
             $raw | Should -Match ('x:Name="' + $n + '"')
         }

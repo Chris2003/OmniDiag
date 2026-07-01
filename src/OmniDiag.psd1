@@ -19,6 +19,7 @@
         'Core/Logging.psm1',
         'Core/Registry.psm1',
         'Core/HealthScore.psm1',
+        'Core/RegistryScan.psm1',
         'Core/Engine.psm1',
         'Repair/RepairModels.psm1',
         'Repair/RepairRegistry.psm1',
@@ -45,6 +46,10 @@
         # Registry / engine / scoring
         'Test-OmniIsAdministrator', 'New-OmniContext', 'Get-OmniModule',
         'Invoke-OmniSession', 'Get-OmniHealthScore',
+        # Registry scan/backup/remove (shared by the Registry Health scanner and the
+        # Clean Invalid Registry Entries repair; exported so both resolve them globally).
+        'Get-OmniInvalidRegistryEntry', 'Export-OmniRegistryBackup', 'Remove-OmniRegistryEntry',
+        'ConvertTo-OmniRegProviderPath', 'ConvertTo-OmniRegExePath',
         # Repair Center (models, registry, engine, console). Cross-module helpers
         # (Invoke-OmniRepairStep, the result factories, Get-OmniRepairRiskNames,
         # New-OmniRestorePoint) MUST be exported so plugins/engine can resolve them

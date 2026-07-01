@@ -127,6 +127,11 @@
                             </StackPanel>
                         </StackPanel>
 
+                        <TextBlock Text="System Information" FontSize="15" FontWeight="SemiBold" Margin="0,22,0,8"/>
+                        <Border Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="1" CornerRadius="6" Padding="12">
+                            <StackPanel x:Name="PanelSysInfo"/>
+                        </Border>
+
                         <TextBlock Text="Top Recommendations" FontSize="15" FontWeight="SemiBold" Margin="0,22,0,8"/>
                         <ItemsControl x:Name="ItemsRecommendations">
                             <ItemsControl.ItemTemplate>

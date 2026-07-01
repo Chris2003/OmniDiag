@@ -12,8 +12,8 @@ BeforeAll {
 }
 
 Describe 'Built-in repair catalog' {
-    It 'discovers all ten repairs' {
-        $script:Repairs.Count | Should -Be 10
+    It 'discovers all eleven repairs' {
+        $script:Repairs.Count | Should -Be 11
     }
 
     It 'gives every repair a unique name' {

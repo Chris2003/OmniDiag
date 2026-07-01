@@ -47,7 +47,7 @@ OmniDiag is being built in milestones. **Current: Version 2 complete — Repair 
 | HTML / JSON / CSV / ZIP reports | ✅ Milestone 4 |
 | PDF reports + branding (logo / accent color) | ✅ Milestone 6 |
 | WPF GUI (dashboard, light/dark toggle, cancel) | ✅ Milestone 5 |
-| Repair Center — console + GUI tab (10 repairs, dry-run, confirmation, restore points) | ✅ Milestone 6 |
+| Repair Center — console + GUI tab (11 repairs incl. CCleaner-style registry cleanup, dry-run, confirmation, restore points) | ✅ |
 | Portable / standalone distribution (fully local, no remoting) | ✅ Version 2 |
 
 See [ROADMAP.md](ROADMAP.md) for the full version plan.
@@ -203,7 +203,9 @@ Invoke-Pester -Path .\Tests
 
 ## Screenshots
 
-The GUI provides a left-nav dashboard with a 0–100 health score, live scan progress
+The GUI provides a left-nav dashboard with a 0–100 health score, a **DxDiag-style System
+Information panel** (OS, manufacturer/model, BIOS, processor, memory, DirectX, per-GPU
+display, and audio devices), live scan progress
 with a working Cancel button, a light/dark theme toggle (light by default), a
 **Diagnostics** tab to toggle individual scanners on/off (or run any single scanner on
 its own), report export with a **format picker** (choose HTML / JSON / CSV / PDF / ZIP

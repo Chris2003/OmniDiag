@@ -15,7 +15,7 @@ BeforeAll {
 Describe 'Get-OmniRepair' {
     It 'discovers the built-in repair catalog' {
         $repairs = @(Get-OmniRepair -Path $script:RepairsPath -Logger $script:Logger)
-        $repairs.Count | Should -Be 10
+        $repairs.Count | Should -Be 11
         $repairs[0].PSTypeNames | Should -Contain 'OmniDiag.RepairRegistration'
     }
 

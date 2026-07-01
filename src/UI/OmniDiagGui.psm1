@@ -255,6 +255,147 @@ function Show-OmniExportDialog {
     return [string[]]$selected
 }
 
+function Get-OmniSystemInfo {
+    <#
+    .SYNOPSIS
+        Internal: gather DxDiag-style system information (grouped label/value sections).
+
+    .DESCRIPTION
+        Returns an ordered dictionary of section name -> ordered dictionary of label/value,
+        for the Dashboard's System Information panel. Every query fails soft (missing values
+        are simply omitted), so this never throws.
+    #>
+    [OutputType([System.Collections.Specialized.OrderedDictionary])]
+    param()
+
+    $q = {
+        param([string] $Class, [string] $Namespace = 'root/cimv2')
+        try { Get-CimInstance -ClassName $Class -Namespace $Namespace -ErrorAction Stop } catch { $null }
+    }
+    $add = { param($Bag, $Key, $Value) if ($null -ne $Value -and "$Value".Trim()) { $Bag[$Key] = "$Value".Trim() } }
+
+    $os   = & $q 'Win32_OperatingSystem'
+    $cs   = & $q 'Win32_ComputerSystem'
+    $bios = & $q 'Win32_BIOS'
+    $cpu  = @(& $q 'Win32_Processor') | Select-Object -First 1
+    $page = @(& $q 'Win32_PageFileUsage') | Select-Object -First 1
+
+    $info = [ordered]@{}
+
+    # --- System ----------------------------------------------------------
+    $sys = [ordered]@{}
+    & $add $sys 'Computer Name' $env:COMPUTERNAME
+    if ($os) {
+        & $add $sys 'Operating System' ("{0} {1} (Build {2})" -f $os.Caption, $os.Version, $os.BuildNumber)
+        & $add $sys 'Architecture' $os.OSArchitecture
+        try { & $add $sys 'Language' (Get-Culture).DisplayName } catch { }
+        try { if ($os.InstallDate) { & $add $sys 'Install Date' ('{0:yyyy-MM-dd}' -f $os.InstallDate) } } catch { }
+        try {
+            if ($os.LastBootUpTime) {
+                $up = (Get-Date) - $os.LastBootUpTime
+                & $add $sys 'Uptime' ('{0}d {1}h {2}m' -f [int]$up.TotalDays, $up.Hours, $up.Minutes)
+            }
+        } catch { }
+        # DirectX: Windows 10/11 ship DirectX 12.
+        try { if ([version]$os.Version -ge [version]'10.0') { & $add $sys 'DirectX Version' 'DirectX 12' } } catch { }
+    }
+    if ($cs) {
+        & $add $sys 'Manufacturer' $cs.Manufacturer
+        & $add $sys 'Model' $cs.Model
+        & $add $sys 'System Type' $cs.SystemType
+        if ($cs.PartOfDomain) { & $add $sys 'Domain' $cs.Domain } else { & $add $sys 'Workgroup' $cs.Workgroup }
+        if ($cs.TotalPhysicalMemory) { & $add $sys 'Installed Memory (RAM)' ('{0} GB' -f [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)) }
+    }
+    & $add $sys 'Logged-in User' ("{0}\{1}" -f $env:USERDOMAIN, $env:USERNAME)
+    if ($bios) {
+        $biosDate = try { if ($bios.ReleaseDate) { ' ({0:yyyy-MM-dd})' -f $bios.ReleaseDate } else { '' } } catch { '' }
+        & $add $sys 'BIOS' ("{0} {1}{2}" -f $bios.Manufacturer, $bios.SMBIOSBIOSVersion, $biosDate)
+    }
+    if ($page -and $page.AllocatedBaseSize) {
+        & $add $sys 'Page File' ('{0} MB used / {1} MB allocated' -f $page.CurrentUsage, $page.AllocatedBaseSize)
+    }
+    $info['System'] = $sys
+
+    # --- Processor -------------------------------------------------------
+    if ($cpu) {
+        $proc = [ordered]@{}
+        & $add $proc 'Processor' $cpu.Name
+        & $add $proc 'Cores / Threads' ("{0} cores, {1} logical" -f $cpu.NumberOfCores, $cpu.NumberOfLogicalProcessors)
+        if ($cpu.MaxClockSpeed) { & $add $proc 'Max Clock' ('{0} MHz' -f $cpu.MaxClockSpeed) }
+        $info['Processor'] = $proc
+    }
+
+    # --- Display (one section per GPU) -----------------------------------
+    $gpus = @(& $q 'Win32_VideoController' | Where-Object { $_.Name })
+    for ($i = 0; $i -lt $gpus.Count; $i++) {
+        $g = $gpus[$i]
+        $disp = [ordered]@{}
+        & $add $disp 'Name' $g.Name
+        & $add $disp 'Chip / Vendor' (@($g.VideoProcessor, $g.AdapterCompatibility) | Where-Object { $_ } | Select-Object -Unique) -join ' / '
+        if ($g.AdapterRAM -and $g.AdapterRAM -gt 0) { & $add $disp 'Dedicated Memory (approx)' ('{0} GB' -f [math]::Round([uint64]$g.AdapterRAM / 1GB, 1)) }
+        if ($g.CurrentHorizontalResolution -and $g.CurrentVerticalResolution) {
+            $mode = '{0} x {1}' -f $g.CurrentHorizontalResolution, $g.CurrentVerticalResolution
+            if ($g.CurrentRefreshRate) { $mode += ' @ {0} Hz' -f $g.CurrentRefreshRate }
+            & $add $disp 'Current Mode' $mode
+        }
+        & $add $disp 'Driver Version' $g.DriverVersion
+        try { if ($g.DriverDate) { & $add $disp 'Driver Date' ('{0:yyyy-MM-dd}' -f $g.DriverDate) } } catch { }
+        $title = if ($gpus.Count -gt 1) { "Display $($i + 1)" } else { 'Display' }
+        $info[$title] = $disp
+    }
+
+    # --- Sound -----------------------------------------------------------
+    $snd = @(& $q 'Win32_SoundDevice' | Where-Object { $_.Name })
+    if ($snd.Count -gt 0) {
+        $sound = [ordered]@{}
+        $n = 1
+        foreach ($d in $snd) { & $add $sound ("Device $n") $d.Name; $n++ }
+        $info['Sound'] = $sound
+    }
+
+    return $info
+}
+
+function Update-OmniSysInfoPanel {
+    <# .SYNOPSIS Internal: render Get-OmniSystemInfo into the Dashboard's PanelSysInfo. #>
+    param([hashtable] $Ui)
+    $panel = $Ui.Controls.PanelSysInfo
+    if (-not $panel) { return }
+    $panel.Children.Clear()
+
+    $info = Get-OmniSystemInfo
+    $first = $true
+    foreach ($sectionName in $info.Keys) {
+        $h = [System.Windows.Controls.TextBlock]::new()
+        $h.Text = $sectionName
+        $h.FontWeight = 'SemiBold'
+        $h.Margin = if ($first) { '0,0,0,4' } else { '0,12,0,4' }
+        $h.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'BrushText')
+        [void]$panel.Children.Add($h)
+        $first = $false
+
+        foreach ($entry in $info[$sectionName].GetEnumerator()) {
+            $g = [System.Windows.Controls.Grid]::new()
+            $c0 = [System.Windows.Controls.ColumnDefinition]::new(); $c0.Width = [System.Windows.GridLength]::new(190)
+            $c1 = [System.Windows.Controls.ColumnDefinition]::new(); $c1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            $g.ColumnDefinitions.Add($c0); $g.ColumnDefinitions.Add($c1)
+
+            $lbl = [System.Windows.Controls.TextBlock]::new()
+            $lbl.Text = $entry.Key; $lbl.Margin = '0,1,8,1'
+            $lbl.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'BrushMuted')
+            [System.Windows.Controls.Grid]::SetColumn($lbl, 0)
+
+            $val = [System.Windows.Controls.TextBlock]::new()
+            $val.Text = [string]$entry.Value; $val.TextWrapping = 'Wrap'; $val.Margin = '0,1,0,1'
+            $val.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'BrushText')
+            [System.Windows.Controls.Grid]::SetColumn($val, 1)
+
+            [void]$g.Children.Add($lbl); [void]$g.Children.Add($val)
+            [void]$panel.Children.Add($g)
+        }
+    }
+}
+
 function Initialize-OmniDiagPanel {
     <#
     .SYNOPSIS
@@ -364,7 +505,7 @@ function Invoke-OmniWindow {
 
     $names = @('BtnScan','BtnCancel','BtnExport','BtnTheme','CmbRange','NavList',
                'PanelDiagnostics','DiagGrid','BtnDiagEnableAll','BtnDiagDisableAll',
-               'PanelDashboard','GridFindings','TxtScore','TxtGrade','TxtComputer',
+               'PanelDashboard','PanelSysInfo','GridFindings','TxtScore','TxtGrade','TxtComputer',
                'TxtUser','TxtRange','TxtDuration','TxtCounts','ItemsRecommendations',
                'GridModules','ProgressBarMain','TxtStatus',
                'PanelRepair','RepairGrid','RepairResultGrid','BtnRunRepairs','BtnRepairCancel',
@@ -697,6 +838,9 @@ function Invoke-OmniWindow {
             try { $ui.Repair.PowerShell.Dispose(); $ui.Repair.Runspace.Dispose() } catch { }
         }
     })
+
+    # Populate the Dashboard's System Information panel once (static hardware/OS facts).
+    try { Update-OmniSysInfoPanel -Ui $script:OmniUi } catch { $script:OmniUi.Controls.TxtStatus.Text = "System info unavailable: $($_.Exception.Message)" }
 
     [void]$window.ShowDialog()
 }

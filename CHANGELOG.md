@@ -6,6 +6,25 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — CCleaner-style registry scan + backup-first cleaner
+- **Registry detection** (`src/Core/RegistryScan.psm1`, `Get-OmniInvalidRegistryEntry`): a
+  read-only scan for invalid/obsolete entries across seven checks — broken Run/RunOnce startup
+  commands, dead App Paths, orphaned file associations (extension → missing ProgID), obsolete
+  uninstall leftovers (missing InstallLocation), and missing shared-DLL / sound-event / font
+  references. Returns a flat list of removable entries and changes nothing.
+- **Registry Health scanner** now reports these as per-category Warning findings (metric
+  `InvalidEntryCount`) alongside its existing Winlogon Shell/Userinit integrity checks.
+- **Repair: "Clean Invalid Registry Entries"** (`src/Repairs/CleanRegistry.psm1`) — the 11th
+  built-in repair. It re-scans, exports a **.reg backup** of every affected key first
+  (`Export-OmniRegistryBackup`), then removes the entries (`Remove-OmniRegistryEntry`).
+  Classified **Destructive**, requires admin, creates a System Restore point, and is fully
+  dry-run aware (a dry-run reports the count + backup path and touches nothing). Restore by
+  importing the .reg backup. Auto-recommended after a scan when invalid entries were found
+  (`Test-OmniRepairApplicable`).
+- Tests: `Core.RegistryScan.Tests.ps1` exercises detection read-only and does a real
+  backup-then-remove round-trip against a throwaway HKCU value (no admin); repair-count
+  assertions bumped to 11.
+
 ### Added — Portable / standalone distribution (Version 2, final increment)
 - **Portable package build** (`build/Build-Portable.ps1`): assembles a self-contained,
   versioned package (staging folder + `dist/OmniDiag-<version>-portable.zip` with a
@@ -47,6 +66,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Performance: a full 35-scanner run completes in ~1 minute; the Benchmark and Disk Usage
   scanners were tuned (bounded CPU/disk micro-benchmark; dropped the whole-drive folder walk)
   and USB Devices now uses `-PresentOnly` so disconnected/phantom devices aren't false-flagged.
+
+### Added — DxDiag-style System Information on the Dashboard
+- The GUI **Dashboard** now shows a **System Information** panel (DxDiag-style), grouped into
+  System (OS/build/architecture/language, manufacturer/model, system type, domain, installed
+  RAM, BIOS, page file, install date, uptime, DirectX version), Processor (name, cores/threads,
+  max clock), one Display section per GPU (name, chip/vendor, approx dedicated memory, current
+  mode + refresh rate, driver version/date), and Sound (audio devices). Gathered via CIM
+  (`Get-OmniSystemInfo`), rendered theme-aware (`Update-OmniSysInfoPanel`), and fails soft so
+  missing values are simply omitted.
 
 ### Added — GUI Diagnostics tab: per-scanner on/off + run individually
 - New **Diagnostics** entry in the GUI left navigation (Dashboard / All Findings / Diagnostics
