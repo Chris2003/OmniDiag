@@ -92,8 +92,10 @@ function Invoke-OmniRepair {
 
         & $report ($i) $reg.Name 'Start' $null
 
-        # Gracefully skip admin-only repairs when not elevated.
-        if ($reg.RequiresAdmin -and -not $Context.IsAdmin) {
+        # Gracefully skip admin-only repairs when not elevated - but only for real
+        # execution. A dry-run changes nothing and needs no elevation, so it still
+        # describes admin-only repairs (status DryRun) rather than skipping them.
+        if ($reg.RequiresAdmin -and -not $Context.IsAdmin -and -not $Context.DryRun) {
             $skip = New-OmniRepairResult -Name $reg.Name -Category $reg.Category
             Add-OmniRepairStep -Result $skip -Description 'Requires administrator rights' -Succeeded $false `
                 -Output 'Re-run OmniDiag elevated to apply this repair.'

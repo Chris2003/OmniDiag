@@ -23,6 +23,15 @@ Describe 'GUI XAML structure' {
             $raw | Should -Match ('x:Name="' + $n + '"')
         }
     }
+    It 'defines the Diagnostics tab controls' {
+        $raw = Get-Content -LiteralPath $script:XamlPath -Raw
+        foreach ($n in @('PanelDiagnostics','DiagGrid','BtnDiagEnableAll','BtnDiagDisableAll')) {
+            $raw | Should -Match ('x:Name="' + $n + '"')
+        }
+    }
+    It 'adds a Diagnostics entry to the navigation' {
+        (Get-Content -LiteralPath $script:XamlPath -Raw) | Should -Match 'Content="Diagnostics"'
+    }
     It 'defines the Repair Center controls' {
         $raw = Get-Content -LiteralPath $script:XamlPath -Raw
         foreach ($n in @('PanelRepair','RepairGrid','RepairResultGrid','BtnRunRepairs','BtnRepairCancel',

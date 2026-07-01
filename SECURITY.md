@@ -11,8 +11,11 @@ OmniDiag is **local-only by design**:
   contain usernames, device names, file paths, domains, and other internal
   information. **Review reports before sharing them.**
 
-Any future remote/cloud capability (e.g. remote diagnostics in Version 2) will be
-strictly opt-in and clearly disclosed.
+OmniDiag is deliberately **local-only**: it runs on the machine being diagnosed and
+never reaches out to other machines. Remote execution (e.g. WinRM/PowerShell Remoting)
+was intentionally left off the roadmap; "fleet" use is served by running the portable
+build on each machine and collecting the reports. Should any remote/cloud capability
+ever be added, it would be strictly opt-in and clearly disclosed.
 
 ## Supported versions
 
@@ -38,5 +41,6 @@ timeline after triage. Coordinated disclosure is appreciated.
 - OmniDiag executes diagnostic queries with the privileges of the running user.
   Running elevated grants it broad read access to the system — only run it from
   trusted sources.
-- Optional repair actions (Version 2) change system state and always require explicit
-  confirmation.
+- Optional repair actions (the Repair Center) change system state and always require
+  explicit confirmation; a System Restore point is created before system-altering repairs,
+  and a dry-run mode describes every repair without executing it.

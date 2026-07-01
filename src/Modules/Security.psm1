@@ -3,16 +3,18 @@
     OmniDiag diagnostic module: Security.
 
 .DESCRIPTION
-    Reports security posture: Microsoft Defender state and signature age, firewall
-    profiles, BitLocker protection, Secure Boot, TPM, Credential Guard, UAC, RDP
-    exposure, registered antivirus, and local administrator count.
+    Reviews baseline endpoint security posture: Microsoft Defender real-time
+    protection and signature freshness, Windows Firewall profile state, and UAC.
+    Emits metrics for each and warns on any weakened setting.
 
-    Several checks (BitLocker, local admins) need elevation; when not elevated they
-    are skipped with a note instead of failing the module.
+    Contract:
+        Get-OmniModuleManifest -> module metadata
+        Invoke-OmniModuleScan  -> OmniDiag.Result
 #>
 
 Set-StrictMode -Version Latest
 
+# Self-bootstrap the Core factories so this module is usable standalone.
 if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
     Import-Module (Join-Path $PSScriptRoot '..\Core\Models.psm1') -Global -Force -DisableNameChecking
 }
@@ -23,9 +25,9 @@ function Get-OmniModuleManifest {
     return @{
         Name          = 'Security'
         Category      = 'Security'
-        Description   = 'Defender, firewall, BitLocker, Secure Boot, TPM, UAC, and RDP posture.'
+        Description   = 'Checks Defender, firewall profiles, and UAC posture.'
         RequiresAdmin = $false
-        Order         = 60
+        Order         = 500
         Enabled       = $true
     }
 }
@@ -33,141 +35,101 @@ function Get-OmniModuleManifest {
 function Invoke-OmniModuleScan {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
-    param([Parameter(Mandatory)] [pscustomobject] $Context)
+    param(
+        [Parameter(Mandatory)]
+        [pscustomobject] $Context
+    )
 
-    $result = New-OmniResult -ModuleName 'Security' -Category 'Security' -HadAdmin $Context.IsAdmin
+    $result = New-OmniResult -ModuleName 'Security' -Category 'Security' `
+        -RequiresAdmin $false -HadAdmin $Context.IsAdmin
     $log = $Context.Logger
 
     # --- Microsoft Defender ----------------------------------------------
     try {
         $mp = Get-MpComputerStatus -ErrorAction Stop
-        Set-OmniResultMetric -Result $result -Name 'DefenderRealTime' -Value ([bool]$mp.RealTimeProtectionEnabled)
-        Set-OmniResultMetric -Result $result -Name 'DefenderAntivirus' -Value ([bool]$mp.AntivirusEnabled)
-        Set-OmniResultMetric -Result $result -Name 'DefenderSignatureAgeDays' -Value $mp.AntivirusSignatureAge
 
-        if (-not $mp.RealTimeProtectionEnabled) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Defender real-time protection is OFF' -Severity 'Warning' `
-                -Component 'Security/Defender' -Detail 'Real-time protection is disabled.' `
-                -LikelyCause 'Disabled manually, by another AV, or by policy.' -Confidence 75 `
-                -Recommendation 'Re-enable real-time protection unless a third-party AV is managing the endpoint.')
-        }
-        if ($null -ne $mp.AntivirusSignatureAge -and $mp.AntivirusSignatureAge -gt 7) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Defender signatures are $($mp.AntivirusSignatureAge) days old" -Severity 'Warning' `
-                -Component 'Security/Defender' -Detail "Antivirus signature age is $($mp.AntivirusSignatureAge) days." `
-                -LikelyCause 'Definition updates are not completing.' -Confidence 70 `
-                -Recommendation 'Update signatures (Update-MpSignature); verify connectivity to update sources.')
-        }
-    } catch { $log.Debug("Get-MpComputerStatus unavailable: $($_.Exception.Message)", 'Security') }
+        $rtp = [bool]$mp.RealTimeProtectionEnabled
+        $amService = [bool]$mp.AMServiceEnabled
+        $sigAge = [int]$mp.AntivirusSignatureAge
 
-    # --- Registered antivirus (Security Center) --------------------------
-    try {
-        $av = @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName 'AntiVirusProduct' -ErrorAction Stop)
-        Set-OmniResultMetric -Result $result -Name 'RegisteredAV' -Value (($av | ForEach-Object { $_.displayName }) -join ', ')
-        if ($av.Count -eq 0) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'No antivirus product registered' -Severity 'Critical' `
-                -Component 'Security/Antivirus' -Detail 'Windows Security Center reports no registered AV product.' `
-                -LikelyCause 'No active antivirus, or AV not registering with Security Center.' -Confidence 60 `
-                -Recommendation 'Ensure Defender or a third-party AV is active and registered.')
-        }
-    } catch { $log.Debug("SecurityCenter2 query unavailable: $($_.Exception.Message)", 'Security') }
+        Set-OmniResultMetric -Result $result -Name 'RealTimeProtectionEnabled' -Value $rtp
+        Set-OmniResultMetric -Result $result -Name 'AMServiceEnabled' -Value $amService
+        Set-OmniResultMetric -Result $result -Name 'AntivirusSignatureAgeDays' -Value $sigAge
 
-    # --- Firewall ---------------------------------------------------------
-    try {
-        $fw = Get-NetFirewallProfile -ErrorAction Stop
-        $disabled = @($fw | Where-Object { -not $_.Enabled })
-        if ($disabled.Count -gt 0) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Firewall disabled on $($disabled.Count) profile(s)" -Severity 'Warning' `
-                -Component 'Security/Firewall' -Detail ("Disabled profiles: {0}" -f (($disabled.Name) -join ', ')) `
-                -LikelyCause 'Firewall turned off.' -Confidence 70 `
-                -Recommendation 'Re-enable the firewall unless a managed policy intentionally disables it.')
+        if (-not $rtp) {
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+                -Title 'Real-time protection is disabled' -Severity 'Warning' -Component 'Security/Defender' `
+                -Detail 'Microsoft Defender real-time protection is turned off.' `
+                -LikelyCause 'Disabled by user, policy, or a third-party antivirus taking over.' `
+                -Confidence 75 `
+                -Recommendation 'Enable real-time protection, or verify a supported third-party AV is active.')
         }
-    } catch { $log.Debug("Get-NetFirewallProfile unavailable: $($_.Exception.Message)", 'Security') }
 
-    # --- BitLocker (admin) -----------------------------------------------
-    if ($Context.IsAdmin) {
-        try {
-            $sysDrive = $env:SystemDrive
-            $blv = Get-BitLockerVolume -MountPoint $sysDrive -ErrorAction Stop
-            Set-OmniResultMetric -Result $result -Name 'BitLockerOSDrive' -Value $blv.ProtectionStatus
-            if ($blv.ProtectionStatus -ne 'On') {
-                Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "BitLocker is not protecting $sysDrive" -Severity 'Warning' `
-                    -Component 'Security/BitLocker' -Detail "Protection status: $($blv.ProtectionStatus)." `
-                    -LikelyCause 'Drive encryption is off or suspended.' -Confidence 70 `
-                    -Recommendation 'Enable BitLocker on the OS drive (requires TPM and a recovery key escrow plan).')
-            }
-        } catch { $log.Debug("Get-BitLockerVolume unavailable: $($_.Exception.Message)", 'Security') }
-    } else {
-        $log.Debug('Skipping BitLocker check (requires administrator).', 'Security')
+        if (-not $amService) {
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+                -Title 'Antimalware service is not running' -Severity 'Warning' -Component 'Security/Defender' `
+                -Detail 'The Microsoft Defender antimalware service is not enabled.' `
+                -LikelyCause 'Service disabled or replaced by third-party AV.' `
+                -Confidence 65 `
+                -Recommendation 'Verify endpoint protection is provided by an active AV solution.')
+        }
+
+        if ($sigAge -gt 7) {
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+                -Title ("Antivirus signatures are {0} days old" -f $sigAge) -Severity 'Warning' -Component 'Security/Defender' `
+                -Detail "Defender signature definitions have not been updated in $sigAge days." `
+                -LikelyCause 'Update failures, no internet connectivity, or a paused update service.' `
+                -Confidence 70 `
+                -Recommendation 'Run a signature update and confirm the device can reach update servers.')
+        }
+    } catch {
+        $log.Warn("Get-MpComputerStatus unavailable: $($_.Exception.Message)", 'Security')
+        Set-OmniResultMetric -Result $result -Name 'DefenderStatus' -Value 'Unknown'
     }
 
-    # --- Secure Boot ------------------------------------------------------
+    # --- Windows Firewall profiles ---------------------------------------
     try {
-        $sb = Confirm-SecureBootUEFI -ErrorAction Stop
-        Set-OmniResultMetric -Result $result -Name 'SecureBoot' -Value ([bool]$sb)
-        if (-not $sb) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Secure Boot is disabled' -Severity 'Warning' `
-                -Component 'Security/SecureBoot' -Detail 'Secure Boot is supported but off.' `
-                -LikelyCause 'Disabled in UEFI firmware.' -Confidence 80 `
-                -Recommendation 'Enable Secure Boot in UEFI for boot integrity.')
-        }
-    } catch { $log.Debug("Secure Boot state unavailable: $($_.Exception.Message)", 'Security') }
-
-    # --- Credential Guard -------------------------------------------------
-    try {
-        $dg = Get-CimInstance -ClassName Win32_DeviceGuard -Namespace 'root/Microsoft/Windows/DeviceGuard' -ErrorAction Stop
-        $cgRunning = ($dg.SecurityServicesRunning -contains 1)
-        Set-OmniResultMetric -Result $result -Name 'CredentialGuard' -Value $cgRunning
-    } catch { $log.Debug("DeviceGuard query unavailable: $($_.Exception.Message)", 'Security') }
-
-    # --- UAC --------------------------------------------------------------
-    try {
-        $uac = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'EnableLUA' -ErrorAction Stop
-        Set-OmniResultMetric -Result $result -Name 'UAC' -Value ([bool]$uac.EnableLUA)
-        if ($uac.EnableLUA -ne 1) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'User Account Control (UAC) is disabled' -Severity 'Warning' `
-                -Component 'Security/UAC' -Detail 'EnableLUA is not set to 1.' `
-                -LikelyCause 'UAC turned off.' -Confidence 80 `
-                -Recommendation 'Re-enable UAC; running without it weakens privilege isolation.')
-        }
-    } catch { $log.Debug("UAC registry read failed: $($_.Exception.Message)", 'Security') }
-
-    # --- RDP --------------------------------------------------------------
-    try {
-        $rdp = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -ErrorAction Stop
-        $rdpEnabled = ($rdp.fDenyTSConnections -eq 0)
-        Set-OmniResultMetric -Result $result -Name 'RDPEnabled' -Value $rdpEnabled
-        if ($rdpEnabled) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Remote Desktop (RDP) is enabled' -Severity 'Information' `
-                -Component 'Security/RDP' -Detail 'Incoming RDP connections are allowed.' `
-                -LikelyCause 'RDP turned on for remote access.' `
-                -Recommendation 'If unexpected, disable RDP. If needed, require NLA and restrict access by firewall/VPN.')
-        }
-    } catch { $log.Debug("RDP registry read failed: $($_.Exception.Message)", 'Security') }
-
-    # --- Local administrators (admin) ------------------------------------
-    if ($Context.IsAdmin) {
-        try {
-            $admins = @(Get-LocalGroupMember -Group 'Administrators' -ErrorAction Stop)
-            Set-OmniResultMetric -Result $result -Name 'LocalAdministrators' -Value (($admins | ForEach-Object { $_.Name }) -join ', ')
-            if ($admins.Count -gt 5) {
-                Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "$($admins.Count) members in local Administrators" -Severity 'Warning' `
-                    -Component 'Security/Accounts' -Detail "The local Administrators group has $($admins.Count) members." `
-                    -LikelyCause 'Excess accounts with admin rights increase attack surface.' -Confidence 50 `
-                    -Recommendation 'Review and prune unnecessary local administrators.' `
-                    -Data ($admins | ForEach-Object { $_.Name }))
+        $profiles = Get-NetFirewallProfile -ErrorAction Stop
+        foreach ($p in $profiles) {
+            $enabled = [bool]$p.Enabled
+            Set-OmniResultMetric -Result $result -Name ("Firewall{0}Enabled" -f $p.Name) -Value $enabled
+            if (-not $enabled) {
+                Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+                    -Title ("Firewall disabled for {0} profile" -f $p.Name) -Severity 'Warning' -Component 'Security/Firewall' `
+                    -Detail ("The Windows Firewall is turned off for the {0} network profile." -f $p.Name) `
+                    -LikelyCause 'Disabled by user, group policy, or a third-party firewall.' `
+                    -Confidence 75 `
+                    -Recommendation 'Enable the firewall for this profile, or confirm a managed firewall is in place.')
             }
-        } catch { $log.Debug("Get-LocalGroupMember failed: $($_.Exception.Message)", 'Security') }
+        }
+    } catch {
+        $log.Warn("Get-NetFirewallProfile unavailable: $($_.Exception.Message)", 'Security')
+        Set-OmniResultMetric -Result $result -Name 'FirewallStatus' -Value 'Unknown'
     }
 
-    if (-not $Context.IsAdmin) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Some security checks skipped (not elevated)' -Severity 'Information' `
-            -Component 'Security' -Detail 'BitLocker and local administrator checks require elevation.' `
-            -Recommendation 'Re-run OmniDiag as Administrator for a complete security assessment.')
+    # --- UAC (EnableLUA) --------------------------------------------------
+    try {
+        $uacKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+        $enableLua = (Get-ItemProperty -Path $uacKey -Name 'EnableLUA' -ErrorAction Stop).EnableLUA
+        $uacOn = ([int]$enableLua -eq 1)
+        Set-OmniResultMetric -Result $result -Name 'UACEnabled' -Value $uacOn
+        if (-not $uacOn) {
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+                -Title 'User Account Control (UAC) is disabled' -Severity 'Warning' -Component 'Security/UAC' `
+                -Detail 'EnableLUA is set to 0; UAC elevation prompts are disabled.' `
+                -LikelyCause 'UAC turned off manually or by policy.' `
+                -Confidence 80 `
+                -Recommendation 'Re-enable UAC (EnableLUA = 1) to protect against silent privilege escalation.')
+        }
+    } catch {
+        $log.Debug("UAC registry read failed: $($_.Exception.Message)", 'Security')
+        Set-OmniResultMetric -Result $result -Name 'UACEnabled' -Value 'Unknown'
     }
 
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Security posture looks good' -Severity 'Pass' `
-            -Component 'Security' -Detail 'Defender, firewall, and platform protections are in expected states.')
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            -Title 'Baseline security posture is healthy' -Severity 'Pass' -Component 'Security' `
+            -Detail 'Defender, firewall, and UAC settings were reviewed without issues.')
     }
 
     return (Complete-OmniResult -Result $result)

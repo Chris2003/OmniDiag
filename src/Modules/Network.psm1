@@ -3,24 +3,20 @@
     OmniDiag diagnostic module: Network.
 
 .DESCRIPTION
-    Collects IP/adapter/DNS/gateway configuration and runs reachability probes
-    (gateway, internet by IP, DNS resolution), then correlates the results into
-    interpreted findings - including the classic "gateway reachable but DNS
-    failing => DNS server issue" diagnosis.
+    Reports active network adapters, packet-error counters, and runs bounded
+    reachability probes: ping the default gateway and a public IP (1.1.1.1) via
+    System.Net.NetworkInformation.Ping, plus a DNS resolution test via
+    System.Net.Dns. Correlates results into interpreted findings (e.g. gateway
+    reachable but DNS/internet failing).
 
-    Probes use System.Net.NetworkInformation.Ping and System.Net.Dns so behavior
-    is consistent across Windows PowerShell 5.1 and PowerShell 7. Public-IP lookup
-    is the only step that contacts an external service and is OFF by default to
-    honor the local-only privacy stance (enable via Config 'CheckPublicIP').
-
-    Per-run options (via $Context.Config):
-        InternetProbeIp   string  IP to ping for internet reachability. Default 1.1.1.1.
-        DnsProbeHost      string  Hostname to resolve for DNS test. Default www.microsoft.com.
-        CheckPublicIP     bool    Look up the public IP (external call). Default $false.
+    Contract:
+        Get-OmniModuleManifest -> module metadata
+        Invoke-OmniModuleScan  -> OmniDiag.Result
 #>
 
 Set-StrictMode -Version Latest
 
+# Self-bootstrap the Core factories so this module is usable standalone.
 if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
     Import-Module (Join-Path $PSScriptRoot '..\Core\Models.psm1') -Global -Force -DisableNameChecking
 }
@@ -31,196 +27,176 @@ function Get-OmniModuleManifest {
     return @{
         Name          = 'Network'
         Category      = 'Network'
-        Description   = 'IP configuration, DNS, gateway, adapters, and connectivity diagnostics.'
+        Description   = 'Active adapters, packet errors, and connectivity probes.'
         RequiresAdmin = $false
-        Order         = 30
+        Order         = 400
         Enabled       = $true
-    }
-}
-
-# --- internal helpers ------------------------------------------------------
-
-function Invoke-OmniPing {
-    param([string] $Target, [int] $Count = 4, [int] $TimeoutMs = 1000)
-    $ping = [System.Net.NetworkInformation.Ping]::new()
-    $ok = 0; $rtts = [System.Collections.Generic.List[int]]::new()
-    for ($i = 0; $i -lt $Count; $i++) {
-        try {
-            $r = $ping.Send($Target, $TimeoutMs)
-            if ($r.Status -eq 'Success') { $ok++; $rtts.Add([int]$r.RoundtripTime) }
-        } catch { }
-    }
-    [pscustomobject]@{
-        Target    = $Target
-        Sent      = $Count
-        Received  = $ok
-        Success   = ($ok -gt 0)
-        LossPct   = [int]((($Count - $ok) / $Count) * 100)
-        AvgMs     = if ($rtts.Count -gt 0) { [int](($rtts | Measure-Object -Average).Average) } else { $null }
     }
 }
 
 function Invoke-OmniModuleScan {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
-    param([Parameter(Mandatory)] [pscustomobject] $Context)
+    param(
+        [Parameter(Mandatory)]
+        [pscustomobject] $Context
+    )
 
-    $result = New-OmniResult -ModuleName 'Network' -Category 'Network' -HadAdmin $Context.IsAdmin
+    $result = New-OmniResult -ModuleName 'Network' -Category 'Network' `
+        -RequiresAdmin $false -HadAdmin $Context.IsAdmin
     $log = $Context.Logger
-    $cfg = $Context.Config
 
-    $internetIp = if ($cfg.ContainsKey('InternetProbeIp')) { [string]$cfg['InternetProbeIp'] } else { '1.1.1.1' }
-    $dnsHost    = if ($cfg.ContainsKey('DnsProbeHost'))    { [string]$cfg['DnsProbeHost'] }    else { 'www.microsoft.com' }
-    $checkPub   = $cfg.ContainsKey('CheckPublicIP') -and $cfg['CheckPublicIP']
+    $timeoutMs = 2000
 
-    # --- Adapters ---------------------------------------------------------
-    $upAdapters = @()
-    try {
-        $adapters = Get-NetAdapter -ErrorAction Stop | Where-Object { $_.Status -ne 'Not Present' }
-        $upAdapters = @($adapters | Where-Object Status -eq 'Up')
-        Set-OmniResultMetric -Result $result -Name 'AdaptersUp' -Value $upAdapters.Count
-        foreach ($a in $upAdapters) {
-            Set-OmniResultMetric -Result $result -Name "NIC: $($a.Name)" -Value ("{0}, {1}, MAC {2}" -f $a.InterfaceDescription, $a.LinkSpeed, $a.MacAddress)
+    # Helper: ping a target, return latency ms or $null.
+    $ping = {
+        param([string] $Target)
+        try {
+            $p = [System.Net.NetworkInformation.Ping]::new()
+            $reply = $p.Send($Target, $timeoutMs)
+            if ($reply -and $reply.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) {
+                return [int]$reply.RoundtripTime
+            }
+            return $null
+        } catch {
+            return $null
+        } finally {
+            if ($p) { try { $p.Dispose() } catch { } }
         }
-        if ($upAdapters.Count -eq 0) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'No active network adapters' -Severity 'Critical' `
-                -Component 'Network/Adapter' -Detail 'No network adapter is in the Up state.' `
-                -LikelyCause 'Cable unplugged, Wi-Fi off, or all adapters disabled.' -Confidence 80 `
-                -Recommendation 'Check the physical connection / Wi-Fi switch and enable the adapter.')
-        }
-    } catch {
-        $log.Warn("Get-NetAdapter failed: $($_.Exception.Message)", 'Network')
     }
 
-    # --- IP configuration, gateway, DNS servers ---------------------------
+    # --- Active adapters ---------------------------------------------------
+    $activeCount = 0
+    try {
+        $adapters = $null
+        if (Get-Command -Name 'Get-NetAdapter' -ErrorAction SilentlyContinue) {
+            try {
+                $adapters = @(Get-NetAdapter -ErrorAction Stop | Where-Object { "$($_.Status)" -eq 'Up' })
+            } catch { $adapters = $null }
+        }
+
+        if ($null -ne $adapters) {
+            $activeCount = $adapters.Count
+            $list = @($adapters | ForEach-Object { "{0} ({1})" -f $_.Name, $_.LinkSpeed })
+            Set-OmniResultMetric -Result $result -Name 'ActiveAdapterList' -Value $list
+
+            # Packet errors (best-effort).
+            try {
+                foreach ($a in $adapters) {
+                    $stats = Get-NetAdapterStatistics -Name $a.Name -ErrorAction SilentlyContinue
+                    if ($stats) {
+                        $rxErr = try { [int64]$stats.ReceivedPacketErrors } catch { 0 }
+                        $txErr = try { [int64]$stats.OutboundPacketErrors } catch { 0 }
+                        Set-OmniResultMetric -Result $result -Name "Adapter.$($a.Name).RxErrors" -Value $rxErr
+                        Set-OmniResultMetric -Result $result -Name "Adapter.$($a.Name).TxErrors" -Value $txErr
+                        if (($rxErr + $txErr) -gt 1000) {
+                            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+                                -Title "High packet errors on $($a.Name)" -Severity 'Warning' `
+                                -Component 'Network/Adapter' `
+                                -Detail "Adapter '$($a.Name)' reports $rxErr receive and $txErr transmit packet errors." `
+                                -LikelyCause 'Faulty cable/port, driver issue, or link-layer interference.' `
+                                -Confidence 55 `
+                                -Recommendation 'Check cabling/port, update the NIC driver, and monitor error counters.')
+                        }
+                    }
+                }
+            } catch {
+                $log.Debug("Adapter statistics failed: $($_.Exception.Message)", 'Network')
+            }
+        } else {
+            $wmiAdapters = @(Get-CimInstance -ClassName 'Win32_NetworkAdapter' -ErrorAction Stop |
+                Where-Object { $_.NetEnabled -eq $true })
+            $activeCount = $wmiAdapters.Count
+            $list = @($wmiAdapters | ForEach-Object { "{0} ({1})" -f $_.Name, $_.Speed })
+            Set-OmniResultMetric -Result $result -Name 'ActiveAdapterList' -Value $list
+        }
+    } catch {
+        $log.Warn("Adapter enumeration failed: $($_.Exception.Message)", 'Network')
+    }
+    Set-OmniResultMetric -Result $result -Name 'ActiveAdapterCount' -Value $activeCount
+
+    if ($activeCount -eq 0) {
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            -Title 'No active network adapters' -Severity 'Critical' `
+            -Component 'Network/Adapter' `
+            -Detail 'No network adapter is in the Up state.' `
+            -LikelyCause 'All adapters disabled/disconnected, or driver failure.' `
+            -Confidence 80 `
+            -Recommendation 'Check cabling/Wi-Fi, enable the adapter, and verify NIC drivers.')
+    }
+
+    # --- Default gateway ---------------------------------------------------
     $gateway = $null
     try {
-        $cfgs = Get-NetIPConfiguration -ErrorAction Stop | Where-Object { $_.IPv4DefaultGateway }
-        $primary = $cfgs | Select-Object -First 1
-        if ($primary) {
-            $ipv4 = ($primary.IPv4Address | Select-Object -First 1).IPAddress
-            $gateway = ($primary.IPv4DefaultGateway | Select-Object -First 1).NextHop
-            $dnsServers = @($primary.DNSServer | Where-Object { $_.AddressFamily -eq 2 } | ForEach-Object { $_.ServerAddresses } )
-            Set-OmniResultMetric -Result $result -Name 'IPv4Address' -Value $ipv4
-            Set-OmniResultMetric -Result $result -Name 'DefaultGateway' -Value $gateway
-            Set-OmniResultMetric -Result $result -Name 'DNSServers' -Value ($dnsServers -join ', ')
-        } else {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'No default gateway configured' -Severity 'Critical' `
-                -Component 'Network/Gateway' -Detail 'No interface has an IPv4 default gateway.' `
-                -LikelyCause 'DHCP failure, limited connectivity, or misconfiguration.' -Confidence 75 `
-                -Recommendation 'Renew the DHCP lease (ipconfig /renew) and verify the network link.')
+        if (Get-Command -Name 'Get-NetIPConfiguration' -ErrorAction SilentlyContinue) {
+            $cfgs = @(Get-NetIPConfiguration -ErrorAction SilentlyContinue)
+            foreach ($c in $cfgs) {
+                if ($c.IPv4DefaultGateway) {
+                    $gw = @($c.IPv4DefaultGateway | ForEach-Object { $_.NextHop } | Where-Object { $_ }) | Select-Object -First 1
+                    if ($gw) { $gateway = $gw; break }
+                }
+            }
         }
     } catch {
-        $log.Warn("Get-NetIPConfiguration failed: $($_.Exception.Message)", 'Network')
+        $log.Debug("Gateway discovery failed: $($_.Exception.Message)", 'Network')
     }
 
-    # --- Reachability probes (the correlation engine) ---------------------
-    $gwProbe = if ($gateway) { Invoke-OmniPing -Target $gateway -Count 4 } else { $null }
-    $netProbe = Invoke-OmniPing -Target $internetIp -Count 4
+    $gatewayLatency = $null
+    if ($gateway) {
+        Set-OmniResultMetric -Result $result -Name 'DefaultGateway' -Value $gateway
+        $gatewayLatency = & $ping $gateway
+    }
+    Set-OmniResultMetric -Result $result -Name 'GatewayLatencyMs' -Value ($(if ($null -ne $gatewayLatency) { $gatewayLatency } else { -1 }))
 
-    $dnsOk = $false; $dnsError = $null
+    # --- Internet reachability (public IP) ---------------------------------
+    $internetLatency = & $ping '1.1.1.1'
+    $internetOk = ($null -ne $internetLatency)
+    Set-OmniResultMetric -Result $result -Name 'InternetReachable' -Value $internetOk
+    Set-OmniResultMetric -Result $result -Name 'InternetLatencyMs' -Value ($(if ($null -ne $internetLatency) { $internetLatency } else { -1 }))
+
+    # --- DNS resolution ----------------------------------------------------
+    $dnsOk = $false
     try {
-        [void][System.Net.Dns]::GetHostEntry($dnsHost)
-        $dnsOk = $true
-    } catch { $dnsError = $_.Exception.Message }
+        $entry = [System.Net.Dns]::GetHostEntry('www.microsoft.com')
+        $dnsOk = ($null -ne $entry -and @($entry.AddressList).Count -gt 0)
+    } catch {
+        $dnsOk = $false
+        $log.Debug("DNS resolution failed: $($_.Exception.Message)", 'Network')
+    }
+    Set-OmniResultMetric -Result $result -Name 'DnsOk' -Value $dnsOk
 
-    if ($gwProbe) {
-        Set-OmniResultMetric -Result $result -Name 'GatewayPing' -Value ("{0}, {1}% loss, {2} ms" -f $(if ($gwProbe.Success) { 'reachable' } else { 'unreachable' }), $gwProbe.LossPct, $gwProbe.AvgMs)
-    }
-    Set-OmniResultMetric -Result $result -Name 'InternetPing' -Value ("{0}, {1}% loss, {2} ms" -f $(if ($netProbe.Success) { 'reachable' } else { 'unreachable' }), $netProbe.LossPct, $netProbe.AvgMs)
-    Set-OmniResultMetric -Result $result -Name 'DnsResolution' -Value $(if ($dnsOk) { "OK ($dnsHost)" } else { "FAILED ($dnsHost)" })
+    # --- Correlated connectivity findings ----------------------------------
+    $gatewayOk = ($null -ne $gatewayLatency)
 
-    # Correlated diagnosis:
-    $gwReachable = (-not $gateway) -or ($gwProbe -and $gwProbe.Success)
-    if ($gateway -and $gwProbe -and -not $gwProbe.Success) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Default gateway is unreachable' -Severity 'Critical' `
-            -Component 'Network/Gateway' -Detail "Ping to the gateway $gateway failed (100% loss)." `
-            -LikelyCause 'Local link problem: cable/Wi-Fi, switch port, or a down router.' -Confidence 80 `
-            -Recommendation 'Check the physical connection and the local router/switch.')
-    }
-    elseif ($gwReachable -and -not $netProbe.Success -and -not $dnsOk) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'No internet connectivity' -Severity 'Error' `
-            -Component 'Network/Internet' -Detail "Gateway is reachable but $internetIp is not, and DNS resolution failed." `
-            -LikelyCause 'Upstream/ISP outage or a firewall blocking outbound traffic.' -Confidence 60 `
-            -Recommendation 'Verify the modem/ISP link and any edge firewall rules.')
-    }
-    elseif ($gwReachable -and $netProbe.Success -and -not $dnsOk) {
-        # The spec's flagship example.
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'DNS resolution is failing' -Severity 'Error' `
-            -Component 'Network/DNS' `
-            -Detail "Internet is reachable by IP ($internetIp responds) but name resolution for '$dnsHost' failed: $dnsError" `
-            -LikelyCause 'DNS requests are failing while gateway/internet communication succeeds - likely a DNS server problem or bad DNS configuration.' `
-            -Confidence 85 `
-            -Recommendation 'Verify the configured DNS servers, flush the DNS cache (Clear-DnsClientCache), or switch to a known-good resolver.')
-    }
-    elseif ($netProbe.Success -and $netProbe.LossPct -ge 25) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Packet loss to the internet ($($netProbe.LossPct)%)" -Severity 'Warning' `
-            -Component 'Network/Internet' -Detail "Ping to $internetIp showed $($netProbe.LossPct)% loss, avg $($netProbe.AvgMs) ms." `
-            -LikelyCause 'Unstable link, congestion, or Wi-Fi interference.' -Confidence 55 `
-            -Recommendation 'Test on a wired connection; check Wi-Fi signal and for interference.')
-    }
-    elseif ($netProbe.Success -and $netProbe.AvgMs -ne $null -and $netProbe.AvgMs -ge 150) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "High internet latency ($($netProbe.AvgMs) ms)" -Severity 'Warning' `
-            -Component 'Network/Internet' -Detail "Average round-trip to $internetIp is $($netProbe.AvgMs) ms." `
-            -LikelyCause 'Distant route, congestion, or a slow link.' -Confidence 50 `
-            -Recommendation 'Compare against a wired connection; investigate if calls/RDP feel laggy.')
-    }
-
-    # --- Firewall profiles ------------------------------------------------
-    try {
-        $fw = Get-NetFirewallProfile -ErrorAction Stop
-        $disabled = @($fw | Where-Object { -not $_.Enabled })
-        Set-OmniResultMetric -Result $result -Name 'FirewallProfiles' -Value (($fw | ForEach-Object { "$($_.Name)=$([bool]$_.Enabled)" }) -join ', ')
-        if ($disabled.Count -gt 0) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Firewall disabled on $($disabled.Count) profile(s)" -Severity 'Warning' `
-                -Component 'Network/Firewall' -Detail ("Disabled: {0}" -f (($disabled.Name) -join ', ')) `
-                -LikelyCause 'Firewall profile turned off.' -Confidence 70 `
-                -Recommendation 'Re-enable the Windows Firewall unless a managed policy intentionally disables it.')
-        }
-    } catch { $log.Debug("Get-NetFirewallProfile failed: $($_.Exception.Message)", 'Network') }
-
-    # --- Proxy / VPN detection -------------------------------------------
-    try {
-        $proxy = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
-        if ($proxy.ProxyEnable -eq 1) {
-            Set-OmniResultMetric -Result $result -Name 'Proxy' -Value $proxy.ProxyServer
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'A proxy server is configured' -Severity 'Information' `
-                -Component 'Network/Proxy' -Detail "Proxy: $($proxy.ProxyServer)" `
-                -LikelyCause 'A system proxy is enabled.' `
-                -Recommendation 'If connectivity issues exist, verify the proxy is reachable and correct.')
+    if (-not $gatewayOk -and -not $internetOk -and -not $dnsOk -and $activeCount -gt 0) {
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            -Title 'No network connectivity' -Severity 'Critical' `
+            -Component 'Network/Connectivity' `
+            -Detail 'Gateway, public IP, and DNS are all unreachable despite an active adapter.' `
+            -LikelyCause 'Local link/gateway down, or no IP lease.' `
+            -Confidence 75 `
+            -Recommendation 'Check the local network/router and IP configuration.')
+    } elseif ($gatewayOk -and (-not $internetOk -or -not $dnsOk)) {
+        $detail = if (-not $dnsOk -and -not $internetOk) {
+            'The gateway responds but both internet (1.1.1.1) and DNS resolution fail.'
+        } elseif (-not $dnsOk) {
+            'The gateway and internet (1.1.1.1) respond but DNS resolution fails.'
         } else {
-            Set-OmniResultMetric -Result $result -Name 'Proxy' -Value 'none'
+            'The gateway responds but the public IP (1.1.1.1) is unreachable.'
         }
-    } catch { }
-
-    try {
-        $vpns = @(Get-NetAdapter -ErrorAction Stop | Where-Object { $_.Status -eq 'Up' -and ($_.InterfaceDescription -match 'VPN|TAP|WireGuard|WAN Miniport|AnyConnect|GlobalProtect') })
-        if ($vpns.Count -gt 0) {
-            Set-OmniResultMetric -Result $result -Name 'VPN' -Value (($vpns.Name) -join ', ')
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'VPN adapter is active' -Severity 'Information' `
-                -Component 'Network/VPN' -Detail ("Active VPN-like adapter(s): {0}" -f (($vpns.Name) -join ', ')) `
-                -Recommendation 'If DNS/routing issues exist, test with the VPN disconnected to rule out a conflict.')
-        }
-    } catch { }
-
-    # --- DNS cache size (informational) ----------------------------------
-    try {
-        $cache = @(Get-DnsClientCache -ErrorAction Stop)
-        Set-OmniResultMetric -Result $result -Name 'DnsCacheEntries' -Value $cache.Count
-    } catch { }
-
-    # --- Optional public IP (external call, opt-in) ----------------------
-    if ($checkPub) {
-        try {
-            $pub = (Invoke-RestMethod -Uri 'https://api.ipify.org?format=json' -TimeoutSec 5 -ErrorAction Stop).ip
-            Set-OmniResultMetric -Result $result -Name 'PublicIP' -Value $pub
-        } catch { $log.Debug("Public IP lookup failed: $($_.Exception.Message)", 'Network') }
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            -Title 'Partial connectivity (LAN up, WAN/DNS impaired)' -Severity 'Warning' `
+            -Component 'Network/Connectivity' `
+            -Detail $detail `
+            -LikelyCause 'DNS server misconfiguration or an upstream/ISP outage past the gateway.' `
+            -Confidence 65 `
+            -Recommendation 'Verify DNS server settings and test upstream connectivity from the router.')
     }
 
-    # Positive finding when nothing notable surfaced.
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Network connectivity looks healthy' -Severity 'Pass' `
-            -Component 'Network' -Detail 'Gateway, internet, and DNS probes succeeded.')
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            -Title 'Network healthy' -Severity 'Pass' -Component 'Network' `
+            -Detail 'Active adapter present with working gateway, internet, and DNS resolution.')
     }
 
     return (Complete-OmniResult -Result $result)

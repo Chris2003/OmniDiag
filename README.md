@@ -35,7 +35,7 @@ interface**, interprets the results, and tells you the **likely cause** and the
 
 ## Status
 
-OmniDiag is being built in milestones. **Current: Milestone 6 — Repair Center.**
+OmniDiag is being built in milestones. **Current: Version 2 complete — Repair Center, PDF/branding, and a portable distribution.**
 
 | Capability | State |
 |---|---|
@@ -43,20 +43,58 @@ OmniDiag is being built in milestones. **Current: Milestone 6 — Repair Center.
 | Structured logging, console runner | ✅ Milestone 1 |
 | System Information module | ✅ Milestone 1 |
 | Event Log collection & analysis (grouping, Event-ID translation, patterns) | ✅ Milestone 2 |
-| Network / Storage / Security / Health / Performance modules | ✅ Milestone 3 |
+| **35 granular diagnostic scanners** across 10 categories (System, Performance, Hardware, Storage, Network, Security, Peripherals, Reliability, Event Logs, Applications) | ✅ |
 | HTML / JSON / CSV / ZIP reports | ✅ Milestone 4 |
 | PDF reports + branding (logo / accent color) | ✅ Milestone 6 |
 | WPF GUI (dashboard, light/dark toggle, cancel) | ✅ Milestone 5 |
 | Repair Center — console + GUI tab (10 repairs, dry-run, confirmation, restore points) | ✅ Milestone 6 |
-| PDF reports, report branding, remote diagnostics | 🔜 Milestone 6+ |
+| Portable / standalone distribution (fully local, no remoting) | ✅ Version 2 |
 
 See [ROADMAP.md](ROADMAP.md) for the full version plan.
+
+### Diagnostic scanners (35)
+
+| Category | Scanners |
+|---|---|
+| **System** | System · Startup · Scheduled Tasks · Services · Drivers · Windows Features · Environment Variables · Registry Health · Installed Software · Windows Update · System Health |
+| **Performance** | CPU · Memory · Processes · Benchmark · Startup Performance |
+| **Hardware** | GPU · Battery · USB Devices |
+| **Storage** | Disk · Disk Usage · Temp Files |
+| **Network** | Network · IP Configuration · DNS Resolver · Hosts File · Network Shares · WiFi Networks |
+| **Security** | Security · Firewall Rules |
+| **Peripherals** | Printers |
+| **Reliability** | Reliability |
+| **Event Logs** | Event Logs · Error Summary |
+| **Applications** | Browser Diagnostics |
+
+Each scanner is a self-contained plugin; filter a run with `-IncludeCategory` / `-ExcludeCategory`.
 
 ## Requirements
 
 * Windows 10 / 11 / Server 2019+ (x64)
 * Windows PowerShell **5.1** or PowerShell **7+**
 * Some checks require **Administrator** rights (OmniDiag tells you which and skips them gracefully otherwise)
+
+## Portable edition
+
+OmniDiag runs fully locally with no installation. To produce a self-contained,
+copy-anywhere package (folder + zip), run:
+
+```powershell
+.\build\Build-Portable.ps1        # writes dist\OmniDiag-<version>-portable.zip (+ .sha256)
+```
+
+Extract it anywhere and run it — no install, no remoting, admin optional:
+
+* **Console scan** — double-click `OmniDiag.cmd`
+* **Graphical interface** — double-click `OmniDiag-GUI.cmd`
+* **From PowerShell** — `.\OmniDiag.ps1`
+
+The `.cmd` launchers bypass the execution policy **for that process only** (no
+machine-wide change), so an extracted-from-zip copy runs on locked-down hosts where
+script execution is otherwise blocked. Deploy across a fleet with the tooling you
+already have (Intune / ConfigMgr / GPO / RMM) and collect the reports — see
+[PORTABLE.md](PORTABLE.md).
 
 ## Quick start
 
@@ -67,13 +105,16 @@ See [ROADMAP.md](ROADMAP.md) for the full version plan.
 # Scan only the last 24 hours, System category only
 .\OmniDiag.ps1 -Range Last24Hours -IncludeCategory System
 
+# Run only specific scanners by name (the GUI Diagnostics tab does the same)
+.\OmniDiag.ps1 -IncludeModule CPU,Memory,Disk,Network
+
 # Run elevated for a complete scan (recommended)
 Start-Process pwsh -Verb RunAs -ArgumentList '-File', "$PWD\OmniDiag.ps1"
 
 # Scan and generate reports (prompts with a privacy notice first)
 .\OmniDiag.ps1 -Report -ReportFormat Html,Json,Csv,Zip -ReportPath .\reports
 
-# Branded PDF report (PDF needs Microsoft Edge or Chrome; falls back with a notice if absent)
+# Branded PDF report (native PDF - no browser or external dependency required)
 .\OmniDiag.ps1 -Report -ReportFormat Pdf,Html -BrandName "Acme IT" -BrandColor "#0969DA" -BrandLogo .\logo.png
 
 # Launch the graphical interface (dashboard, dark/light, cancel, export)
@@ -116,7 +157,7 @@ OmniDiag.ps1  ──>  Invoke-OmniDiag  ──>  Engine (Invoke-OmniSession)
                                             │
                  ┌──────────────────────────┴──────────────────────────┐
                  ▼                          ▼                           ▼
-          7 built-in diagnostic modules                          (your module)
+          35 built-in diagnostic scanners                        (your module)
   System · EventLogs · Network · Storage · Health · Security · Performance
                  │                          │                           │
                  └─── each returns an OmniDiag.Result of Findings ──────┘
@@ -163,8 +204,10 @@ Invoke-Pester -Path .\Tests
 ## Screenshots
 
 The GUI provides a left-nav dashboard with a 0–100 health score, live scan progress
-with a working Cancel button, a light/dark theme toggle (light by default), one-click
-report export, and a **Repair Center** tab — a checkbox grid of repairs (relevant ones
+with a working Cancel button, a light/dark theme toggle (light by default), a
+**Diagnostics** tab to toggle individual scanners on/off (or run any single scanner on
+its own), report export with a **format picker** (choose HTML / JSON / CSV / PDF / ZIP
+before exporting), and a **Repair Center** tab — a checkbox grid of repairs (relevant ones
 pre-checked after a scan) with a dry-run toggle, summary confirmation, and live progress.
 Launch it with `.\OmniDiag.ps1 -Gui`.
 

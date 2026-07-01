@@ -22,6 +22,10 @@
 .PARAMETER ExcludeCategory
     Skip modules in these categories.
 
+.PARAMETER IncludeModule
+    Run only these individual scanners by name (e.g. CPU, Memory, Disk). Applied after
+    the category filters. The GUI's "Scanners..." picker uses the same mechanism.
+
 .PARAMETER Gui
     Launch the WPF graphical interface (dashboard, dark/light, live progress, cancel,
     one-click report export) instead of the console experience. Windows only.
@@ -59,6 +63,7 @@ param(
     [string] $Range = 'Last7Days',
     [string[]] $IncludeCategory,
     [string[]] $ExcludeCategory,
+    [string[]] $IncludeModule,
     [switch] $Gui,
     [switch] $Quiet,
 
@@ -119,7 +124,7 @@ if ($Gui) {
 # --- Run (console) ---------------------------------------------------------
 $progress = New-OmniConsoleProgressCallback
 $session = Invoke-OmniDiag -Range $Range -IncludeCategory $IncludeCategory -ExcludeCategory $ExcludeCategory `
-    -ProgressCallback $progress -Quiet:$Quiet
+    -IncludeModule $IncludeModule -ProgressCallback $progress -Quiet:$Quiet
 
 Write-OmniConsoleDashboard -Session $session
 Write-Host ("Structured log written to: {0}" -f $session.LogPath) -ForegroundColor DarkGray

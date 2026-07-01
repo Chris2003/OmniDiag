@@ -80,8 +80,8 @@ function Export-OmniReport {
                 if ($evt) { $files.Add($evt) }
             }
             'Pdf'  {
-                # The only format with an external dependency (a Chromium browser).
-                # Soft-fail so a missing browser doesn't abort the other formats.
+                # PDF is generated natively (no browser / no external dependency).
+                # Still guarded so an unexpected failure can't abort the other formats.
                 try {
                     $files.Add((Export-OmniPdfReport -Session $Session -Path "$base.pdf" -BrandName $BrandName -BrandLogo $BrandLogo -BrandColor $BrandColor))
                 } catch {

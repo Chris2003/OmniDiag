@@ -43,13 +43,16 @@ CI runs both on `windows-latest` for every pull request.
 
 ## Adding a diagnostic module
 
-1. Create `src/Modules/MyModule.psm1`.
+1. Create `src/Modules/MyScanner.psm1`.
 2. Implement the two contract functions (`Get-OmniModuleManifest`,
    `Invoke-OmniModuleScan`) — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
-   full template and the `SystemInformation.psm1` module as a reference.
-3. Add a `Tests/Modules.MyModule.Tests.ps1` covering the manifest and a scan run.
+   full template and any existing scanner (e.g. `System.psm1`, `Cpu.psm1`) as a reference.
+3. `Tests/Modules.All.Tests.ps1` discovers every scanner and runs it through the engine
+   automatically, so a new scanner is covered on discovery/contract/clean-execution with no
+   extra work. Add a dedicated `Tests/Modules.<Name>.Tests.ps1` only for scanner-specific
+   behavior worth asserting.
 4. That's it — the engine discovers it automatically. **Do not modify the core** to
-   add a module.
+   add a scanner.
 
 ### Module guidelines
 

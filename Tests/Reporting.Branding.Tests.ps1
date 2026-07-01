@@ -51,28 +51,33 @@ Describe 'HTML branding' {
     }
 }
 
-Describe 'PDF exporter' {
-    It 'Find-OmniChromium returns a path or $null without throwing' {
-        $result = $null
-        { $script:result = Find-OmniChromium } | Should -Not -Throw
-        if ($null -ne $script:result) { $script:result | Should -BeOfType ([string]) }
+Describe 'PDF exporter (native, no browser)' {
+    It 'writes a valid, non-empty PDF file' {
+        $pdf = Join-Path $script:Out 'render.pdf'
+        Export-OmniPdfReport -Session $script:Session -Path $pdf | Should -Be $pdf
+        $bytes = [System.IO.File]::ReadAllBytes($pdf)
+        $bytes.Length | Should -BeGreaterThan 0
+        # Valid PDFs start with "%PDF-" and end near "%%EOF".
+        ([System.Text.Encoding]::ASCII.GetString($bytes, 0, 5)) | Should -Be '%PDF-'
+        ([System.Text.Encoding]::ASCII.GetString($bytes)) | Should -Match '%%EOF'
     }
 
-    It 'Export-OmniReport soft-fails PDF (records a warning) when it cannot render' {
-        # Deterministic: drives the coordinator's try/catch. On a machine that CAN render
-        # (browser present + not elevated) this produces a PDF and no warning - both are valid.
+    It 'honors a #RRGGBB brand color without throwing and still emits a PDF' {
+        $pdf = Join-Path $script:Out 'branded.pdf'
+        { Export-OmniPdfReport -Session $script:Session -Path $pdf -BrandName 'Acme IT' -BrandColor '#0969DA' } | Should -Not -Throw
+        (Get-Item -LiteralPath $pdf).Length | Should -BeGreaterThan 0
+    }
+
+    It 'ignores an invalid brand color (falls back, no throw)' {
+        $pdf = Join-Path $script:Out 'badcolor.pdf'
+        { Export-OmniPdfReport -Session $script:Session -Path $pdf -BrandColor 'red' } | Should -Not -Throw
+        (Get-Item -LiteralPath $pdf).Length | Should -BeGreaterThan 0
+    }
+
+    It 'Export-OmniReport produces a PDF with no warning (no external dependency)' {
         $set = Export-OmniReport -Session $script:Session -OutputDirectory (Join-Path $script:Out 'rs') -Format Html, Pdf
         @($set.Files | Where-Object { $_ -like '*.html' }).Count | Should -Be 1
-        $producedPdf = @($set.Files | Where-Object { $_ -like '*.pdf' }).Count -gt 0
-        $warned = @($set.Warnings).Count -gt 0
-        ($producedPdf -or $warned) | Should -BeTrue   # exactly one of: a PDF, or a recorded warning
-    }
-
-    It 'produces a non-empty PDF when a browser can render it' {
-        if (-not (Find-OmniChromium)) { Set-ItResult -Skipped -Because 'no Chromium browser'; return }
-        $pdf = Join-Path $script:Out 'render.pdf'
-        try { Export-OmniPdfReport -Session $script:Session -Path $pdf -TimeoutSeconds 60 | Out-Null }
-        catch { Set-ItResult -Skipped -Because "headless render unavailable here: $($_.Exception.Message)"; return }
-        (Get-Item -LiteralPath $pdf).Length | Should -BeGreaterThan 0
+        @($set.Files | Where-Object { $_ -like '*.pdf' }).Count | Should -Be 1
+        @($set.Warnings).Count | Should -Be 0
     }
 }

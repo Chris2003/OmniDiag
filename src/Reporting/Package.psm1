@@ -45,14 +45,13 @@ function Export-OmniReportPackage {
         Export-OmniCsvReport  -Session $Session -Path (Join-Path $staging 'findings.csv') | Out-Null
         Export-OmniEventCsvReport -Session $Session -Path (Join-Path $staging 'events.csv') | Out-Null
 
-        # Best-effort PDF: include it when a Chromium browser is available; never fatal.
+        # PDF is now generated natively (no browser), so include it best-effort and
+        # never let an unexpected failure abort the package.
         $pdfIncluded = $false
-        if (Find-OmniChromium) {
-            try {
-                Export-OmniPdfReport -Session $Session -Path (Join-Path $staging 'report.pdf') -BrandName $BrandName -BrandLogo $BrandLogo -BrandColor $BrandColor | Out-Null
-                $pdfIncluded = $true
-            } catch { }
-        }
+        try {
+            Export-OmniPdfReport -Session $Session -Path (Join-Path $staging 'report.pdf') -BrandName $BrandName -BrandLogo $BrandLogo -BrandColor $BrandColor | Out-Null
+            $pdfIncluded = $true
+        } catch { }
 
         # Include the raw structured log when available.
         if ($Session.PSObject.Properties.Name -contains 'LogPath' -and $Session.LogPath -and (Test-Path -LiteralPath $Session.LogPath)) {
@@ -67,7 +66,7 @@ Computer : $($Session.Host.ComputerName)
 
 Contents:
   report.html        Human-readable report (open in a browser)
-  report.pdf         Print-ready PDF report$(if ($pdfIncluded) { '' } else { ' (omitted: no Chromium browser found)' })
+  report.pdf         Print-ready PDF report$(if ($pdfIncluded) { '' } else { ' (omitted: generation failed)' })
   data.json          Full structured session data
   findings.csv       All findings across modules
   events.csv         Grouped event-log table (if event data was collected)

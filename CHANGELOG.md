@@ -6,13 +6,94 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Portable / standalone distribution (Version 2, final increment)
+- **Portable package build** (`build/Build-Portable.ps1`): assembles a self-contained,
+  versioned package (staging folder + `dist/OmniDiag-<version>-portable.zip` with a
+  `.sha256` sidecar) from a whitelist of the runnable surface (launchers, `src`, docs),
+  deliberately excluding developer-only content (`Tests`, `.github`, `.claude`, `dist`,
+  `build`). OmniDiag already loads every module by a path relative to itself (no install
+  to `PSModulePath`), so the package extracts and runs in place on any supported Windows
+  host — local-only, no remoting, admin optional.
+- **Double-click launchers** `OmniDiag.cmd` (console) and `OmniDiag-GUI.cmd` (GUI): prefer
+  PowerShell 7 (`pwsh`) when present, fall back to Windows PowerShell 5.1, and run with
+  `-ExecutionPolicy Bypass` **for that process only** (no machine-wide change). This is
+  what lets an extracted-from-zip copy run on a locked-down host where script execution is
+  otherwise blocked (Mark-of-the-Web / RemoteSigned). The console launcher passes arguments
+  through and pauses only when double-clicked (no args) so automation never hangs.
+- **`PORTABLE.md`**: quick-start and fleet-deployment guidance (run locally, collect reports
+  via Intune / ConfigMgr / GPO / RMM — no remoting), plus a `VERSION.txt` stamp in each
+  package. New OS-independent Pester suite (`Tests/Build.Portable.Tests.ps1`) verifies the
+  package contents, the dev-content exclusions, and the SHA256 integrity hash.
+
+### Added — 35 granular diagnostic scanners
+- Refactored the diagnostic surface from 7 consolidated modules into **35 focused,
+  drop-in scanners** under `src/Modules`, across 10 categories:
+  - **System (11):** System, Startup, Scheduled Tasks, Services, Drivers, Windows Features,
+    Environment Variables, Registry Health, Installed Software, Windows Update, System Health
+  - **Performance (5):** CPU, Memory, Processes, Benchmark, Startup Performance
+  - **Hardware (3):** GPU, Battery, USB Devices
+  - **Storage (3):** Disk, Disk Usage, Temp Files
+  - **Network (6):** Network, IP Configuration, DNS Resolver, Hosts File, Network Shares, WiFi Networks
+  - **Security (2):** Security, Firewall Rules
+  - **Peripherals (1):** Printers &nbsp;•&nbsp; **Reliability (1):** Reliability
+  - **Event Logs (2):** Event Logs, Error Summary &nbsp;•&nbsp; **Applications (1):** Browser Diagnostics
+- The previous consolidated modules (System Information, Performance, Storage, Network,
+  Security, Windows Health) were split into these granular scanners; each follows the same
+  plugin contract (`Get-OmniModuleManifest` + `Invoke-OmniModuleScan`), fails soft per check,
+  and is filterable via `-IncludeCategory` / `-ExcludeCategory`.
+- Replaced the per-module test suites with `Tests/Modules.All.Tests.ps1`, which discovers
+  every scanner, validates the contract, and runs the whole set through the engine asserting
+  none throw and each returns a well-formed result.
+- Performance: a full 35-scanner run completes in ~1 minute; the Benchmark and Disk Usage
+  scanners were tuned (bounded CPU/disk micro-benchmark; dropped the whole-drive folder walk)
+  and USB Devices now uses `-PresentOnly` so disconnected/phantom devices aren't false-flagged.
+
+### Added — GUI Diagnostics tab: per-scanner on/off + run individually
+- New **Diagnostics** entry in the GUI left navigation (Dashboard / All Findings / Diagnostics
+  / Repair Center). It lists all 35 scanners in a grid (sorted by category and run order) with:
+  an **On/Off toggle** per scanner (only enabled scanners run when you click **Run Scan**), a
+  per-row **Run** button that runs just that one scanner (results land on the Dashboard),
+  **Enable All / Disable All** helpers, and a **Last Status** column updated after each scan.
+  Toggle state persists for the session; the grid is disabled while a scan is in progress.
+- The previous top-bar "Scanners..." modal picker was replaced by this tab.
+- Engine support: `Invoke-OmniSession` and `Invoke-OmniDiag` gained an `-IncludeModule`
+  parameter (filter by scanner name, applied after the category filters). The launcher
+  `OmniDiag.ps1` exposes `-IncludeModule` too, so the same subset selection works from the CLI
+  (e.g. `.\OmniDiag.ps1 -IncludeModule CPU,Memory,Disk`).
+
+### Changed
+- **PDF reports are now generated natively - no browser, no external dependency.** The old
+  exporter shelled out to a headless Chromium browser (Edge/Chrome) to render the HTML,
+  which hung indefinitely on managed/enterprise machines where Edge is forced into an
+  interactive MSA sign-in / SmartScreen flow, and produced no PDF. `Export-OmniPdfReport`
+  now emits a valid PDF directly from the session using only the standard PDF base-14 fonts
+  (Helvetica-Bold + Courier), so it works offline on any locked-down host - fitting the
+  local-only / portable design. Output is a clean, paginated, print-friendly report (device
+  info, health score, top recommendations, per-module results, findings) rather than a pixel
+  copy of the styled HTML. Generation is now ~0.5 s instead of a multi-second (or hung)
+  browser launch. `Find-OmniChromium` was removed (no longer needed); `Export-OmniPdfReport`
+  keeps its signature (the now-unused `-TimeoutSeconds` is accepted and ignored). ZIP packages
+  always include the PDF; `Export-OmniReport` no longer soft-fails PDF for a missing browser.
+- **GUI export is now a format picker.** Clicking **Export** opens a modal dialog with a
+  checkbox per report format (HTML / JSON / CSV / PDF / ZIP) and the privacy notice, and
+  exports exactly the checked formats - replacing the previous one-click "export everything"
+  behavior. Defaults mirror the CLI's default set (HTML, JSON, CSV pre-checked; PDF and ZIP
+  opt-in). The dialog (`Show-OmniExportDialog`) is built at runtime, matches the active
+  light/dark theme, requires at least one format, and returns nothing on Cancel.
+
+### Fixed
+- Repair **dry-run** incorrectly **skipped admin-only repairs** when not elevated. The
+  admin gate in `Invoke-OmniRepair` fired before the dry-run path, so on a non-elevated
+  host the six admin-required repairs reported `Skipped` instead of `DryRun` — a dry-run
+  changes nothing and needs no elevation, so it must still *describe* those repairs. The
+  gate now applies only to real execution (`-not $Context.DryRun`), fixing two failing
+  repair suites; real-execution admin gating is unchanged.
+
 ### Added — Milestone 6: PDF reports + richer branding
-- **PDF report** format (`src/Reporting/Pdf.psm1`, `Export-OmniPdfReport`): renders the
-  existing HTML report to PDF via a headless Chromium browser (Microsoft Edge, which ships
-  on Windows 10/11, or Google Chrome) using `--print-to-pdf`. No binaries are bundled.
-  `Find-OmniChromium` locates the browser; the run is bounded (never hangs) and tries both
-  modern and legacy headless modes. Added `Pdf` to `Export-OmniReport`, the launcher's
-  `-ReportFormat`, and the GUI one-click export; ZIP packages include the PDF best-effort.
+- **PDF report** format (`src/Reporting/Pdf.psm1`, `Export-OmniPdfReport`): adds `Pdf` to
+  `Export-OmniReport`, the launcher's `-ReportFormat`, the GUI export, and ZIP packages.
+  (Originally rendered via a headless Chromium browser; **superseded** by the native,
+  browser-free writer described under *Changed* above.)
 - **Richer branding**: `Export-OmniHtmlReport` / `Export-OmniReport` now accept `-BrandLogo`
   (a logo image embedded as base64 in the report header) and `-BrandColor` (a validated
   `#RRGGBB` accent that overrides the report highlight), alongside the existing `-BrandName`.
@@ -20,11 +101,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Print-friendly output**: the HTML report gained an `@media print` stylesheet, so the PDF
   (and any printed HTML) renders on a white, ink-friendly background while the on-screen
   report stays dark.
-- **Graceful PDF degradation**: PDF is the only format with an external dependency, so
-  `Export-OmniReport` soft-fails it - if no browser is found (or headless rendering is
-  blocked, e.g. in an elevated session), the other formats still succeed and the reason is
-  recorded in a new `Warnings` list on the returned `OmniDiag.ReportSet` and surfaced in the
-  CLI/GUI.
+- **Report warnings channel**: `Export-OmniReport` returns a `Warnings` list on the
+  `OmniDiag.ReportSet` (surfaced in the CLI/GUI) for any per-format issue. (Originally the
+  PDF soft-fail path for a missing browser; the native writer no longer has that dependency,
+  but the warnings channel remains for defensive reporting.)
 
 ### Added — Milestone 6: Repair Center GUI tab
 - A **Repair Center** tab in the WPF GUI (third left-nav entry): a checkbox grid of the

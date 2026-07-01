@@ -11,12 +11,12 @@ editing the engine.
 | **Launcher** | `OmniDiag.ps1` | Host validation, module import, runs a session, renders the console dashboard. |
 | **Public API** | `src/OmniDiag.psm1` | `Invoke-OmniDiag` and version helpers. The single call the CLI/GUI use. |
 | **Core** | `src/Core/` | Data models, logging, plugin registry, orchestration engine, health scoring. |
-| **Modules** | `src/Modules/` | Diagnostic plugins. One `.psm1` per module. Discovered at runtime. |
+| **Modules** | `src/Modules/` | Diagnostic plugins — the 35 granular scanners across 10 categories. One `.psm1` per scanner. Discovered at runtime. |
 | **Repair core** | `src/Repair/` | Repair models + step runner, plugin registry/discovery, restore-point helper, and the repair execution engine. The "fix" counterpart to Core. |
 | **Repairs** | `src/Repairs/` | Repair plugins. One `.psm1` per repair. Discovered at runtime, exactly like diagnostic modules. |
 | **Event Log subsystem** | `src/EventLog/` | Knowledge base (channels + Event-ID translation catalog) and the analysis pipeline (collection, grouping, timeline, finding/pattern generation) used by the Event Logs module. Not plugins; imported by the module. |
-| **Reporting** | `src/Reporting/` | HTML / JSON / CSV / ZIP exporters + `Export-OmniReport` coordinator. Consume a session; emit no side effects beyond writing files. |
-| **UI** | `src/UI/` | WPF front-end: runtime-loaded XAML (`MainWindow.xaml`) + `Show-OmniDiagWindow`. Scans run in a background runspace; a DispatcherTimer polls a synchronized hashtable for progress; Cancel drives the engine's CancellationToken. STA-hosted when launched from MTA (PowerShell 7). |
+| **Reporting** | `src/Reporting/` | HTML / JSON / CSV / **PDF** / ZIP exporters + `Export-OmniReport` coordinator. PDF is generated **natively** (`Pdf.psm1`, standard PDF fonts) — no browser or external dependency. Consume a session; emit no side effects beyond writing files. |
+| **UI** | `src/UI/` | WPF front-end: runtime-loaded XAML (`MainWindow.xaml`) + `Show-OmniDiagWindow`. Left-nav panels: **Dashboard**, **All Findings**, **Diagnostics** (toggle scanners on/off, or run one individually), **Repair Center**. Scans run in a background runspace; a DispatcherTimer polls a synchronized hashtable for progress; Cancel drives the engine's CancellationToken. Report export and per-scanner selection are wired here. STA-hosted when launched from MTA (PowerShell 7). |
 | **CLI** | `src/Cli/` | Console presentation (dashboard + progress). |
 
 ## Core building blocks
@@ -33,8 +33,10 @@ editing the engine.
   validates the contract, and reads each manifest. `New-OmniContext` builds the
   per-run context; `Test-OmniIsAdministrator` reports elevation.
 * **Engine** (`Core/Engine.psm1`) — `Invoke-OmniSession` runs modules, honors
-  cooperative cancellation, reports progress, captures per-module errors, and
-  finalizes timing/status.
+  cooperative cancellation, applies the `IncludeCategory` / `ExcludeCategory` /
+  `IncludeModule` filters (the last selects individual scanners by name — what the GUI
+  Diagnostics tab and the launcher's `-IncludeModule` use), reports progress, captures
+  per-module errors, and finalizes timing/status.
 * **Health scoring** (`Core/HealthScore.psm1`) — `Get-OmniHealthScore` turns results
   into the 0-100 score, severity counts, per-category status, and top recommendations.
 
@@ -156,7 +158,9 @@ and the manifest's `AppliesTo`, surfaced by `Get-OmniApplicableRepair`.
 
 ## Execution & concurrency
 
-Milestone 1 runs modules **sequentially**, checking the cancellation token before
-each module. The engine signature is intentionally shaped so a runspace-pool
-parallel executor can be substituted in Milestone 5 (where GUI responsiveness
-matters) without changing any module or caller.
+Modules currently run **sequentially**, with the cancellation token checked before
+each one; a full 35-scanner run takes roughly a minute. The engine and the module
+contract are intentionally shaped so a runspace-pool parallel executor can be
+substituted later — cutting scan time — without changing any module or caller. GUI
+responsiveness is already handled separately: the whole session runs in a background
+STA runspace while a DispatcherTimer polls progress on the UI thread.

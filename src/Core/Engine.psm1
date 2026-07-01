@@ -36,6 +36,11 @@ function Invoke-OmniSession {
     .PARAMETER IncludeCategory / ExcludeCategory
         Optional category filters.
 
+    .PARAMETER IncludeModule
+        Optional list of module display names to run. When supplied, only modules whose
+        Name is in this list run (applied after the category filters). Lets a caller (the
+        GUI scanner picker, or automation) run an arbitrary subset of individual scanners.
+
     .OUTPUTS
         OmniDiag.Session
     #>
@@ -52,7 +57,9 @@ function Invoke-OmniSession {
 
         [string[]] $IncludeCategory,
 
-        [string[]] $ExcludeCategory
+        [string[]] $ExcludeCategory,
+
+        [string[]] $IncludeModule
     )
 
     $log = $Context.Logger
@@ -61,6 +68,7 @@ function Invoke-OmniSession {
     $modules = $Registration | Where-Object { $_.Enabled }
     if ($IncludeCategory) { $modules = $modules | Where-Object { $_.Category -in $IncludeCategory } }
     if ($ExcludeCategory) { $modules = $modules | Where-Object { $_.Category -notin $ExcludeCategory } }
+    if ($IncludeModule)   { $modules = $modules | Where-Object { $_.Name -in $IncludeModule } }
     $modules = @($modules)
 
     $sessionStart = Get-Date

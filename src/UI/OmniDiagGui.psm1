@@ -132,6 +132,225 @@ function Update-OmniRepairCatalog {
     $Ui.Controls.RepairGrid.ItemsSource = $rows
 }
 
+function Show-OmniExportDialog {
+    <#
+    .SYNOPSIS
+        Internal: modal dialog to choose which report formats to export.
+
+    .DESCRIPTION
+        Built programmatically (no XAML file) so it stays self-contained and picks up
+        the current theme palette. Combines the privacy notice with a checkbox per
+        format. Returns the selected format names (string[]), or $null if the user
+        cancels or selects nothing.
+
+    .PARAMETER Owner
+        The main window, so the dialog centers on it and is modal to it.
+
+    .PARAMETER Theme
+        Current theme name, used to color the dialog to match the app.
+    #>
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)] $Owner,
+        [ValidateSet('Dark', 'Light')] [string] $Theme = 'Light'
+    )
+
+    $palette = Get-OmniThemePalette -Name $Theme
+    $brush = { param($hex) [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.ColorConverter]::ConvertFromString($hex)) }
+    $bg = & $brush $palette.BrushPanel
+    $fg = & $brush $palette.BrushText
+    $muted = & $brush $palette.BrushMuted
+
+    $dlg = [System.Windows.Window]::new()
+    $dlg.Title = 'Export Reports'
+    $dlg.SizeToContent = 'WidthAndHeight'
+    $dlg.ResizeMode = 'NoResize'
+    $dlg.WindowStartupLocation = 'CenterOwner'
+    $dlg.Owner = $Owner
+    $dlg.Background = $bg
+    $dlg.MinWidth = 420
+    $dlg.ShowInTaskbar = $false
+
+    $root = [System.Windows.Controls.StackPanel]::new()
+    $root.Margin = '20'
+
+    $header = [System.Windows.Controls.TextBlock]::new()
+    $header.Text = 'Select the report formats to export'
+    $header.FontSize = 15
+    $header.FontWeight = 'Bold'
+    $header.Foreground = $fg
+    $header.Margin = '0,0,0,10'
+    [void]$root.Children.Add($header)
+
+    $notice = [System.Windows.Controls.TextBlock]::new()
+    $notice.Text = 'Reports are generated and stored locally - nothing is uploaded. They may ' +
+                   'contain usernames, device names, file paths, and domains. Review before sharing.'
+    $notice.TextWrapping = 'Wrap'
+    $notice.MaxWidth = 380
+    $notice.Foreground = $muted
+    $notice.Margin = '0,0,0,14'
+    [void]$root.Children.Add($notice)
+
+    # Ordered so the checkboxes (and the returned list) keep a sensible order.
+    # Defaults mirror the CLI's default report set (Html, Json, Csv).
+    $formats = [ordered]@{ Html = $true; Json = $true; Csv = $true; Pdf = $false; Zip = $false }
+    $descriptions = @{
+        Html = 'Rich, self-contained HTML report'
+        Json = 'Full structured session (for automation)'
+        Csv  = 'Findings and event tables'
+        Pdf  = 'Print-ready PDF (native, no browser needed)'
+        Zip  = 'Bundle: HTML + JSON + CSV + log'
+    }
+    $checkboxes = @{}
+    foreach ($fmt in $formats.Keys) {
+        $cb = [System.Windows.Controls.CheckBox]::new()
+        $cb.Content = "$fmt  -  $($descriptions[$fmt])"
+        $cb.IsChecked = $formats[$fmt]
+        $cb.Foreground = $fg
+        $cb.FontSize = 13
+        $cb.Margin = '2,5,2,5'
+        [void]$root.Children.Add($cb)
+        $checkboxes[$fmt] = $cb
+    }
+
+    $btnRow = [System.Windows.Controls.StackPanel]::new()
+    $btnRow.Orientation = 'Horizontal'
+    $btnRow.HorizontalAlignment = 'Right'
+    $btnRow.Margin = '0,18,0,0'
+
+    $btnCancel = [System.Windows.Controls.Button]::new()
+    $btnCancel.Content = 'Cancel'
+    $btnCancel.MinWidth = 90
+    $btnCancel.Padding = '10,5'
+    $btnCancel.Margin = '0,0,8,0'
+    $btnCancel.IsCancel = $true
+
+    $btnExport = [System.Windows.Controls.Button]::new()
+    $btnExport.Content = 'Export'
+    $btnExport.MinWidth = 90
+    $btnExport.Padding = '10,5'
+    $btnExport.IsDefault = $true
+    # Setting DialogResult on a Window closes it. Only proceed if at least one format
+    # is checked; the handler reads $checkboxes/$dlg from this still-live function
+    # scope (ShowDialog blocks here while the handler runs).
+    $btnExport.Add_Click({
+        $anyChecked = $false
+        foreach ($name in $formats.Keys) { if ($checkboxes[$name].IsChecked) { $anyChecked = $true; break } }
+        if (-not $anyChecked) {
+            [System.Windows.MessageBox]::Show('Select at least one format to export.', 'OmniDiag', 'OK', 'Warning') | Out-Null
+            return
+        }
+        $dlg.DialogResult = $true
+    })
+
+    [void]$btnRow.Children.Add($btnCancel)
+    [void]$btnRow.Children.Add($btnExport)
+    [void]$root.Children.Add($btnRow)
+
+    $dlg.Content = $root
+
+    if ($dlg.ShowDialog() -ne $true) { return $null }
+    $selected = @(foreach ($fmt in $formats.Keys) { if ($checkboxes[$fmt].IsChecked) { $fmt } })
+    if ($selected.Count -eq 0) { return $null }
+    return [string[]]$selected
+}
+
+function Initialize-OmniDiagPanel {
+    <#
+    .SYNOPSIS
+        Internal: populate the Diagnostics tab's tool grid once, by discovering scanners.
+
+    .DESCRIPTION
+        Builds one row per scanner (Enabled toggle + Name/Category/Order/Status), sorted by
+        category then run order, and binds them to DiagGrid. Cached on $ui.DiagRows so the
+        toggle state persists for the session. Lazy: called the first time the tab is shown.
+    #>
+    $ui = $script:OmniUi
+    if ($ui.DiagRows) { return }
+    try {
+        $silent = New-OmniLogger -MinimumLevel Error -Console:$false
+        $regs = @(Get-OmniModule -Path $ui.ModulesPath -Logger $silent)
+    } catch {
+        $ui.Controls.TxtStatus.Text = "Could not load scanners: $($_.Exception.Message)"
+        return
+    }
+    $rows = @($regs | Sort-Object Category, Order, Name | ForEach-Object {
+        [pscustomobject]@{ Enabled = $true; Name = $_.Name; Category = $_.Category; Order = $_.Order; Status = '' }
+    })
+    $ui.DiagRows = $rows
+    $ui.Controls.DiagGrid.ItemsSource = $rows
+}
+
+function Start-OmniScan {
+    <#
+    .SYNOPSIS
+        Internal: launch a diagnostic scan in a background runspace and wire the UI.
+
+    .PARAMETER IncludeModule
+        Limit the run to these scanner names. $null runs every scanner. Used by both
+        Run Scan (the enabled set from the Diagnostics tab) and a row's single-tool Run.
+    #>
+    param([string[]] $IncludeModule)
+
+    $ui = $script:OmniUi
+    if ($ui.Scan) { return }   # already running
+
+    $rangeMap = @('Last24Hours', 'Last7Days', 'Last30Days')
+    $idx = [Math]::Max(0, $ui.Controls.CmbRange.SelectedIndex)
+    $range = $rangeMap[$idx]
+
+    $sync = [hashtable]::Synchronized(@{ Progress = 0; CurrentModule = ''; Phase = ''; Done = $false; Session = $null; Error = $null })
+    $cts = [System.Threading.CancellationTokenSource]::new()
+
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.ApartmentState = 'STA'
+    $rs.ThreadOptions = 'ReuseThread'
+    $rs.Open()
+
+    $bg = {
+        param($SyncHash, $Token, $Range, $Manifest, $ModulesPath, $IncludeModule)
+        try {
+            Import-Module $Manifest -Force -DisableNameChecking
+            $cb = {
+                param($p)
+                $SyncHash.Progress = $p.PercentComplete
+                $SyncHash.CurrentModule = $p.Name
+                $SyncHash.Phase = $p.Phase
+            }.GetNewClosure()
+            $params = @{
+                Range = $Range; ProgressCallback = $cb; CancellationToken = $Token
+                Quiet = $true; ModulesPath = $ModulesPath
+            }
+            if ($IncludeModule) { $params.IncludeModule = $IncludeModule }
+            $SyncHash.Session = Invoke-OmniDiag @params
+        } catch {
+            $SyncHash.Error = $_.Exception.Message
+        } finally {
+            $SyncHash.Done = $true
+        }
+    }
+
+    $ps = [PowerShell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript($bg).AddParameters(@{
+        SyncHash = $sync; Token = $cts.Token; Range = $range
+        Manifest = $ui.Manifest; ModulesPath = $ui.ModulesPath
+        IncludeModule = $IncludeModule
+    })
+    $handle = $ps.BeginInvoke()
+
+    $ui.Scan = @{ Sync = $sync; Cts = $cts; PowerShell = $ps; Runspace = $rs; Handle = $handle }
+
+    $ui.Controls.BtnScan.IsEnabled = $false
+    $ui.Controls.BtnCancel.IsEnabled = $true
+    $ui.Controls.BtnExport.IsEnabled = $false
+    $ui.Controls.DiagGrid.IsEnabled = $false
+    $ui.Controls.ProgressBarMain.Value = 0
+    $selNote = if ($IncludeModule) { " ($(@($IncludeModule).Count) selected)" } else { ' (all scanners)' }
+    $ui.Controls.TxtStatus.Text = "Starting scan$selNote..."
+    $ui.Timer.Start()
+}
+
 function Invoke-OmniWindow {
     <# .SYNOPSIS Internal: build and show the window (must run on an STA thread). #>
     param([string] $RootManifest, [string] $ModulesPath, [string] $RepairsPath, [string] $Theme = 'Light')
@@ -144,6 +363,7 @@ function Invoke-OmniWindow {
     $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
     $names = @('BtnScan','BtnCancel','BtnExport','BtnTheme','CmbRange','NavList',
+               'PanelDiagnostics','DiagGrid','BtnDiagEnableAll','BtnDiagDisableAll',
                'PanelDashboard','GridFindings','TxtScore','TxtGrade','TxtComputer',
                'TxtUser','TxtRange','TxtDuration','TxtCounts','ItemsRecommendations',
                'GridModules','ProgressBarMain','TxtStatus',
@@ -166,6 +386,7 @@ function Invoke-OmniWindow {
         Repair        = $null
         RepairTimer   = $null
         RepairCatalog = @()
+        DiagRows      = $null   # Diagnostics tab rows: { Enabled; Name; Category; Order; Status }
     }
 
     Set-OmniTheme -Window $window -Name $Theme
@@ -203,11 +424,23 @@ function Invoke-OmniWindow {
                 $ui.Session = $sync.Session
                 Update-OmniDashboard -Ui $ui -Session $sync.Session
                 Update-OmniRepairCatalog -Ui $ui -Session $sync.Session   # light up recommended repairs
+
+                # Reflect the latest per-scanner status on the Diagnostics tab.
+                if ($ui.DiagRows) {
+                    $statusByName = @{}
+                    foreach ($r in $sync.Session.Results) { $statusByName[$r.ModuleName] = $r.Status }
+                    foreach ($row in $ui.DiagRows) {
+                        if ($statusByName.ContainsKey($row.Name)) { $row.Status = $statusByName[$row.Name] }
+                    }
+                    $ui.Controls.DiagGrid.Items.Refresh()
+                }
+
                 $cancelledNote = if ($sync.Session.Cancelled) { ' (cancelled)' } else { '' }
                 $ui.Controls.TxtStatus.Text = "Scan complete$cancelledNote. Score $($sync.Session.Summary.Score)/100."
                 $ui.Controls.BtnExport.IsEnabled = $true
             }
             $ui.Controls.BtnScan.IsEnabled = $true
+            $ui.Controls.DiagGrid.IsEnabled = $true
             $ui.Controls.BtnCancel.IsEnabled = $false
             $ui.Controls.ProgressBarMain.Value = 100
         }
@@ -262,54 +495,46 @@ function Invoke-OmniWindow {
         $ui = $script:OmniUi
         if ($ui.Scan) { return }   # already running
 
-        $rangeMap = @('Last24Hours', 'Last7Days', 'Last30Days')
-        $idx = [Math]::Max(0, $ui.Controls.CmbRange.SelectedIndex)
-        $range = $rangeMap[$idx]
-
-        $sync = [hashtable]::Synchronized(@{ Progress = 0; CurrentModule = ''; Phase = ''; Done = $false; Session = $null; Error = $null })
-        $cts = [System.Threading.CancellationTokenSource]::new()
-
-        $rs = [runspacefactory]::CreateRunspace()
-        $rs.ApartmentState = 'STA'
-        $rs.ThreadOptions = 'ReuseThread'
-        $rs.Open()
-
-        $bg = {
-            param($SyncHash, $Token, $Range, $Manifest, $ModulesPath)
-            try {
-                Import-Module $Manifest -Force -DisableNameChecking
-                $cb = {
-                    param($p)
-                    $SyncHash.Progress = $p.PercentComplete
-                    $SyncHash.CurrentModule = $p.Name
-                    $SyncHash.Phase = $p.Phase
-                }.GetNewClosure()
-                $SyncHash.Session = Invoke-OmniDiag -Range $Range -ProgressCallback $cb `
-                    -CancellationToken $Token -Quiet -ModulesPath $ModulesPath
-            } catch {
-                $SyncHash.Error = $_.Exception.Message
-            } finally {
-                $SyncHash.Done = $true
+        # Honor the Diagnostics tab toggles (once it has been populated). If the tab
+        # was never opened, DiagRows is empty and we simply run every scanner.
+        $only = $null
+        $rows = @($ui.DiagRows)
+        if ($rows.Count -gt 0) {
+            $enabled = @($rows | Where-Object { $_.Enabled } | ForEach-Object { $_.Name })
+            if ($enabled.Count -eq 0) {
+                [System.Windows.MessageBox]::Show('Enable at least one scanner on the Diagnostics tab to run.', 'OmniDiag', 'OK', 'Warning') | Out-Null
+                return
             }
+            if ($enabled.Count -lt $rows.Count) { $only = $enabled }
         }
-
-        $ps = [PowerShell]::Create()
-        $ps.Runspace = $rs
-        [void]$ps.AddScript($bg).AddParameters(@{
-            SyncHash = $sync; Token = $cts.Token; Range = $range
-            Manifest = $ui.Manifest; ModulesPath = $ui.ModulesPath
-        })
-        $handle = $ps.BeginInvoke()
-
-        $ui.Scan = @{ Sync = $sync; Cts = $cts; PowerShell = $ps; Runspace = $rs; Handle = $handle }
-
-        $ui.Controls.BtnScan.IsEnabled = $false
-        $ui.Controls.BtnCancel.IsEnabled = $true
-        $ui.Controls.BtnExport.IsEnabled = $false
-        $ui.Controls.ProgressBarMain.Value = 0
-        $ui.Controls.TxtStatus.Text = 'Starting scan...'
-        $ui.Timer.Start()
+        Start-OmniScan -IncludeModule $only
     })
+
+    # --- Diagnostics tab: enable/disable all + per-tool run --------------
+    $controls.BtnDiagEnableAll.Add_Click({
+        $ui = $script:OmniUi
+        foreach ($r in @($ui.DiagRows)) { $r.Enabled = $true }
+        $ui.Controls.DiagGrid.Items.Refresh()
+    })
+    $controls.BtnDiagDisableAll.Add_Click({
+        $ui = $script:OmniUi
+        foreach ($r in @($ui.DiagRows)) { $r.Enabled = $false }
+        $ui.Controls.DiagGrid.Items.Refresh()
+    })
+    # A row's "Run" button runs just that one scanner; results land on the Dashboard.
+    # The handler is attached at the grid level and filters to Button clicks (the
+    # checkbox-toggle and column-header clicks are not [Button], so they're ignored).
+    $controls.DiagGrid.AddHandler(
+        [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent,
+        [System.Windows.RoutedEventHandler] {
+            param($eventSender, $e)
+            $btn = $e.OriginalSource -as [System.Windows.Controls.Button]
+            if (-not $btn -or -not $btn.Tag) { return }
+            $ui = $script:OmniUi
+            if ($ui.Scan) { return }
+            $ui.Controls.NavList.SelectedIndex = 0    # show the Dashboard for results
+            Start-OmniScan -IncludeModule @([string]$btn.Tag)
+        })
 
     # --- Cancel ----------------------------------------------------------
     $controls.BtnCancel.Add_Click({
@@ -332,10 +557,12 @@ function Invoke-OmniWindow {
     # --- Navigation ------------------------------------------------------
     $controls.NavList.Add_SelectionChanged({
         $ui = $script:OmniUi
-        $sel = $ui.Controls.NavList.SelectedIndex   # 0 Dashboard, 1 Findings, 2 Repair
-        $ui.Controls.PanelDashboard.Visibility = if ($sel -eq 0) { 'Visible' } else { 'Collapsed' }
-        $ui.Controls.GridFindings.Visibility   = if ($sel -eq 1) { 'Visible' } else { 'Collapsed' }
-        $ui.Controls.PanelRepair.Visibility    = if ($sel -eq 2) { 'Visible' } else { 'Collapsed' }
+        $sel = $ui.Controls.NavList.SelectedIndex   # 0 Dashboard, 1 Findings, 2 Diagnostics, 3 Repair
+        $ui.Controls.PanelDashboard.Visibility   = if ($sel -eq 0) { 'Visible' } else { 'Collapsed' }
+        $ui.Controls.GridFindings.Visibility     = if ($sel -eq 1) { 'Visible' } else { 'Collapsed' }
+        $ui.Controls.PanelDiagnostics.Visibility = if ($sel -eq 2) { 'Visible' } else { 'Collapsed' }
+        $ui.Controls.PanelRepair.Visibility      = if ($sel -eq 3) { 'Visible' } else { 'Collapsed' }
+        if ($sel -eq 2) { Initialize-OmniDiagPanel }
     })
 
     # --- Repair: selection helpers ---------------------------------------
@@ -440,16 +667,14 @@ function Invoke-OmniWindow {
     $controls.BtnExport.Add_Click({
         $ui = $script:OmniUi
         if (-not $ui.Session) { return }
-        $msg = "Reports are generated and stored locally - nothing is uploaded.`n`n" +
-               "They may contain usernames, device names, file paths, domains, and other " +
-               "internal information. Review before sharing.`n`nGenerate HTML/JSON/CSV/ZIP reports now?"
-        $answer = [System.Windows.MessageBox]::Show($msg, 'OmniDiag - Privacy Notice', 'YesNo', 'Warning')
-        if ($answer -ne 'Yes') { return }
+        # Pick formats (with the privacy notice) - $null means cancelled / none chosen.
+        $formats = Show-OmniExportDialog -Owner $ui.Window -Theme $ui.Theme
+        if (-not $formats) { return }
         try {
             $outDir = Join-Path (Get-Location) 'reports'
-            $set = Export-OmniReport -Session $ui.Session -OutputDirectory $outDir -Format Html, Json, Csv, Pdf, Zip
+            $set = Export-OmniReport -Session $ui.Session -OutputDirectory $outDir -Format $formats
             $ui.Controls.TxtStatus.Text = "Reports written to $($set.OutputDirectory)"
-            $dialog = "Reports written to:`n$($set.OutputDirectory)"
+            $dialog = "Exported: $($formats -join ', ')`n`nReports written to:`n$($set.OutputDirectory)"
             if (@($set.Warnings).Count -gt 0) { $dialog += "`n`n" + ($set.Warnings -join "`n") }
             [System.Windows.MessageBox]::Show($dialog, 'OmniDiag', 'OK', 'Information') | Out-Null
             try { Invoke-Item -LiteralPath $set.OutputDirectory } catch { }

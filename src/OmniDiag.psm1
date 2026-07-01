@@ -69,6 +69,7 @@ function Invoke-OmniDiag {
         [string] $Range = 'Last7Days',
         [string[]] $IncludeCategory,
         [string[]] $ExcludeCategory,
+        [string[]] $IncludeModule,
         [string] $LogPath,
         [System.Threading.CancellationToken] $CancellationToken = ([System.Threading.CancellationToken]::None),
         [scriptblock] $ProgressCallback,
@@ -98,6 +99,7 @@ function Invoke-OmniDiag {
     if ($ProgressCallback) { $params.ProgressCallback = $ProgressCallback }
     if ($IncludeCategory)  { $params.IncludeCategory = $IncludeCategory }
     if ($ExcludeCategory)  { $params.ExcludeCategory = $ExcludeCategory }
+    if ($IncludeModule)    { $params.IncludeModule = $IncludeModule }
 
     $session = Invoke-OmniSession @params
     Add-Member -InputObject $session -MemberType NoteProperty -Name LogPath -Value $LogPath -Force
