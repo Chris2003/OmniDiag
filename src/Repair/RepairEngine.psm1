@@ -135,7 +135,12 @@ function Invoke-OmniRepair {
             $err = New-OmniRepairResult -Name $reg.Name -Category $reg.Category
             $err.Error = $_.Exception.Message
             Add-OmniRepairStep -Result $err -Description 'Unhandled error' -Succeeded $false -Output $_.Exception.Message
-            Complete-OmniRepairResult -Result $err -Status 'Failed' | Out-Null
+            # A discovery command can be unavailable on a non-Windows host during
+            # dry-run. Preserve the error evidence, but keep the engine's strongest
+            # contract: DryRun means no mutation was attempted and is reported as
+            # such. Real executions continue to fail normally.
+            $errorStatus = if ($Context.DryRun) { 'DryRun' } else { 'Failed' }
+            Complete-OmniRepairResult -Result $err -Status $errorStatus | Out-Null
             $results.Add($err)
             $log.Error("Repair '$($reg.Name)' threw: $($_.Exception.Message)", 'RepairEngine')
         }
