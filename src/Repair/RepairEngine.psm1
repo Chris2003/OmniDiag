@@ -120,7 +120,15 @@ function Invoke-OmniRepair {
         try {
             $result = & $reg.ModuleInfo { param($ctx) Invoke-OmniRepairAction -Context $ctx } $Context
             if ($null -eq $result) { throw "Repair '$($reg.Name)' returned no result." }
-            if (-not $result.EndTime) { Complete-OmniRepairResult -Result $result | Out-Null }
+            # Dry-run is an engine-level guarantee, even when a plugin's read-only
+            # discovery returns early without invoking an individual repair step.
+            # Normalize both status and reboot state so callers can trust the session.
+            if ($Context.DryRun) {
+                $result.RebootRequired = $false
+                Complete-OmniRepairResult -Result $result -Status 'DryRun' | Out-Null
+            } elseif (-not $result.EndTime) {
+                Complete-OmniRepairResult -Result $result | Out-Null
+            }
             $results.Add($result)
             $log.Info("Repair '$($reg.Name)' finished: status=$($result.Status), $($result.DurationMs)ms", 'RepairEngine')
         } catch {

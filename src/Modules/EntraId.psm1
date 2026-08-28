@@ -14,7 +14,7 @@ if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='Entra ID'; Category='Cloud'; Description='Microsoft Entra join, registration, tenant, and device-auth posture from dsregcmd.'; RequiresAdmin=$false; Order=710; Enabled=$true }
+    @{ Name='Entra ID'; Category='Cloud'; Description='Microsoft Entra join, registration, tenant, and device-auth posture from dsregcmd.'; RequiresAdmin=$false; Order=730; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {

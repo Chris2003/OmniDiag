@@ -63,6 +63,26 @@ function Invoke-OmniModuleScan {
     $log = $Context.Logger
     $cfg = $Context.Config
 
+    $isWindowsHost = $true
+    try { if ($IsWindows -eq $false) { $isWindowsHost = $false } } catch { }
+    if (-not $isWindowsHost) {
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            -Title 'Windows Event Logs are unavailable on this platform' -Severity Information `
+            -Component 'Event Logs' -Detail 'This scanner requires the Windows Event Log API.')
+        Set-OmniResultMetric -Result $result -Name 'TimeRange' -Value $Context.TimeRange.Label
+        Set-OmniResultMetric -Result $result -Name 'TotalEvents' -Value 0
+        Set-OmniResultMetric -Result $result -Name 'CriticalEvents' -Value 0
+        Set-OmniResultMetric -Result $result -Name 'ErrorEvents' -Value 0
+        Set-OmniResultMetric -Result $result -Name 'WarningEvents' -Value 0
+        Set-OmniResultMetric -Result $result -Name 'UniqueEventTypes' -Value 0
+        Set-OmniResultMetric -Result $result -Name 'ChannelsCollected' -Value 0
+        Set-OmniResultMetric -Result $result -Name 'ChannelsSkippedAdmin' -Value 0
+        Set-OmniResultMetric -Result $result -Name 'EventsPerChannel' -Value ([ordered]@{})
+        Set-OmniResultMetric -Result $result -Name 'TopGroups' -Value @()
+        Set-OmniResultMetric -Result $result -Name 'Timeline' -Value @()
+        return (Complete-OmniResult -Result $result)
+    }
+
     # --- Resolve options --------------------------------------------------
     $levels = if ($cfg.ContainsKey('EventLevels')) { [int[]]$cfg['EventLevels'] } else { @(1, 2, 3) }
     if ($cfg.ContainsKey('IncludeInformation') -and $cfg['IncludeInformation'] -and ($levels -notcontains 4)) {

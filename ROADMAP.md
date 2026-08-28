@@ -57,9 +57,9 @@ See `docs/IMPROVEMENT_PLAN.md` for the detailed phased product and engineering p
 - [ ] Automated repair suggestions
 
 ## Diagnostic scanners
-Expanded from the original consolidated modules to **38 granular scanners** across 12
+Expanded from the original consolidated modules to **42 scanners** across 13
 categories (System, Performance, Hardware, Storage, Network, Security, Peripherals,
-Reliability, Event Logs, Applications, Identity, Cloud). This delivered the previously-scheduled
+Reliability, Event Logs, Applications, Identity, Cloud, Health). This delivered the previously-scheduled
 Browser · Printing (Printers) · USB · Battery scanners plus many more (Scheduled Tasks,
 Hosts File, Network Shares, WiFi, Registry Health, Windows Features, Environment
 Variables, Benchmark, etc.) plus local AD, Entra ID, and Intune/MDM posture checks.

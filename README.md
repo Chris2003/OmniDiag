@@ -43,7 +43,7 @@ OmniDiag is being built in milestones. **Current: 0.2.0 — guided technician wo
 | Structured logging, console runner | ✅ Milestone 1 |
 | System Information module | ✅ Milestone 1 |
 | Event Log collection & analysis (grouping, Event-ID translation, patterns) | ✅ Milestone 2 |
-| **38 granular diagnostic scanners** across endpoint, network, security, identity, and cloud categories | ✅ |
+| **42 diagnostic scanners** across endpoint, network, security, identity, and cloud categories | ✅ |
 | Role profiles and daily task workflows from Help Desk through Cloud Admin | ✅ 0.2.0 |
 | Local Active Directory, Entra ID, and Intune/MDM posture checks | ✅ 0.2.0 |
 | HTML / JSON / CSV / ZIP reports | ✅ Milestone 4 |
@@ -54,14 +54,14 @@ OmniDiag is being built in milestones. **Current: 0.2.0 — guided technician wo
 
 See [ROADMAP.md](ROADMAP.md) for the full version plan.
 
-### Diagnostic scanners (38)
+### Diagnostic scanners (42)
 
 | Category | Scanners |
 |---|---|
 | **System** | System · Startup · Scheduled Tasks · Services · Drivers · Windows Features · Environment Variables · Registry Health · Installed Software · Windows Update · System Health |
-| **Performance** | CPU · Memory · Processes · Benchmark · Startup Performance |
+| **Performance** | CPU · Memory · Processes · Performance · Benchmark · Startup Performance |
 | **Hardware** | GPU · Battery · USB Devices |
-| **Storage** | Disk · Disk Usage · Temp Files |
+| **Storage** | Disk · Storage · Disk Usage · Temp Files |
 | **Network** | Network · IP Configuration · DNS Resolver · Hosts File · Network Shares · WiFi Networks |
 | **Security** | Security · Firewall Rules |
 | **Peripherals** | Printers |
@@ -70,6 +70,7 @@ See [ROADMAP.md](ROADMAP.md) for the full version plan.
 | **Applications** | Browser Diagnostics |
 | **Identity** | Active Directory |
 | **Cloud** | Entra ID · Intune and MDM |
+| **Health** | Windows Health |
 
 Each scanner is a self-contained plugin; filter a run with `-IncludeCategory` / `-ExcludeCategory`.
 
@@ -177,7 +178,7 @@ OmniDiag.ps1  ──>  Invoke-OmniDiag  ──>  Engine (Invoke-OmniSession)
                                             │
                  ┌──────────────────────────┴──────────────────────────┐
                  ▼                          ▼                           ▼
-          38 built-in diagnostic scanners                        (your module)
+          42 built-in diagnostic scanners                        (your module)
   System · EventLogs · Network · Storage · Health · Security · Performance
                  │                          │                           │
                  └─── each returns an OmniDiag.Result of Findings ──────┘

@@ -14,7 +14,7 @@ if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='Intune and MDM'; Category='Cloud'; Description='Local MDM enrollment, Intune agent, service, and policy-event posture.'; RequiresAdmin=$false; Order=720; Enabled=$true }
+    @{ Name='Intune and MDM'; Category='Cloud'; Description='Local MDM enrollment, Intune agent, service, and policy-event posture.'; RequiresAdmin=$false; Order=740; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {

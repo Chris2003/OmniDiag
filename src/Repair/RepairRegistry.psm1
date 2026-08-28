@@ -139,8 +139,8 @@ function New-OmniRepairContext {
         IsAdmin           = (Test-OmniIsAdministrator)
         Config            = $Config
         Host              = [pscustomobject]@{
-            ComputerName = $env:COMPUTERNAME
-            UserName     = $env:USERNAME
+            ComputerName = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [System.Environment]::MachineName }
+            UserName     = if ($env:USERNAME) { $env:USERNAME } else { [System.Environment]::UserName }
             PSVersion    = $PSVersionTable.PSVersion.ToString()
         }
     }
