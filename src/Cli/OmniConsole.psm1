@@ -66,6 +66,9 @@ function Write-OmniConsoleDashboard {
     Write-Host ("  Computer    : {0}" -f $Session.Host.ComputerName)
     Write-Host ("  User        : {0}" -f $Session.Host.UserName)
     Write-Host ("  Time range  : {0}" -f $Session.TimeRange.Label)
+    if ($Session.PSObject.Properties['ScanPlan'] -and $Session.ScanPlan) {
+        Write-Host ("  Scan plan   : {0} ({1})" -f $Session.ScanPlan.Name, $Session.ScanPlan.Type)
+    }
     Write-Host ("  Elevated    : {0}" -f $Session.IsAdmin)
     Write-Host ("  Duration    : {0:N1} s" -f ($Session.DurationMs / 1000))
     if ($Session.Cancelled) { Write-Host '  ** SESSION CANCELLED **' -ForegroundColor Yellow }

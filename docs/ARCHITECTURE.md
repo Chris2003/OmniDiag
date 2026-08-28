@@ -11,7 +11,8 @@ editing the engine.
 | **Launcher** | `OmniDiag.ps1` | Host validation, module import, runs a session, renders the console dashboard. |
 | **Public API** | `src/OmniDiag.psm1` | `Invoke-OmniDiag` and version helpers. The single call the CLI/GUI use. |
 | **Core** | `src/Core/` | Data models, logging, plugin registry, orchestration engine, health scoring. |
-| **Modules** | `src/Modules/` | Diagnostic plugins — the 35 granular scanners across 10 categories. One `.psm1` per scanner. Discovered at runtime. |
+| **Modules** | `src/Modules/` | Diagnostic plugins — 38 granular scanners across endpoint, network, security, identity, and cloud categories. One `.psm1` per scanner. Discovered at runtime. |
+| **Plans** | `src/Core/Workflows.psm1` | Data-only role profiles and task workflows that resolve technician intent to scanner names without coupling the engine to UI concepts. |
 | **Repair core** | `src/Repair/` | Repair models + step runner, plugin registry/discovery, restore-point helper, and the repair execution engine. The "fix" counterpart to Core. |
 | **Repairs** | `src/Repairs/` | Repair plugins. One `.psm1` per repair. Discovered at runtime, exactly like diagnostic modules. |
 | **Event Log subsystem** | `src/EventLog/` | Knowledge base (channels + Event-ID translation catalog) and the analysis pipeline (collection, grouping, timeline, finding/pattern generation) used by the Event Logs module. Not plugins; imported by the module. |
@@ -164,7 +165,7 @@ and the manifest's `AppliesTo`, surfaced by `Get-OmniApplicableRepair`.
 ## Execution & concurrency
 
 Modules currently run **sequentially**, with the cancellation token checked before
-each one; a full 35-scanner run takes roughly a minute. The engine and the module
+each one; a full 38-scanner run takes roughly a minute. The engine and the module
 contract are intentionally shaped so a runspace-pool parallel executor can be
 substituted later — cutting scan time — without changing any module or caller. GUI
 responsiveness is already handled separately: the whole session runs in a background

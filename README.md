@@ -8,7 +8,7 @@ A modern, **local-only**, open-source Windows diagnostic utility for IT professi
 help desk technicians, sysadmins, consultants, and power users — Sysinternals-style,
 but fully open and scriptable.
 
-[![CI](https://github.com/OWNER/OmniDiag/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/OmniDiag/actions/workflows/ci.yml)
+[![CI](https://github.com/Chris2003/OmniDiag/actions/workflows/ci.yml/badge.svg)](https://github.com/Chris2003/OmniDiag/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-5391FE.svg)](#requirements)
 
@@ -35,7 +35,7 @@ interface**, interprets the results, and tells you the **likely cause** and the
 
 ## Status
 
-OmniDiag is being built in milestones. **Current: Version 2 complete — Repair Center, PDF/branding, and a portable distribution.**
+OmniDiag is being built in milestones. **Current: 0.2.0 — guided technician workflows and enterprise identity posture.**
 
 | Capability | State |
 |---|---|
@@ -43,7 +43,9 @@ OmniDiag is being built in milestones. **Current: Version 2 complete — Repair 
 | Structured logging, console runner | ✅ Milestone 1 |
 | System Information module | ✅ Milestone 1 |
 | Event Log collection & analysis (grouping, Event-ID translation, patterns) | ✅ Milestone 2 |
-| **35 granular diagnostic scanners** across 10 categories (System, Performance, Hardware, Storage, Network, Security, Peripherals, Reliability, Event Logs, Applications) | ✅ |
+| **38 granular diagnostic scanners** across endpoint, network, security, identity, and cloud categories | ✅ |
+| Role profiles and daily task workflows from Help Desk through Cloud Admin | ✅ 0.2.0 |
+| Local Active Directory, Entra ID, and Intune/MDM posture checks | ✅ 0.2.0 |
 | HTML / JSON / CSV / ZIP reports | ✅ Milestone 4 |
 | PDF reports + branding (logo / accent color) | ✅ Milestone 6 |
 | WPF GUI (dashboard, light/dark toggle, cancel) | ✅ Milestone 5 |
@@ -52,7 +54,7 @@ OmniDiag is being built in milestones. **Current: Version 2 complete — Repair 
 
 See [ROADMAP.md](ROADMAP.md) for the full version plan.
 
-### Diagnostic scanners (35)
+### Diagnostic scanners (38)
 
 | Category | Scanners |
 |---|---|
@@ -66,6 +68,8 @@ See [ROADMAP.md](ROADMAP.md) for the full version plan.
 | **Reliability** | Reliability |
 | **Event Logs** | Event Logs · Error Summary |
 | **Applications** | Browser Diagnostics |
+| **Identity** | Active Directory |
+| **Cloud** | Entra ID · Intune and MDM |
 
 Each scanner is a self-contained plugin; filter a run with `-IncludeCategory` / `-ExcludeCategory`.
 
@@ -101,6 +105,17 @@ already have (Intune / ConfigMgr / GPO / RMM) and collect the reports — see
 ```powershell
 # From the repository root
 .\OmniDiag.ps1
+
+# See guided plans for every technician level and common daily task
+.\OmniDiag.ps1 -ListPlans
+
+# Role-focused scans
+.\OmniDiag.ps1 -Profile HelpDesk
+.\OmniDiag.ps1 -Profile CloudAdmin
+
+# Task-focused scans
+.\OmniDiag.ps1 -Workflow QuickTriage
+.\OmniDiag.ps1 -Workflow LoginAndIdentity
 
 # Scan only the last 24 hours, System category only
 .\OmniDiag.ps1 -Range Last24Hours -IncludeCategory System
@@ -148,6 +163,11 @@ $session.Results                # per-module results & findings
 Export-OmniReport -Session $session -OutputDirectory .\reports -Format Html,Json,Csv,Zip
 ```
 
+See the [Technician Guide](docs/TECHNICIAN_GUIDE.md) for role and daily-task
+workflows. The [Improvement Plan](docs/IMPROVEMENT_PLAN.md) explains the phased path
+from guided endpoint triage to enterprise operations, cross-platform support, and
+evidence-grounded assistance.
+
 ## How it works
 
 ```
@@ -157,7 +177,7 @@ OmniDiag.ps1  ──>  Invoke-OmniDiag  ──>  Engine (Invoke-OmniSession)
                                             │
                  ┌──────────────────────────┴──────────────────────────┐
                  ▼                          ▼                           ▼
-          35 built-in diagnostic scanners                        (your module)
+          38 built-in diagnostic scanners                        (your module)
   System · EventLogs · Network · Storage · Health · Security · Performance
                  │                          │                           │
                  └─── each returns an OmniDiag.Result of Findings ──────┘

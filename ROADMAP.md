@@ -32,11 +32,20 @@ gated on review before the next begins.
 > by running the portable tool on each machine and collecting the resulting reports, not
 > by remote execution.
 
+## Version 2.1 — Guided technician workflows (complete)
+- [x] Role profiles for Help Desk, Desktop Support, Systems, Network, Security, and Cloud admins
+- [x] Daily task workflows for quick triage, performance, networking, printing, updates, identity, storage, security, and cloud readiness
+- [x] Discoverable plan catalog and technician guide
+
 ## Version 3 — Enterprise integrations (run locally)
 Checks executed **on the local machine** (domain-joined / signed-in), not via remoting.
-- [ ] Active Directory checks (local domain membership, secure channel, GPO, DC reachability)
-- [ ] Microsoft 365 / Entra ID checks (sign-in state, Entra join/registration, Graph where available)
-- [ ] Intune / MDM enrollment & policy health checks
+- [x] Active Directory checks (local domain membership, secure channel, GPO posture, logon server)
+- [x] Entra ID checks (join/registration, tenant, device auth, primary refresh token)
+- [x] Intune / MDM enrollment, agent, service, and policy-event health checks
+- [ ] Certificate, proxy, VPN, time-sync, BitLocker escrow, Defender onboarding, and update-ring checks
+- [ ] Optional, explicitly authenticated Microsoft Graph checks (never part of default local-only scans)
+
+See `docs/IMPROVEMENT_PLAN.md` for the detailed phased product and engineering plan.
 
 ## Version 4 — Cross-platform
 - [ ] Linux support
@@ -48,9 +57,9 @@ Checks executed **on the local machine** (domain-joined / signed-in), not via re
 - [ ] Automated repair suggestions
 
 ## Diagnostic scanners
-Expanded from the original consolidated modules to **35 granular scanners** across 10
+Expanded from the original consolidated modules to **38 granular scanners** across 12
 categories (System, Performance, Hardware, Storage, Network, Security, Peripherals,
-Reliability, Event Logs, Applications). This delivered the previously-scheduled
+Reliability, Event Logs, Applications, Identity, Cloud). This delivered the previously-scheduled
 Browser · Printing (Printers) · USB · Battery scanners plus many more (Scheduled Tasks,
 Hosts File, Network Shares, WiFi, Registry Health, Windows Features, Environment
-Variables, Benchmark, etc.). Microsoft 365 checks remain part of Version 3.
+Variables, Benchmark, etc.) plus local AD, Entra ID, and Intune/MDM posture checks.

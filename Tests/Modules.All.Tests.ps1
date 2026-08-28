@@ -21,8 +21,8 @@ BeforeAll {
 }
 
 Describe 'Scanner discovery + contract' {
-    It 'discovers the full granular scanner set (35+)' {
-        $script:Regs.Count | Should -BeGreaterOrEqual 35
+    It 'discovers the full granular scanner set (38+)' {
+        $script:Regs.Count | Should -BeGreaterOrEqual 38
     }
 
     It 'gives every scanner a unique name' {
@@ -39,7 +39,7 @@ Describe 'Scanner discovery + contract' {
 
     It 'exposes the expected category groups' {
         $cats = $script:Regs.Category | Select-Object -Unique
-        foreach ($c in @('System', 'Performance', 'Hardware', 'Storage', 'Network', 'Security', 'Event Logs')) {
+        foreach ($c in @('System', 'Performance', 'Hardware', 'Storage', 'Network', 'Security', 'Event Logs', 'Identity', 'Cloud')) {
             $cats | Should -Contain $c
         }
     }

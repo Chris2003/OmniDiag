@@ -45,6 +45,13 @@ function Invoke-OmniDiag {
     .PARAMETER IncludeCategory / ExcludeCategory
         Optional category filters.
 
+    .PARAMETER Profile
+        Focus the scan for an IT role such as HelpDesk, SystemsAdmin, or CloudAdmin.
+
+    .PARAMETER Workflow
+        Focus the scan on a daily task such as QuickTriage, SlowComputer, or
+        LoginAndIdentity.
+
     .PARAMETER LogPath
         Path for the structured .jsonl log. Defaults to a per-run file under
         the user's temp folder.
@@ -70,11 +77,23 @@ function Invoke-OmniDiag {
         [string[]] $IncludeCategory,
         [string[]] $ExcludeCategory,
         [string[]] $IncludeModule,
+        [ValidateSet('HelpDesk','DesktopSupport','SystemsAdmin','NetworkAdmin','SecurityAdmin','CloudAdmin','Full')]
+        [string] $Profile,
+        [ValidateSet('QuickTriage','SlowComputer','NetworkConnectivity','Printing','WindowsUpdate','LoginAndIdentity','StorageCleanup','SecurityPosture','CloudReadiness','FullScan')]
+        [string] $Workflow,
         [string] $LogPath,
         [System.Threading.CancellationToken] $CancellationToken = ([System.Threading.CancellationToken]::None),
         [scriptblock] $ProgressCallback,
         [switch] $Quiet
     )
+
+    if ($Profile -and $Workflow) { throw 'Choose either -Profile or -Workflow, not both.' }
+    if (($Profile -or $Workflow) -and $IncludeModule) { throw 'Do not combine -Profile or -Workflow with -IncludeModule. Use one selection method.' }
+
+    $scanPlan = $null
+    if ($Profile) { $scanPlan = Get-OmniRoleProfile -Name $Profile }
+    if ($Workflow) { $scanPlan = Get-OmniTaskWorkflow -Name $Workflow }
+    if ($scanPlan -and @($scanPlan.Modules).Count -gt 0) { $IncludeModule = @($scanPlan.Modules) }
 
     if (-not $LogPath) {
         $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
@@ -103,6 +122,12 @@ function Invoke-OmniDiag {
 
     $session = Invoke-OmniSession @params
     Add-Member -InputObject $session -MemberType NoteProperty -Name LogPath -Value $LogPath -Force
+    if ($scanPlan) {
+        $planType = if ($Profile) { 'RoleProfile' } else { 'TaskWorkflow' }
+        Add-Member -InputObject $session -MemberType NoteProperty -Name ScanPlan -Value ([pscustomobject]@{
+            Type = $planType; Name = $scanPlan.Name; Description = $scanPlan.Description
+        }) -Force
+    }
     return $session
 }
 

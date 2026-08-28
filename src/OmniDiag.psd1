@@ -3,7 +3,7 @@
     # OmniDiag module manifest
     # ---------------------------------------------------------------------
     RootModule        = 'OmniDiag.psm1'
-    ModuleVersion     = '0.1.0'
+    ModuleVersion     = '0.2.0'
     GUID              = 'b6e9d0c2-7a4d-4f3e-9c1a-0d2f5a8e10b4'
     Author            = 'OmniDiag Contributors'
     CompanyName       = 'OmniDiag'
@@ -17,6 +17,7 @@
     NestedModules = @(
         'Core/Models.psm1',
         'Core/Logging.psm1',
+        'Core/Workflows.psm1',
         'Core/Registry.psm1',
         'Core/HealthScore.psm1',
         'Core/RegistryScan.psm1',
@@ -38,6 +39,7 @@
     FunctionsToExport = @(
         # Root
         'Invoke-OmniDiag', 'Get-OmniVersion', 'Invoke-OmniRepairCenter',
+        'Get-OmniRoleProfile', 'Get-OmniTaskWorkflow',
         # Models
         'New-OmniFinding', 'New-OmniResult', 'Add-OmniFinding', 'Set-OmniResultMetric',
         'Complete-OmniResult', 'Get-OmniTimeRange', 'Get-OmniSeverityRank', 'Get-OmniSeverityNames',
@@ -81,8 +83,8 @@
         PSData = @{
             Tags         = @('Windows', 'Diagnostics', 'IT', 'Sysadmin', 'Troubleshooting', 'EventLog')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
-            ProjectUri   = 'https://github.com/OWNER/OmniDiag'
-            ReleaseNotes = 'Milestone 5: WPF GUI (Show-OmniDiagWindow) with dashboard, left navigation, dark/light themes, background-runspace scanning with a working Cancel button, and one-click report export - completing Version 1. Builds on the M1 core engine, M2 Event Log engine, seven M1-M3 diagnostic modules, and the M4 reporting engine.'
+            ProjectUri   = 'https://github.com/Chris2003/OmniDiag'
+            ReleaseNotes = 'Role profiles, task-oriented workflows, and local Active Directory, Entra ID, and Intune/MDM posture checks.'
         }
     }
 }

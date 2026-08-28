@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- Added role profiles for Help Desk, Desktop Support, Systems, Network, Security, and Cloud administrators.
+- Added ten task-oriented workflows for common daily IT support scenarios.
+- Added read-only Active Directory, Entra ID, and Intune/MDM posture scanners.
+- Added `-ListPlans`, `-Profile`, and `-Workflow` launcher options and public plan-discovery functions.
+- Added a technician guide, phased improvement plan, plan contract tests, and Windows/Linux CI.
+- Corrected GitHub project and CI badge URLs.
+
 All notable changes to OmniDiag are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -306,5 +315,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - GitHub Actions CI: PSScriptAnalyzer lint + Pester tests on `windows-latest`.
 - Project documentation and governance files.
 
-[Unreleased]: https://github.com/OWNER/OmniDiag/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/OWNER/OmniDiag/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Chris2003/OmniDiag/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Chris2003/OmniDiag/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/Chris2003/OmniDiag/releases/tag/v0.1.0

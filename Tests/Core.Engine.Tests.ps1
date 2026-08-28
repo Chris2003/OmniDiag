@@ -90,4 +90,20 @@ Describe 'Invoke-OmniSession' {
         $session.Results | Should -HaveCount 1
         $session.Results[0].Category | Should -Be 'Network'
     }
+
+    It 'runs a role profile through the public API and records the plan' {
+        $modulesPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'src/Modules'
+        $session = Invoke-OmniDiag -ModulesPath $modulesPath -Profile HelpDesk -Quiet
+        $session.ScanPlan.Name | Should -Be 'HelpDesk'
+        $session.ScanPlan.Type | Should -Be 'RoleProfile'
+        @($session.Results).Count | Should -BeGreaterThan 0
+        foreach ($result in @($session.Results)) {
+            (Get-OmniRoleProfile HelpDesk).Modules | Should -Contain $result.ModuleName
+        }
+    }
+
+    It 'rejects ambiguous scanner selection' {
+        { Invoke-OmniDiag -Profile HelpDesk -Workflow QuickTriage -Quiet } | Should -Throw '*either*'
+        { Invoke-OmniDiag -Profile HelpDesk -IncludeModule CPU -Quiet } | Should -Throw '*selection method*'
+    }
 }

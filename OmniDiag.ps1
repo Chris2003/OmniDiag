@@ -26,6 +26,18 @@
     Run only these individual scanners by name (e.g. CPU, Memory, Disk). Applied after
     the category filters. The GUI's "Scanners..." picker uses the same mechanism.
 
+.PARAMETER Profile
+    Run a role-focused scanner set: HelpDesk, DesktopSupport, SystemsAdmin,
+    NetworkAdmin, SecurityAdmin, CloudAdmin, or Full.
+
+.PARAMETER Workflow
+    Run a daily-task workflow such as QuickTriage, SlowComputer,
+    NetworkConnectivity, Printing, WindowsUpdate, LoginAndIdentity,
+    StorageCleanup, SecurityPosture, CloudReadiness, or FullScan.
+
+.PARAMETER ListPlans
+    List available role profiles and task workflows without running a scan.
+
 .PARAMETER Gui
     Launch the WPF graphical interface (dashboard, dark/light, live progress, cancel,
     one-click report export) instead of the console experience. Windows only.
@@ -64,6 +76,11 @@ param(
     [string[]] $IncludeCategory,
     [string[]] $ExcludeCategory,
     [string[]] $IncludeModule,
+    [ValidateSet('HelpDesk','DesktopSupport','SystemsAdmin','NetworkAdmin','SecurityAdmin','CloudAdmin','Full')]
+    [string] $Profile,
+    [ValidateSet('QuickTriage','SlowComputer','NetworkConnectivity','Printing','WindowsUpdate','LoginAndIdentity','StorageCleanup','SecurityPosture','CloudReadiness','FullScan')]
+    [string] $Workflow,
+    [switch] $ListPlans,
     [switch] $Gui,
     [switch] $Quiet,
 
@@ -105,6 +122,15 @@ if (-not (Test-Path -LiteralPath $manifest)) {
 }
 Import-Module $manifest -Force -DisableNameChecking
 
+if ($ListPlans) {
+    Write-Host ''
+    Write-Host 'Role profiles' -ForegroundColor Cyan
+    Get-OmniRoleProfile | Format-Table Name, Audience, Description -Wrap
+    Write-Host 'Task workflows' -ForegroundColor Cyan
+    Get-OmniTaskWorkflow | Format-Table Name, Description -Wrap
+    return
+}
+
 # --- Elevation notice ------------------------------------------------------
 if (-not (Test-OmniIsAdministrator)) {
     Write-Host 'Note: running without administrator rights. Some checks (and admin-only modules) will be skipped.' -ForegroundColor Yellow
@@ -124,7 +150,8 @@ if ($Gui) {
 # --- Run (console) ---------------------------------------------------------
 $progress = New-OmniConsoleProgressCallback
 $session = Invoke-OmniDiag -Range $Range -IncludeCategory $IncludeCategory -ExcludeCategory $ExcludeCategory `
-    -IncludeModule $IncludeModule -ProgressCallback $progress -Quiet:$Quiet
+    -IncludeModule $IncludeModule -Profile $Profile -Workflow $Workflow `
+    -ProgressCallback $progress -Quiet:$Quiet
 
 Write-OmniConsoleDashboard -Session $session
 Write-Host ("Structured log written to: {0}" -f $session.LogPath) -ForegroundColor DarkGray
