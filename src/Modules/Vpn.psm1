@@ -29,7 +29,8 @@ function Invoke-OmniModuleScan {
     } catch { $Context.Logger.Debug("RasClient event query failed: $($_.Exception.Message)", 'VPN') }
 
     Set-OmniResultMetric -Result $result -Name 'ProfileCount' -Value $profiles.Count
-    Set-OmniResultMetric -Result $result -Name 'ConnectedProfiles' -Value (@($profiles | Where-Object ConnectionStatus -eq Connected).Name -join ', ')
+    $connectedNames = @($profiles | Where-Object ConnectionStatus -eq Connected | ForEach-Object { [string]$_.Name })
+    Set-OmniResultMetric -Result $result -Name 'ConnectedProfiles' -Value ($connectedNames -join ', ')
     Set-OmniResultMetric -Result $result -Name 'DetectedAdapterCount' -Value $vpnAdapters.Count
     Set-OmniResultMetric -Result $result -Name 'RecentRasClientErrorCount' -Value $failureCount
     if ($failureCount -gt 0) {
