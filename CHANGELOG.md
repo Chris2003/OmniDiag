@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Completed local Version 3 enterprise posture with certificate, proxy, VPN, time synchronization, BitLocker escrow-policy, Defender onboarding, and update-ring scanners.
+- Expanded Cloud Admin, Security Admin, Systems Admin, Network Admin, and task workflows to use the new evidence.
+- Added optional loopback-only Ollama analysis with structured finding-ID citations and no repair execution path.
+- Defaulted local AI to `gemma4:e2b` with a documented `gemma3:1b` low-memory alternative.
+- Added Ollama contract tests, setup documentation, and privacy boundaries.
+
 ## 0.2.0
 
 - Added role profiles for Help Desk, Desktop Support, Systems, Network, Security, and Cloud administrators.
@@ -315,6 +323,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - GitHub Actions CI: PSScriptAnalyzer lint + Pester tests on `windows-latest`.
 - Project documentation and governance files.
 
-[Unreleased]: https://github.com/Chris2003/OmniDiag/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Chris2003/OmniDiag/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Chris2003/OmniDiag/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Chris2003/OmniDiag/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Chris2003/OmniDiag/releases/tag/v0.1.0

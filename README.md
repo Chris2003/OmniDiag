@@ -35,7 +35,7 @@ interface**, interprets the results, and tells you the **likely cause** and the
 
 ## Status
 
-OmniDiag is being built in milestones. **Current: 0.2.0 — guided technician workflows and enterprise identity posture.**
+OmniDiag is being built in milestones. **Current: 0.3.0 — Version 3 enterprise posture complete, with optional local Ollama guidance.**
 
 | Capability | State |
 |---|---|
@@ -43,9 +43,11 @@ OmniDiag is being built in milestones. **Current: 0.2.0 — guided technician wo
 | Structured logging, console runner | ✅ Milestone 1 |
 | System Information module | ✅ Milestone 1 |
 | Event Log collection & analysis (grouping, Event-ID translation, patterns) | ✅ Milestone 2 |
-| **42 diagnostic scanners** across endpoint, network, security, identity, and cloud categories | ✅ |
+| **49 diagnostic scanners** across endpoint, network, security, identity, and cloud categories | ✅ |
 | Role profiles and daily task workflows from Help Desk through Cloud Admin | ✅ 0.2.0 |
 | Local Active Directory, Entra ID, and Intune/MDM posture checks | ✅ 0.2.0 |
+| Certificates, proxy, VPN, time, BitLocker escrow posture, Defender onboarding, and update rings | ✅ 0.3.0 |
+| Optional evidence-grounded local Ollama analysis | ✅ 0.3.0 |
 | HTML / JSON / CSV / ZIP reports | ✅ Milestone 4 |
 | PDF reports + branding (logo / accent color) | ✅ Milestone 6 |
 | WPF GUI (dashboard, light/dark toggle, cancel) | ✅ Milestone 5 |
@@ -54,7 +56,7 @@ OmniDiag is being built in milestones. **Current: 0.2.0 — guided technician wo
 
 See [ROADMAP.md](ROADMAP.md) for the full version plan.
 
-### Diagnostic scanners (42)
+### Diagnostic scanners (49)
 
 | Category | Scanners |
 |---|---|
@@ -62,14 +64,14 @@ See [ROADMAP.md](ROADMAP.md) for the full version plan.
 | **Performance** | CPU · Memory · Processes · Performance · Benchmark · Startup Performance |
 | **Hardware** | GPU · Battery · USB Devices |
 | **Storage** | Disk · Storage · Disk Usage · Temp Files |
-| **Network** | Network · IP Configuration · DNS Resolver · Hosts File · Network Shares · WiFi Networks |
-| **Security** | Security · Firewall Rules |
+| **Network** | Network · IP Configuration · DNS Resolver · Hosts File · Network Shares · WiFi Networks · Proxy Configuration · VPN |
+| **Security** | Security · Firewall Rules · Certificates · BitLocker · Defender Onboarding |
 | **Peripherals** | Printers |
 | **Reliability** | Reliability |
 | **Event Logs** | Event Logs · Error Summary |
 | **Applications** | Browser Diagnostics |
-| **Identity** | Active Directory |
-| **Cloud** | Entra ID · Intune and MDM |
+| **Identity** | Active Directory · Time Synchronization |
+| **Cloud** | Entra ID · Intune and MDM · Update Rings |
 | **Health** | Windows Health |
 
 Each scanner is a self-contained plugin; filter a run with `-IncludeCategory` / `-ExcludeCategory`.
@@ -117,6 +119,10 @@ already have (Intune / ConfigMgr / GPO / RMM) and collect the reports — see
 # Task-focused scans
 .\OmniDiag.ps1 -Workflow QuickTriage
 .\OmniDiag.ps1 -Workflow LoginAndIdentity
+
+# Correlate the resulting evidence with a local Gemma 4 model through Ollama
+ollama pull gemma4:e2b
+.\OmniDiag.ps1 -Workflow QuickTriage -AiAnalysis
 
 # Scan only the last 24 hours, System category only
 .\OmniDiag.ps1 -Range Last24Hours -IncludeCategory System
@@ -169,6 +175,10 @@ workflows. The [Improvement Plan](docs/IMPROVEMENT_PLAN.md) explains the phased 
 from guided endpoint triage to enterprise operations, cross-platform support, and
 evidence-grounded assistance.
 
+For private, on-device correlation, see the [Local Ollama Assistant](docs/OLLAMA.md).
+The default `gemma4:e2b` model is the lightest Gemma 4 Ollama tag but is still about
+7.2 GB; use `gemma3:1b` (about 815 MB) on low-memory technician devices.
+
 ## How it works
 
 ```
@@ -178,7 +188,7 @@ OmniDiag.ps1  ──>  Invoke-OmniDiag  ──>  Engine (Invoke-OmniSession)
                                             │
                  ┌──────────────────────────┴──────────────────────────┐
                  ▼                          ▼                           ▼
-          42 built-in diagnostic scanners                        (your module)
+          49 built-in diagnostic scanners                        (your module)
   System · EventLogs · Network · Storage · Health · Security · Performance
                  │                          │                           │
                  └─── each returns an OmniDiag.Result of Findings ──────┘

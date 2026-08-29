@@ -21,8 +21,8 @@ BeforeAll {
 }
 
 Describe 'Scanner discovery + contract' {
-    It 'discovers the full scanner set (42+)' {
-        $script:Regs.Count | Should -BeGreaterOrEqual 42
+    It 'discovers the full scanner set (49+)' {
+        $script:Regs.Count | Should -BeGreaterOrEqual 49
     }
 
     It 'gives every scanner a unique name' {

@@ -74,6 +74,9 @@ The enterprise scanners are intentionally local and read-only:
   registration, tenant, device-authentication, and primary-refresh-token posture.
 - **Intune and MDM** checks local enrollment records, the Intune Management
   Extension, its service, and recent MDM policy-processing errors.
+- **Enterprise prerequisites** add certificate expiration, proxy, VPN, time
+  synchronization, BitLocker and escrow-policy evidence, Defender onboarding, and
+  managed update-ring posture.
 
 They do not use PowerShell remoting, authenticate to Microsoft Graph, modify the
 directory, or upload device data. A missing enrollment is informational because not
@@ -92,6 +95,9 @@ $session.Results | Where-Object Category -in 'Identity','Cloud'
 
 (Get-OmniTaskWorkflow NetworkConnectivity).Modules
 ```
+
+Optional private correlation is available after a scan with `-AiAnalysis`. See the
+[Local Ollama Assistant](OLLAMA.md) for model sizing, setup, and privacy boundaries.
 
 `-Profile` and `-Workflow` cannot be combined with each other or with
 `-IncludeModule`; this prevents an ambiguous scan. Category exclusions can still

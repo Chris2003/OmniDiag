@@ -37,13 +37,16 @@ gated on review before the next begins.
 - [x] Daily task workflows for quick triage, performance, networking, printing, updates, identity, storage, security, and cloud readiness
 - [x] Discoverable plan catalog and technician guide
 
-## Version 3 — Enterprise integrations (run locally)
+## Version 3 — Enterprise integrations (complete, run locally)
 Checks executed **on the local machine** (domain-joined / signed-in), not via remoting.
 - [x] Active Directory checks (local domain membership, secure channel, GPO posture, logon server)
 - [x] Entra ID checks (join/registration, tenant, device auth, primary refresh token)
 - [x] Intune / MDM enrollment, agent, service, and policy-event health checks
-- [ ] Certificate, proxy, VPN, time-sync, BitLocker escrow, Defender onboarding, and update-ring checks
-- [ ] Optional, explicitly authenticated Microsoft Graph checks (never part of default local-only scans)
+- [x] Certificate, proxy, VPN, time-sync, BitLocker escrow posture, Defender onboarding, and update-ring checks
+
+Authenticated Graph collection is intentionally outside Version 3: it would introduce
+remote data transfer, tenant consent, secret handling, and API lifecycle dependencies.
+If added later, it will be a separate opt-in connector rather than part of a local scan.
 
 See `docs/IMPROVEMENT_PLAN.md` for the detailed phased product and engineering plan.
 
@@ -52,12 +55,14 @@ See `docs/IMPROVEMENT_PLAN.md` for the detailed phased product and engineering p
 - [ ] macOS support
 
 ## Version 5 — AI-assisted troubleshooting
-- [ ] Natural-language search over findings
-- [ ] Deeper root-cause correlation across modules
-- [ ] Automated repair suggestions
+- [x] Optional local Ollama analysis with configurable Gemma models
+- [x] Structured priorities, cross-module hypotheses, next steps, and finding-ID citations
+- [x] Loopback-only, no cloud tags, minimized evidence, and no repair execution path
+- [ ] Multi-turn natural-language search over saved findings and approved runbooks
+- [ ] Before/after comparison and organization-owned runbook retrieval
 
 ## Diagnostic scanners
-Expanded from the original consolidated modules to **42 scanners** across 13
+Expanded from the original consolidated modules to **49 scanners** across 13
 categories (System, Performance, Hardware, Storage, Network, Security, Peripherals,
 Reliability, Event Logs, Applications, Identity, Cloud, Health). This delivered the previously-scheduled
 Browser · Printing (Printers) · USB · Battery scanners plus many more (Scheduled Tasks,

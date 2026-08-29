@@ -38,6 +38,14 @@
 .PARAMETER ListPlans
     List available role profiles and task workflows without running a scan.
 
+.PARAMETER AiAnalysis
+    After the scan, request optional evidence-grounded guidance from a locally
+    running Ollama instance. This is advisory and cannot execute repairs.
+
+.PARAMETER AiModel
+    Locally installed Ollama model. Defaults to the smallest Gemma 4 tag,
+    gemma4:e2b. Use gemma3:1b on low-memory devices.
+
 .PARAMETER Gui
     Launch the WPF graphical interface (dashboard, dark/light, live progress, cancel,
     one-click report export) instead of the console experience. Windows only.
@@ -83,6 +91,12 @@ param(
     [switch] $ListPlans,
     [switch] $Gui,
     [switch] $Quiet,
+
+    # Optional local AI analysis
+    [switch] $AiAnalysis,
+    [string] $AiModel = 'gemma4:e2b',
+    [string] $AiQuestion = 'What are the most likely root causes and safest next diagnostic steps?',
+    [string] $OllamaEndpoint = 'http://127.0.0.1:11434',
 
     # Reporting
     [switch] $Report,
@@ -155,6 +169,26 @@ $session = Invoke-OmniDiag -Range $Range -IncludeCategory $IncludeCategory -Excl
 
 Write-OmniConsoleDashboard -Session $session
 Write-Host ("Structured log written to: {0}" -f $session.LogPath) -ForegroundColor DarkGray
+
+# --- Optional local Ollama analysis ---------------------------------------
+if ($AiAnalysis) {
+    Write-Host ''
+    Write-Host "Local AI analysis ($AiModel)" -ForegroundColor Cyan
+    $ai = Invoke-OmniOllamaAnalysis -Session $session -Question $AiQuestion -Model $AiModel -Endpoint $OllamaEndpoint
+    Write-Host $ai.Summary
+    if ($ai.Priorities.Count -gt 0) {
+        Write-Host '  Priorities:' -ForegroundColor Cyan
+        foreach ($item in $ai.Priorities) { Write-Host "  - [$($item.urgency)] $($item.title) (evidence: $(@($item.evidenceIds) -join ', '))" }
+    }
+    if ($ai.NextSteps.Count -gt 0) {
+        Write-Host '  Next diagnostic steps:' -ForegroundColor Cyan
+        foreach ($item in $ai.NextSteps) {
+            $approval = if ($item.requiresApproval) { ' [approval required]' } else { '' }
+            Write-Host "  - $($item.step)$approval (evidence: $(@($item.evidenceIds) -join ', '))"
+        }
+    }
+    Write-Host '  Advisory only: validate guidance against the cited findings and organizational runbooks.' -ForegroundColor Yellow
+}
 
 # --- Reporting (with privacy warning) --------------------------------------
 if ($Report) {

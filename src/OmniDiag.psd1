@@ -3,7 +3,7 @@
     # OmniDiag module manifest
     # ---------------------------------------------------------------------
     RootModule        = 'OmniDiag.psm1'
-    ModuleVersion     = '0.2.0'
+    ModuleVersion     = '0.3.0'
     GUID              = 'b6e9d0c2-7a4d-4f3e-9c1a-0d2f5a8e10b4'
     Author            = 'OmniDiag Contributors'
     CompanyName       = 'OmniDiag'
@@ -18,6 +18,7 @@
         'Core/Models.psm1',
         'Core/Logging.psm1',
         'Core/Workflows.psm1',
+        'Core/Ollama.psm1',
         'Core/Registry.psm1',
         'Core/HealthScore.psm1',
         'Core/RegistryScan.psm1',
@@ -40,6 +41,7 @@
         # Root
         'Invoke-OmniDiag', 'Get-OmniVersion', 'Invoke-OmniRepairCenter',
         'Get-OmniRoleProfile', 'Get-OmniTaskWorkflow',
+        'Test-OmniOllama', 'Invoke-OmniOllamaAnalysis',
         # Models
         'New-OmniFinding', 'New-OmniResult', 'Add-OmniFinding', 'Set-OmniResultMetric',
         'Complete-OmniResult', 'Get-OmniTimeRange', 'Get-OmniSeverityRank', 'Get-OmniSeverityNames',
@@ -84,7 +86,7 @@
             Tags         = @('Windows', 'Diagnostics', 'IT', 'Sysadmin', 'Troubleshooting', 'EventLog')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/Chris2003/OmniDiag'
-            ReleaseNotes = 'Role profiles, task-oriented workflows, and local Active Directory, Entra ID, and Intune/MDM posture checks.'
+            ReleaseNotes = 'Completes local Version 3 enterprise posture checks and adds an optional evidence-grounded local Ollama assistant.'
         }
     }
 }

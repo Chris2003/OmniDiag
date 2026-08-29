@@ -34,18 +34,21 @@ scanner name, and an escalation records which plan produced the evidence.
 Success measure: Tier 1 follows safe verification steps while Tier 3 can inspect the
 raw evidence and confidence behind every hypothesis.
 
-## Phase 3 — Enterprise operations without remoting
+## Phase 3 — Enterprise operations without remoting (collector scope implemented in 0.3.0)
 
 - Produce stable JSON schemas and exit codes for RMM, Intune, ConfigMgr, CI, and ticketing ingestion.
 - Add redaction policies for usernames, hostnames, domains, IP addresses, and paths.
 - Add signed configuration profiles with scanner and repair allowlists.
-- Add local certificate, proxy, VPN, time-sync, BitLocker escrow, Defender onboarding, and update-ring checks.
+- Add local certificate, proxy, VPN, time-sync, BitLocker escrow, Defender onboarding, and update-ring checks. **Implemented.**
 - Add optional Graph checks only through explicit authentication and consent, separate from local-only mode.
 
 Success measure: enterprises deploy the portable package at scale, collect predictable
 evidence, and enforce policy without enabling inbound remoting.
 
-## Phase 4 — Cross-platform technician core
+## Phase 4 — Cross-platform technician core (deferred)
+
+This phase is intentionally paused while the Windows enterprise and local-assistance
+experience matures.
 
 - Split platform-neutral findings, workflows, reporting, and correlation from Windows collectors.
 - Add Linux collectors for systemd, journal, packages, disks, networking, SSH, and cloud agents.
@@ -55,12 +58,12 @@ evidence, and enforce policy without enabling inbound remoting.
 Success measure: profiles and reports remain familiar across platforms while every
 collector accurately declares its supported operating systems.
 
-## Phase 5 — Evidence-grounded assistance
+## Phase 5 — Evidence-grounded assistance (local foundation implemented in 0.3.0)
 
 - Add natural-language search over the local session and approved runbooks.
-- Generate incident summaries that cite finding IDs and never invent missing facts.
-- Recommend the next diagnostic step based on unresolved uncertainty.
-- Require explicit approval for every mutation with audit, rollback, and verification data.
+- Generate incident summaries that cite finding IDs and never invent missing facts. **Implemented through optional local Ollama analysis.**
+- Recommend the next diagnostic step based on unresolved uncertainty. **Implemented through structured advisory output.**
+- Require explicit approval for every mutation with audit, rollback, and verification data. **The assistant has no mutation path; broader repair audit remains planned.**
 
 Success measure: assistance reduces time to resolution without weakening technician
 control, privacy, evidence quality, or change management.

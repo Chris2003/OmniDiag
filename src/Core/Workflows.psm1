@@ -25,22 +25,22 @@ $script:OmniRoleProfiles = @(
     [pscustomobject]@{
         Name = 'SystemsAdmin'; Audience = 'Windows systems administrators'
         Description = 'Server and workstation operating-system, service, storage, security, and domain posture.'
-        Modules = @('System Information','System','System Health','Windows Health','Windows Update','Services','Drivers','Scheduled Tasks','Windows Features','Environment Variables','Registry Health','Installed Software','CPU','Memory','Processes','Performance','Disk','Storage','Disk Usage','Network','IP Configuration','DNS Resolver','Network Shares','Security','Firewall Rules','Reliability','Event Logs','Error Summary','Active Directory','Entra ID','Intune and MDM')
+        Modules = @('System Information','System','System Health','Windows Health','Windows Update','Services','Drivers','Scheduled Tasks','Windows Features','Environment Variables','Registry Health','Installed Software','CPU','Memory','Processes','Performance','Disk','Storage','Disk Usage','Network','IP Configuration','DNS Resolver','Network Shares','Proxy Configuration','VPN','Time Synchronization','Security','Firewall Rules','Certificates','BitLocker','Defender Onboarding','Update Rings','Reliability','Event Logs','Error Summary','Active Directory','Entra ID','Intune and MDM')
     },
     [pscustomobject]@{
         Name = 'NetworkAdmin'; Audience = 'Network and infrastructure administrators'
         Description = 'Adapter, addressing, DNS, Wi-Fi, shares, host overrides, firewall, and identity reachability posture.'
-        Modules = @('Network','IP Configuration','DNS Resolver','Hosts File','Network Shares','WiFi Networks','Firewall Rules','Active Directory','Entra ID','Event Logs','Error Summary')
+        Modules = @('Network','IP Configuration','DNS Resolver','Hosts File','Network Shares','WiFi Networks','Proxy Configuration','VPN','Time Synchronization','Firewall Rules','Certificates','Active Directory','Entra ID','Event Logs','Error Summary')
     },
     [pscustomobject]@{
         Name = 'SecurityAdmin'; Audience = 'Security operations and endpoint security administrators'
         Description = 'Endpoint protection, firewall, patch, persistence, identity, and security-event posture.'
-        Modules = @('Security','Firewall Rules','Windows Update','Windows Features','Startup','Scheduled Tasks','Services','Processes','Installed Software','Browser Diagnostics','Active Directory','Entra ID','Intune and MDM','Event Logs','Error Summary')
+        Modules = @('Security','Firewall Rules','Certificates','BitLocker','Defender Onboarding','Windows Update','Update Rings','Windows Features','Startup','Scheduled Tasks','Services','Processes','Installed Software','Browser Diagnostics','Proxy Configuration','VPN','Time Synchronization','Active Directory','Entra ID','Intune and MDM','Event Logs','Error Summary')
     },
     [pscustomobject]@{
         Name = 'CloudAdmin'; Audience = 'Microsoft 365, Entra, Intune, and cloud administrators'
         Description = 'Local identity, join, enrollment, policy, DNS, and cloud access readiness.'
-        Modules = @('System Information','System Health','Windows Update','Network','IP Configuration','DNS Resolver','Firewall Rules','Active Directory','Entra ID','Intune and MDM','Event Logs','Error Summary')
+        Modules = @('System Information','System Health','Windows Update','Update Rings','Network','IP Configuration','DNS Resolver','Proxy Configuration','VPN','Time Synchronization','Firewall Rules','Certificates','BitLocker','Defender Onboarding','Active Directory','Entra ID','Intune and MDM','Event Logs','Error Summary')
     },
     [pscustomobject]@{
         Name = 'Full'; Audience = 'Tier 3, engineering, and comprehensive audits'
@@ -52,13 +52,13 @@ $script:OmniRoleProfiles = @(
 $script:OmniTaskWorkflows = @(
     [pscustomobject]@{ Name='QuickTriage'; Description='A fast first pass for an unknown user issue.'; Modules=@('System Information','System Health','CPU','Memory','Disk','Network','IP Configuration','DNS Resolver','Windows Update','Error Summary') },
     [pscustomobject]@{ Name='SlowComputer'; Description='Investigate CPU, memory, process, disk, startup, and thermal-style symptoms.'; Modules=@('CPU','Memory','Processes','Performance','Benchmark','Startup','Startup Performance','Disk','Disk Usage','Temp Files','System Health','Reliability','Error Summary') },
-    [pscustomobject]@{ Name='NetworkConnectivity'; Description='Diagnose adapter, IP, DNS, Wi-Fi, hosts-file, share, and firewall issues.'; Modules=@('Network','IP Configuration','DNS Resolver','Hosts File','Network Shares','WiFi Networks','Firewall Rules','Active Directory') },
+    [pscustomobject]@{ Name='NetworkConnectivity'; Description='Diagnose adapter, IP, DNS, proxy, VPN, Wi-Fi, hosts-file, share, and firewall issues.'; Modules=@('Network','IP Configuration','DNS Resolver','Hosts File','Network Shares','WiFi Networks','Proxy Configuration','VPN','Time Synchronization','Firewall Rules','Certificates','Active Directory') },
     [pscustomobject]@{ Name='Printing'; Description='Diagnose printers, spooler-related services, drivers, and errors.'; Modules=@('Printers','Services','Drivers','Network','Error Summary') },
-    [pscustomobject]@{ Name='WindowsUpdate'; Description='Check update, servicing, reboot, service, and recent error posture.'; Modules=@('Windows Update','Windows Health','System Health','Services','Disk','Event Logs','Error Summary') },
-    [pscustomobject]@{ Name='LoginAndIdentity'; Description='Diagnose local, domain, Entra, MDM, DNS, and time-sensitive sign-in dependencies.'; Modules=@('System Information','Network','IP Configuration','DNS Resolver','Active Directory','Entra ID','Intune and MDM','Event Logs','Error Summary') },
+    [pscustomobject]@{ Name='WindowsUpdate'; Description='Check update, servicing, reboot, update-ring policy, service, and recent error posture.'; Modules=@('Windows Update','Update Rings','Windows Health','System Health','Services','Disk','Event Logs','Error Summary') },
+    [pscustomobject]@{ Name='LoginAndIdentity'; Description='Diagnose local, domain, Entra, MDM, DNS, proxy, VPN, certificate, and time-sensitive sign-in dependencies.'; Modules=@('System Information','Network','IP Configuration','DNS Resolver','Proxy Configuration','VPN','Time Synchronization','Certificates','Active Directory','Entra ID','Intune and MDM','Event Logs','Error Summary') },
     [pscustomobject]@{ Name='StorageCleanup'; Description='Find capacity, disk-health, usage, and temporary-file pressure.'; Modules=@('Disk','Storage','Disk Usage','Temp Files','System Health') },
-    [pscustomobject]@{ Name='SecurityPosture'; Description='Review protection, firewall, patch, persistence, software, and identity posture.'; Modules=@('Security','Firewall Rules','Windows Update','Startup','Scheduled Tasks','Services','Processes','Installed Software','Active Directory','Entra ID','Intune and MDM','Error Summary') },
-    [pscustomobject]@{ Name='CloudReadiness'; Description='Check Entra join, Intune enrollment, domain trust, DNS, network, and update prerequisites.'; Modules=@('System Information','System Health','Windows Update','Network','IP Configuration','DNS Resolver','Firewall Rules','Active Directory','Entra ID','Intune and MDM') },
+    [pscustomobject]@{ Name='SecurityPosture'; Description='Review protection, encryption, certificates, firewall, patch, persistence, software, and identity posture.'; Modules=@('Security','Firewall Rules','Certificates','BitLocker','Defender Onboarding','Windows Update','Update Rings','Startup','Scheduled Tasks','Services','Processes','Installed Software','Proxy Configuration','VPN','Time Synchronization','Active Directory','Entra ID','Intune and MDM','Error Summary') },
+    [pscustomobject]@{ Name='CloudReadiness'; Description='Check Entra, Intune, domain, update-ring, encryption, Defender, certificate, proxy, VPN, time, DNS, and network prerequisites.'; Modules=@('System Information','System Health','Windows Update','Update Rings','Network','IP Configuration','DNS Resolver','Proxy Configuration','VPN','Time Synchronization','Firewall Rules','Certificates','BitLocker','Defender Onboarding','Active Directory','Entra ID','Intune and MDM') },
     [pscustomobject]@{ Name='FullScan'; Description='Run every enabled scanner.'; Modules=@() }
 )
 
