@@ -1,9 +1,10 @@
 # OmniDiag — Portable Edition
 
 OmniDiag runs **fully locally** on the machine being diagnosed. There is no
-installer, no service, no remoting, and no network calls. This portable package
-is a self-contained folder you can copy to a USB stick, a network share, or push
-through your existing management tooling — then run in place.
+required installer, service, remoting, or runtime network access. This portable
+package is a self-contained folder you can copy to a USB stick, a network share,
+or push through your existing management tooling — then run in place. The optional
+quick installer only uses the network to download that same application folder.
 
 > **Local-only by design.** OmniDiag never reaches out to other machines
 > (WinRM / PowerShell Remoting is disabled or firewalled on most enterprise
@@ -23,6 +24,26 @@ network access, so PDF works even on locked-down machines.
 
 ## Quick start
 
+### One-command per-user install
+
+From PowerShell or Windows Terminal:
+
+```powershell
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/Chris2003/OmniDiag/main/install.ps1')))
+```
+
+The bootstrap downloads a whitelisted application surface from GitHub, validates
+required launcher/module/UI files, optionally verifies `-ExpectedSha256`, recursively
+uses `Unblock-File`, installs to `%LOCALAPPDATA%\Programs\OmniDiag`, and opens the GUI.
+An existing installation is moved to a dated backup. It does not elevate or change
+the machine-wide execution policy. Use `-NoLaunch` for automated deployment.
+
+Because the one-liner executes remote code, review `install.ps1` before running it.
+Enterprise deployments should pin `-Ref` to an approved tag or commit instead of
+tracking `main`.
+
+### Extracted portable package
+
 1. Extract the whole package folder anywhere (e.g. `C:\Tools\OmniDiag`).
 2. Run it:
    - **Console scan** — double-click **`OmniDiag.cmd`**
@@ -36,7 +57,7 @@ copy run on a locked-down host where script execution is otherwise blocked
 and Windows blocks it, unblock the files once:
 
 ```powershell
-Get-ChildItem -Recurse | Unblock-File
+Get-ChildItem -Recurse -File | Unblock-File
 ```
 
 ## Common commands

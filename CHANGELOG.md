@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+- Added a one-command current-user installer that opens the GUI immediately.
+- Added archive layout validation, optional SHA-256 pinning, allowlist-only deployment, recursive downloaded-file unblocking, and recoverable update backups.
+- Added installer parser/safety tests and included the installer in portable builds.
+- Documented quick, inspect-then-run, manual portable, and managed deployment paths.
+- Corrected the GitHub Security Advisory URL.
+
 ## 0.3.0
 
 - Completed local Version 3 enterprise posture with certificate, proxy, VPN, time synchronization, BitLocker escrow-policy, Defender onboarding, and update-ring scanners.
@@ -323,7 +331,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - GitHub Actions CI: PSScriptAnalyzer lint + Pester tests on `windows-latest`.
 - Project documentation and governance files.
 
-[Unreleased]: https://github.com/Chris2003/OmniDiag/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Chris2003/OmniDiag/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Chris2003/OmniDiag/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Chris2003/OmniDiag/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Chris2003/OmniDiag/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Chris2003/OmniDiag/releases/tag/v0.1.0

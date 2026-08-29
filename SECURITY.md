@@ -26,7 +26,7 @@ latest `main`. Pin a released tag for stability.
 
 Please **do not** open a public issue for security vulnerabilities.
 
-Instead, report privately via [GitHub Security Advisories](https://github.com/OWNER/OmniDiag/security/advisories/new)
+Instead, report privately via [GitHub Security Advisories](https://github.com/Chris2003/OmniDiag/security/advisories/new)
 (Security → Report a vulnerability). Include:
 
 - A description of the issue and its impact.
@@ -35,6 +35,19 @@ Instead, report privately via [GitHub Security Advisories](https://github.com/OW
 
 We aim to acknowledge reports within 5 business days and to provide a remediation
 timeline after triage. Coordinated disclosure is appreciated.
+
+## Quick installer trust model
+
+The README offers a one-command installer for convenience. It retrieves
+`install.ps1` from this repository and therefore executes remote code with the current
+user's privileges. Review the script before running it, especially in managed
+environments. The installer validates the extracted OmniDiag layout, supports an
+optional archive SHA-256, installs only an explicit allowlist, clears Mark-of-the-Web
+only after validation, and keeps the previous installation as a recoverable backup.
+
+For repeatable deployment, pin `-Ref` to an approved release tag or commit and supply
+`-ExpectedSha256`. Do not expose a branded short URL until HTTPS, ownership, redirects,
+and change controls for that domain are established.
 
 ## Scope notes
 

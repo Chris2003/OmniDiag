@@ -16,6 +16,45 @@ but fully open and scriptable.
 
 ---
 
+## Quick install — launches the GUI
+
+Open **PowerShell** or **Windows Terminal**, paste this command, and press Enter:
+
+```powershell
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/Chris2003/OmniDiag/main/install.ps1')))
+```
+
+This installs OmniDiag for the current user, clears Windows' downloaded-file block
+from the validated application files, and opens the GUI immediately. No administrator
+rights or machine-wide execution-policy change is required. Run the same command later
+to update; the previous installation is retained as a dated backup.
+
+> **Security:** this convenience command executes code retrieved from GitHub. Review
+> [`install.ps1`](install.ps1) first, or use the inspect-then-run method below. For
+> managed deployment, pin `-Ref` to a release tag or commit and provide
+> `-ExpectedSha256`.
+
+<details>
+<summary>Safer inspect-then-run method</summary>
+
+```powershell
+$url = 'https://raw.githubusercontent.com/Chris2003/OmniDiag/main/install.ps1'
+$installer = Join-Path $env:TEMP 'Install-OmniDiag.ps1'
+Invoke-WebRequest $url -OutFile $installer
+notepad $installer
+```
+
+After reviewing the file, run:
+
+```powershell
+Unblock-File $installer
+& $installer
+```
+
+</details>
+
+---
+
 ## Why OmniDiag
 
 Diagnosing a sick Windows machine means jumping between Event Viewer, `ipconfig`,
@@ -35,7 +74,7 @@ interface**, interprets the results, and tells you the **likely cause** and the
 
 ## Status
 
-OmniDiag is being built in milestones. **Current: 0.3.0 — Version 3 enterprise posture complete, with optional local Ollama guidance.**
+OmniDiag is being built in milestones. **Current: 0.3.1 — one-command GUI install, Version 3 enterprise posture, and optional local Ollama guidance.**
 
 | Capability | State |
 |---|---|
