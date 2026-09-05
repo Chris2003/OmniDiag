@@ -485,11 +485,113 @@ function Start-OmniScan {
     $ui.Controls.BtnScan.IsEnabled = $false
     $ui.Controls.BtnCancel.IsEnabled = $true
     $ui.Controls.BtnExport.IsEnabled = $false
+    $ui.Controls.BtnAiAnalyze.IsEnabled = $false
     $ui.Controls.DiagGrid.IsEnabled = $false
     $ui.Controls.ProgressBarMain.Value = 0
     $selNote = if ($IncludeModule) { " ($(@($IncludeModule).Count) selected)" } else { ' (all scanners)' }
     $ui.Controls.TxtStatus.Text = "Starting scan$selNote..."
     $ui.Timer.Start()
+}
+
+function Format-OmniAiAnalysis {
+    <# .SYNOPSIS Internal: format structured Ollama guidance for the read-only GUI panel. #>
+    param([Parameter(Mandatory)] [pscustomobject] $Analysis)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    [void]$lines.Add("LOCAL AI ANALYSIS  |  $($Analysis.Model)  |  $($Analysis.EvidenceCount) finding(s)")
+    [void]$lines.Add('')
+    [void]$lines.Add('SUMMARY')
+    [void]$lines.Add([string]$Analysis.Summary)
+
+    if (@($Analysis.Priorities).Count -gt 0) {
+        [void]$lines.Add(''); [void]$lines.Add('PRIORITIES')
+        foreach ($item in @($Analysis.Priorities)) {
+            [void]$lines.Add("- [$($item.urgency)] $($item.title)")
+            [void]$lines.Add("  Evidence: $(@($item.evidenceIds) -join ', ')")
+        }
+    }
+    if (@($Analysis.Correlations).Count -gt 0) {
+        [void]$lines.Add(''); [void]$lines.Add('CORRELATIONS')
+        foreach ($item in @($Analysis.Correlations)) {
+            [void]$lines.Add("- $($item.hypothesis) (confidence: $($item.confidence)%)")
+            [void]$lines.Add("  Evidence: $(@($item.evidenceIds) -join ', ')")
+        }
+    }
+    if (@($Analysis.NextSteps).Count -gt 0) {
+        [void]$lines.Add(''); [void]$lines.Add('NEXT DIAGNOSTIC STEPS')
+        foreach ($item in @($Analysis.NextSteps)) {
+            $approval = if ($item.requiresApproval) { ' [APPROVAL REQUIRED]' } else { '' }
+            [void]$lines.Add("- $($item.step)$approval")
+            [void]$lines.Add("  Evidence: $(@($item.evidenceIds) -join ', ')")
+        }
+    }
+    if (@($Analysis.Limitations).Count -gt 0) {
+        [void]$lines.Add(''); [void]$lines.Add('LIMITATIONS')
+        foreach ($item in @($Analysis.Limitations)) { [void]$lines.Add("- $item") }
+    }
+    [void]$lines.Add('')
+    [void]$lines.Add("Advisory only: verify guidance against the cited findings and your organization's runbooks.")
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Start-OmniAiOperation {
+    <# .SYNOPSIS Internal: check Ollama or analyze the latest session off the UI thread. #>
+    param([Parameter(Mandatory)] [ValidateSet('Status', 'Analyze')] [string] $Mode)
+
+    $ui = $script:OmniUi
+    if ($ui.AiJob -or $ui.Scan -or $ui.Repair) { return }
+
+    $model = ([string]$ui.Controls.CmbAiModel.Text).Trim()
+    $endpoint = ([string]$ui.Controls.TxtAiEndpoint.Text).Trim()
+    $question = ([string]$ui.Controls.TxtAiQuestion.Text).Trim()
+    if (-not $model -or -not $endpoint) {
+        [System.Windows.MessageBox]::Show('Enter an Ollama model and local endpoint.', 'OmniDiag Local AI', 'OK', 'Warning') | Out-Null
+        return
+    }
+    if ($Mode -eq 'Analyze' -and -not $ui.Session) {
+        [System.Windows.MessageBox]::Show('Run a diagnostic scan before requesting AI analysis.', 'OmniDiag Local AI', 'OK', 'Information') | Out-Null
+        return
+    }
+    if (-not $question) { $question = 'What are the most likely root causes and safest next diagnostic steps?' }
+
+    $sync = [hashtable]::Synchronized(@{ Done = $false; Result = $null; Error = $null })
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.ApartmentState = 'STA'
+    $rs.ThreadOptions = 'ReuseThread'
+    $rs.Open()
+    $bg = {
+        param($SyncHash, $Operation, $Manifest, $Session, $Model, $Endpoint, $Question)
+        try {
+            Import-Module $Manifest -Force -DisableNameChecking
+            $SyncHash.Result = if ($Operation -eq 'Status') {
+                Test-OmniOllama -Model $Model -Endpoint $Endpoint
+            } else {
+                Invoke-OmniOllamaAnalysis -Session $Session -Question $Question -Model $Model -Endpoint $Endpoint
+            }
+        } catch {
+            $SyncHash.Error = $_.Exception.Message
+        } finally {
+            $SyncHash.Done = $true
+        }
+    }
+    $ps = [PowerShell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript($bg).AddParameters(@{
+        SyncHash = $sync; Operation = $Mode; Manifest = $ui.Manifest; Session = $ui.Session
+        Model = $model; Endpoint = $endpoint; Question = $question
+    })
+    $handle = $ps.BeginInvoke()
+
+    $ui.AiJob = @{ Sync = $sync; PowerShell = $ps; Runspace = $rs; Handle = $handle; Mode = $Mode; Model = $model }
+    $ui.Controls.BtnAiCheck.IsEnabled = $false
+    $ui.Controls.BtnAiAnalyze.IsEnabled = $false
+    $ui.Controls.BtnScan.IsEnabled = $false
+    $ui.Controls.BtnRunRepairs.IsEnabled = $false
+    $ui.Controls.ProgressBarMain.IsIndeterminate = $true
+    $ui.Controls.TxtAiStatus.Text = if ($Mode -eq 'Status') { 'Checking local Ollama...' } else { "Analyzing with $model..." }
+    $ui.Controls.TxtStatus.Text = $ui.Controls.TxtAiStatus.Text
+    if ($Mode -eq 'Analyze') { $ui.Controls.TxtAiOutput.Text = 'Generating evidence-grounded guidance...' }
+    $ui.AiTimer.Start()
 }
 
 function Invoke-OmniWindow {
@@ -509,7 +611,9 @@ function Invoke-OmniWindow {
                'TxtUser','TxtRange','TxtDuration','TxtCounts','ItemsRecommendations',
                'GridModules','ProgressBarMain','TxtStatus',
                'PanelRepair','RepairGrid','RepairResultGrid','BtnRunRepairs','BtnRepairCancel',
-               'BtnRepairRecommended','BtnRepairClear','ChkRepairDryRun','TxtRepairBanner','TxtRepairAdminNote')
+               'BtnRepairRecommended','BtnRepairClear','ChkRepairDryRun','TxtRepairBanner','TxtRepairAdminNote',
+               'PanelLocalAi','CmbAiModel','TxtAiEndpoint','BtnAiCheck','TxtAiQuestion','BtnAiAnalyze',
+               'TxtAiStatus','TxtAiOutput')
     $controls = @{}
     foreach ($n in $names) { $controls[$n] = $window.FindName($n) }
 
@@ -526,6 +630,8 @@ function Invoke-OmniWindow {
         Timer         = $null
         Repair        = $null
         RepairTimer   = $null
+        AiJob         = $null
+        AiTimer       = $null
         RepairCatalog = @()
         DiagRows      = $null   # Diagnostics tab rows: { Enabled; Name; Category; Order; Status }
     }
@@ -583,6 +689,7 @@ function Invoke-OmniWindow {
             $ui.Controls.BtnScan.IsEnabled = $true
             $ui.Controls.DiagGrid.IsEnabled = $true
             $ui.Controls.BtnCancel.IsEnabled = $false
+            $ui.Controls.BtnAiAnalyze.IsEnabled = [bool]$ui.Session
             $ui.Controls.ProgressBarMain.Value = 100
         }
     })
@@ -631,10 +738,56 @@ function Invoke-OmniWindow {
     })
     $script:OmniUi.RepairTimer = $repairTimer
 
+    # --- Local AI progress poll timer -----------------------------------
+    $aiTimer = [System.Windows.Threading.DispatcherTimer]::new()
+    $aiTimer.Interval = [TimeSpan]::FromMilliseconds(200)
+    $aiTimer.Add_Tick({
+        $ui = $script:OmniUi
+        $job = $ui.AiJob
+        if (-not $job -or -not $job.Sync.Done) { return }
+
+        $ui.AiTimer.Stop()
+        try { $job.PowerShell.EndInvoke($job.Handle) } catch { }
+        $job.PowerShell.Dispose(); $job.Runspace.Dispose()
+        $ui.AiJob = $null
+        $ui.Controls.ProgressBarMain.IsIndeterminate = $false
+        $ui.Controls.BtnAiCheck.IsEnabled = $true
+        $ui.Controls.BtnAiAnalyze.IsEnabled = [bool]$ui.Session
+        $ui.Controls.BtnScan.IsEnabled = $true
+        $ui.Controls.BtnRunRepairs.IsEnabled = $true
+
+        if ($job.Sync.Error) {
+            $ui.Controls.TxtAiStatus.Text = "Local AI error: $($job.Sync.Error)"
+            $ui.Controls.TxtAiOutput.Text = "Unable to complete local AI operation.`r`n`r`n$($job.Sync.Error)"
+            $ui.Controls.TxtStatus.Text = 'Local AI operation failed.'
+            return
+        }
+
+        if ($job.Mode -eq 'Status') {
+            $status = $job.Sync.Result
+            if (-not $status.Available) {
+                $message = "Ollama is not available at $($status.Endpoint). Start Ollama and try again. $($status.Error)"
+            } elseif (-not $status.ModelPresent) {
+                $message = "Ollama is connected, but '$($status.Model)' is not installed. Run: ollama pull $($status.Model)"
+            } else {
+                $message = "Ollama is connected and '$($status.Model)' is ready."
+            }
+            $ui.Controls.TxtAiStatus.Text = $message
+            $models = @($status.Models)
+            $ui.Controls.TxtAiOutput.Text = $message + $(if ($models.Count -gt 0) { "`r`n`r`nInstalled models:`r`n- " + ($models -join "`r`n- ") } else { '' })
+            $ui.Controls.TxtStatus.Text = 'Ollama check complete.'
+        } else {
+            $ui.Controls.TxtAiOutput.Text = Format-OmniAiAnalysis -Analysis $job.Sync.Result
+            $ui.Controls.TxtAiStatus.Text = "Analysis complete using $($job.Model)."
+            $ui.Controls.TxtStatus.Text = 'Local AI analysis complete.'
+        }
+    })
+    $script:OmniUi.AiTimer = $aiTimer
+
     # --- Scan ------------------------------------------------------------
     $controls.BtnScan.Add_Click({
         $ui = $script:OmniUi
-        if ($ui.Scan) { return }   # already running
+        if ($ui.Scan -or $ui.AiJob) { return }   # already busy
 
         # Honor the Diagnostics tab toggles (once it has been populated). If the tab
         # was never opened, DiagRows is empty and we simply run every scanner.
@@ -672,7 +825,7 @@ function Invoke-OmniWindow {
             $btn = $e.OriginalSource -as [System.Windows.Controls.Button]
             if (-not $btn -or -not $btn.Tag) { return }
             $ui = $script:OmniUi
-            if ($ui.Scan) { return }
+            if ($ui.Scan -or $ui.AiJob) { return }
             $ui.Controls.NavList.SelectedIndex = 0    # show the Dashboard for results
             Start-OmniScan -IncludeModule @([string]$btn.Tag)
         })
@@ -698,13 +851,18 @@ function Invoke-OmniWindow {
     # --- Navigation ------------------------------------------------------
     $controls.NavList.Add_SelectionChanged({
         $ui = $script:OmniUi
-        $sel = $ui.Controls.NavList.SelectedIndex   # 0 Dashboard, 1 Findings, 2 Diagnostics, 3 Repair
+        $sel = $ui.Controls.NavList.SelectedIndex   # 0 Dashboard, 1 Findings, 2 Diagnostics, 3 Repair, 4 AI
         $ui.Controls.PanelDashboard.Visibility   = if ($sel -eq 0) { 'Visible' } else { 'Collapsed' }
         $ui.Controls.GridFindings.Visibility     = if ($sel -eq 1) { 'Visible' } else { 'Collapsed' }
         $ui.Controls.PanelDiagnostics.Visibility = if ($sel -eq 2) { 'Visible' } else { 'Collapsed' }
         $ui.Controls.PanelRepair.Visibility      = if ($sel -eq 3) { 'Visible' } else { 'Collapsed' }
+        $ui.Controls.PanelLocalAi.Visibility     = if ($sel -eq 4) { 'Visible' } else { 'Collapsed' }
         if ($sel -eq 2) { Initialize-OmniDiagPanel }
     })
+
+    # --- Local AI -------------------------------------------------------
+    $controls.BtnAiCheck.Add_Click({ Start-OmniAiOperation -Mode Status })
+    $controls.BtnAiAnalyze.Add_Click({ Start-OmniAiOperation -Mode Analyze })
 
     # --- Repair: selection helpers ---------------------------------------
     $controls.BtnRepairRecommended.Add_Click({
@@ -731,7 +889,7 @@ function Invoke-OmniWindow {
     # --- Repair: run selected --------------------------------------------
     $controls.BtnRunRepairs.Add_Click({
         $ui = $script:OmniUi
-        if ($ui.Repair) { return }   # already running
+        if ($ui.Repair -or $ui.AiJob) { return }   # already busy
 
         $rows = @($ui.Controls.RepairGrid.ItemsSource | Where-Object { $_.Selected })
         if ($rows.Count -eq 0) {
@@ -836,6 +994,11 @@ function Invoke-OmniWindow {
             try { $ui.Repair.Cts.Cancel() } catch { }
             try { $ui.RepairTimer.Stop() } catch { }
             try { $ui.Repair.PowerShell.Dispose(); $ui.Repair.Runspace.Dispose() } catch { }
+        }
+        if ($ui.AiJob) {
+            try { $ui.AiTimer.Stop() } catch { }
+            try { $ui.AiJob.PowerShell.Stop() } catch { }
+            try { $ui.AiJob.PowerShell.Dispose(); $ui.AiJob.Runspace.Dispose() } catch { }
         }
     })
 

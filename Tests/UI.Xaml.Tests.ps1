@@ -42,6 +42,16 @@ Describe 'GUI XAML structure' {
     It 'adds a Repair Center entry to the navigation' {
         (Get-Content -LiteralPath $script:XamlPath -Raw) | Should -Match 'Content="Repair Center"'
     }
+    It 'defines the Local AI controls' {
+        $raw = Get-Content -LiteralPath $script:XamlPath -Raw
+        foreach ($n in @('PanelLocalAi','CmbAiModel','TxtAiEndpoint','BtnAiCheck','TxtAiQuestion',
+                         'BtnAiAnalyze','TxtAiStatus','TxtAiOutput')) {
+            $raw | Should -Match ('x:Name="' + $n + '"')
+        }
+        $raw | Should -Match 'Content="Local AI"'
+        $raw | Should -Match 'Text="http://127\.0\.0\.1:11434"'
+        $raw | Should -Match 'Content="gemma4:e2b"'
+    }
 }
 
 Describe 'GUI module surface' {
@@ -56,6 +66,13 @@ Describe 'GUI module surface' {
     It 'uses different background colors per theme' {
         (Get-OmniThemePalette -Name Dark)['BrushWindowBg'] |
             Should -Not -Be (Get-OmniThemePalette -Name Light)['BrushWindowBg']
+    }
+    It 'wires asynchronous, advisory Ollama operations into the GUI' {
+        $source = Get-Content -LiteralPath (Join-Path $root 'src/UI/OmniDiagGui.psm1') -Raw
+        $source | Should -Match 'Test-OmniOllama'
+        $source | Should -Match 'Invoke-OmniOllamaAnalysis'
+        $source | Should -Match 'CreateRunspace'
+        $source | Should -Match 'Format-OmniAiAnalysis'
     }
 }
 

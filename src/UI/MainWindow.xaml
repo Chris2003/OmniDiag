@@ -104,6 +104,7 @@
                     <ListBoxItem Content="All Findings"/>
                     <ListBoxItem Content="Diagnostics"/>
                     <ListBoxItem Content="Repair Center"/>
+                    <ListBoxItem Content="Local AI"/>
                 </ListBox>
             </Border>
 
@@ -288,6 +289,65 @@
                             <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="3*"/>
                         </DataGrid.Columns>
                     </DataGrid>
+                </Grid>
+
+                <!-- Local AI panel: advisory Ollama analysis of the latest scan -->
+                <Grid x:Name="PanelLocalAi" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Margin="0,0,0,14">
+                        <TextBlock Text="Local AI Assistant" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Uses Ollama on this computer to correlate the latest scan. Guidance is advisory only and cannot run repairs."
+                                   Foreground="{DynamicResource BrushMuted}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    </StackPanel>
+
+                    <Border Grid.Row="1" Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}"
+                            BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="220"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="240"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Model" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox x:Name="CmbAiModel" Grid.Column="1" IsEditable="True" VerticalContentAlignment="Center" Margin="0,0,16,0">
+                                <ComboBoxItem Content="gemma4:e2b" IsSelected="True"/>
+                                <ComboBoxItem Content="gemma3:1b"/>
+                            </ComboBox>
+                            <TextBlock Grid.Column="2" Text="Endpoint" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox x:Name="TxtAiEndpoint" Grid.Column="3" Text="http://127.0.0.1:11434" Padding="7,5"
+                                     Background="{DynamicResource BrushPanel2}" Foreground="{DynamicResource BrushText}"
+                                     BorderBrush="{DynamicResource BrushLine}"/>
+                            <Button x:Name="BtnAiCheck" Grid.Column="4" Content="Check Ollama" HorizontalAlignment="Right" Margin="12,0,0,0"/>
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Row="2" Margin="0,0,0,10">
+                        <TextBlock Text="Question for the assistant" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                        <TextBox x:Name="TxtAiQuestion" MinHeight="58" TextWrapping="Wrap" AcceptsReturn="True" Padding="8"
+                                 Text="What are the most likely root causes and safest next diagnostic steps?"
+                                 Background="{DynamicResource BrushPanel}" Foreground="{DynamicResource BrushText}"
+                                 BorderBrush="{DynamicResource BrushLine}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <Button x:Name="BtnAiAnalyze" Content="Analyze Latest Scan" IsEnabled="False"
+                                    Background="{DynamicResource BrushAccent}"/>
+                            <TextBlock x:Name="TxtAiStatus" Text="Run a scan, then analyze it here."
+                                       Foreground="{DynamicResource BrushMuted}" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBox x:Name="TxtAiOutput" Grid.Row="3" IsReadOnly="True" AcceptsReturn="True"
+                             TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="12"
+                             Text="No local AI analysis yet."
+                             Background="{DynamicResource BrushPanel}" Foreground="{DynamicResource BrushText}"
+                             BorderBrush="{DynamicResource BrushLine}"/>
                 </Grid>
             </Grid>
         </Grid>

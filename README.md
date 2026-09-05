@@ -74,7 +74,7 @@ interface**, interprets the results, and tells you the **likely cause** and the
 
 ## Status
 
-OmniDiag is being built in milestones. **Current: 0.3.1 — one-command GUI install, Version 3 enterprise posture, and optional local Ollama guidance.**
+OmniDiag is being built in milestones. **Current: 0.3.2 — Local AI in the GUI, one-command GUI install, and Version 3 enterprise posture.**
 
 | Capability | State |
 |---|---|
@@ -178,7 +178,7 @@ Start-Process pwsh -Verb RunAs -ArgumentList '-File', "$PWD\OmniDiag.ps1"
 # Branded PDF report (native PDF - no browser or external dependency required)
 .\OmniDiag.ps1 -Report -ReportFormat Pdf,Html -BrandName "Acme IT" -BrandColor "#0969DA" -BrandLogo .\logo.png
 
-# Launch the graphical interface (dashboard, dark/light, cancel, export)
+# Launch the graphical interface (dashboard, Local AI, dark/light, cancel, export)
 .\OmniDiag.ps1 -Gui
 
 # Scan, then open the Repair Center (confirmation-gated fixes for what was found)
@@ -196,6 +196,10 @@ Start-Process pwsh -Verb RunAs -ArgumentList '-File', "$PWD\OmniDiag.ps1"
 > **GUI note:** WPF requires an STA thread. Windows PowerShell 5.1 is STA, so the GUI
 > runs directly. PowerShell 7 is MTA — OmniDiag automatically hosts the window in a
 > dedicated STA runspace, so `-Gui` works there too.
+
+> **Local AI in the GUI:** open **Local AI** in the left navigation, choose
+> `gemma4:e2b` or the lighter `gemma3:1b`, and click **Check Ollama**. After a scan,
+> **Analyze Latest Scan** produces read-only, finding-ID-cited guidance.
 
 You can also use the module directly for automation:
 

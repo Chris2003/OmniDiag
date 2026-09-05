@@ -3,7 +3,7 @@
     # OmniDiag module manifest
     # ---------------------------------------------------------------------
     RootModule        = 'OmniDiag.psm1'
-    ModuleVersion     = '0.3.1'
+    ModuleVersion     = '0.3.2'
     GUID              = 'b6e9d0c2-7a4d-4f3e-9c1a-0d2f5a8e10b4'
     Author            = 'OmniDiag Contributors'
     CompanyName       = 'OmniDiag'
@@ -86,7 +86,7 @@
             Tags         = @('Windows', 'Diagnostics', 'IT', 'Sysadmin', 'Troubleshooting', 'EventLog')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/Chris2003/OmniDiag'
-            ReleaseNotes = 'Adds a one-command per-user installer that validates, unblocks, updates, and launches the GUI.'
+            ReleaseNotes = 'Adds a responsive Local AI GUI for Ollama readiness checks and evidence-grounded scan analysis.'
         }
     }
 }

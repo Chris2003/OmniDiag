@@ -28,6 +28,21 @@ Official references:
 
 Start Ollama, then run a scan with analysis:
 
+### GUI
+
+1. Launch `OmniDiag-GUI.cmd` or `.\OmniDiag.ps1 -Gui`.
+2. Open **Local AI** in the left navigation.
+3. Select `gemma4:e2b` or the low-memory `gemma3:1b` model and click
+   **Check Ollama**.
+4. Run a scan, return to **Local AI**, optionally change the question, and click
+   **Analyze Latest Scan**.
+
+The Ollama request runs in a background runspace so the window remains responsive.
+The results show the summary, priorities, correlations, next diagnostic steps,
+limitations, and supporting finding IDs.
+
+### Console
+
 ```powershell
 .\OmniDiag.ps1 -Workflow QuickTriage -AiAnalysis
 .\OmniDiag.ps1 -Profile CloudAdmin -AiAnalysis -AiModel gemma4:e2b

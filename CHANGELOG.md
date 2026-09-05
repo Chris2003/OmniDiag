@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+- Added a dedicated Local AI page to the WPF GUI with editable model, loopback endpoint, and technician question controls.
+- Added background Ollama readiness checks and evidence-grounded analysis of the latest scan without blocking the interface.
+- Rendered priorities, correlations, next steps, limitations, approval flags, and cited finding IDs in a read-only result view.
+- Added Local AI GUI contract tests and updated the Ollama/GUI documentation.
+
 ## 0.3.1
 
 - Added a one-command current-user installer that opens the GUI immediately.
@@ -331,7 +338,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - GitHub Actions CI: PSScriptAnalyzer lint + Pester tests on `windows-latest`.
 - Project documentation and governance files.
 
-[Unreleased]: https://github.com/Chris2003/OmniDiag/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Chris2003/OmniDiag/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/Chris2003/OmniDiag/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Chris2003/OmniDiag/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Chris2003/OmniDiag/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Chris2003/OmniDiag/compare/v0.1.0...v0.2.0
