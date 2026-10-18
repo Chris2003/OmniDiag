@@ -56,6 +56,9 @@
         'New-OmniAssistantConversation', 'Invoke-OmniAssistantTurn',
         # Portable data locations (everything OmniDiag writes stays next to the tool)
         'Get-OmniToolRoot', 'Get-OmniDataRoot', 'Get-OmniDataPath', 'Clear-OmniTempData',
+        # Path safety and secret scrubbing (docs/SECURITY-REVIEW.md); cross-module helpers,
+        # so they must resolve globally (same lesson as Write-OmniTextFile).
+        'Resolve-OmniOutputPath', 'ConvertTo-OmniSafeFileName', 'Protect-OmniSecretText', 'Protect-OmniSecretData',
         # Runbooks, saved-session search, and before/after comparison
         'Get-OmniRunbook', 'Find-OmniRunbook', 'Get-OmniDefaultRunbookPath',
         'Get-OmniSessionFinding', 'Import-OmniSession', 'Search-OmniEvidence', 'Compare-OmniSession',

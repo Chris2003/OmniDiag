@@ -105,12 +105,14 @@ function Export-OmniCsvReport {
         [Parameter(Mandatory)] [pscustomobject] $Session,
         [Parameter(Mandatory)] [string] $Path
     )
-    $dir = Split-Path -Path $Path -Parent
+    # Canonical path; device paths, NTFS streams, and reserved names are refused.
+    $fullPath = Resolve-OmniOutputPath -Path $Path
+    $dir = Split-Path -Path $fullPath -Parent
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
     $table = ConvertTo-OmniFindingTable -Session $Session
     $table | Select-Object Module, Category, Severity, Component, Title, Detail, LikelyCause, Confidence, Recommendation, Timestamp |
-        ConvertTo-OmniCsvSafeRow | Export-Csv -Path $Path -NoTypeInformation -Encoding UTF8
+        ConvertTo-OmniCsvSafeRow | Export-Csv -LiteralPath $fullPath -NoTypeInformation -Encoding UTF8
     return $Path
 }
 
@@ -128,9 +130,11 @@ function Export-OmniEventCsvReport {
     $rows = @(ConvertTo-OmniEventTable -Session $Session)
     if ($rows.Count -eq 0) { return $null }
 
-    $dir = Split-Path -Path $Path -Parent
+    # Canonical path; device paths, NTFS streams, and reserved names are refused.
+    $fullPath = Resolve-OmniOutputPath -Path $Path
+    $dir = Split-Path -Path $fullPath -Parent
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    $rows | ConvertTo-OmniCsvSafeRow | Export-Csv -Path $Path -NoTypeInformation -Encoding UTF8
+    $rows | ConvertTo-OmniCsvSafeRow | Export-Csv -LiteralPath $fullPath -NoTypeInformation -Encoding UTF8
     return $Path
 }
 

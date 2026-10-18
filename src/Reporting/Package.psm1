@@ -111,13 +111,16 @@ function Export-OmniReportPackage {
         }
     }
 
+    # Canonical destination; device paths, streams, and reserved names are refused.
+    $Path = Resolve-OmniOutputPath -Path $Path -Purpose 'report package'
     if ($Redact) {
-        # The file name may embed the computer or user name too.
+        # The file name may embed the computer or user name too. The redacted leaf stays
+        # one file-name component in the same folder.
         $leaf = Split-Path -Path $Path -Leaf
-        $redactedLeaf = [string](ConvertTo-OmniRedacted -InputObject $leaf -Context $ctx)
+        $redactedLeaf = ConvertTo-OmniSafeFileName -Name ([string](ConvertTo-OmniRedacted -InputObject $leaf -Context $ctx)) -Default 'OmniDiag-report.zip'
         if ($redactedLeaf -ne $leaf) {
             $parent = Split-Path -Path $Path -Parent
-            $Path = if ($parent) { Join-Path $parent $redactedLeaf } else { $redactedLeaf }
+            $Path = Resolve-OmniOutputPath -Path (Join-Path $parent $redactedLeaf) -Root $parent -Purpose 'report package'
         }
     }
 
@@ -188,7 +191,7 @@ $(if ($Redact) { $redactedNote } else { $plainNote })
         if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
 
         $items = Get-ChildItem -LiteralPath $staging -File
-        Compress-Archive -Path $items.FullName -DestinationPath $Path -Force
+        Compress-Archive -LiteralPath $items.FullName -DestinationPath $Path -Force
         return $Path
     }
     finally {

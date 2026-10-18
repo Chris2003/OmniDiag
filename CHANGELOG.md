@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (Phase 4)
+
+### Security review (docs/SECURITY-REVIEW.md)
+- Export paths (`--output`, `-OutputDirectory`, `-Path`) are canonicalized; device paths,
+  reserved device names, and NTFS streams are refused; host-derived and caller-supplied file
+  names are reduced to one safe file-name component.
+- Report-package import refuses zip-slip entry names, more than 256 entries, and a
+  `data.json` over 64 MB; `install.ps1` validates the downloaded archive before extracting.
+- Launchers start PowerShell from pinned install paths, never through `PATH` or the
+  current directory; the Restart Explorer repair starts `%SystemRoot%\explorer.exe`.
+- Secret-looking values (passwords, tokens, URL credentials, BitLocker recovery passwords,
+  Wi-Fi keys) are replaced with `[REDACTED]` in findings, metrics, and the run log.
+
 ## 0.8.0 (unreleased)
 
 Phase 3 of the v1.0 roadmap: interfaces and UX.
