@@ -190,7 +190,13 @@ function Invoke-OmniRepair {
         if ($selected[$k].RestorePoint -and ($Context.DryRun -or $approved[$k])) { $needsRestore = $true }
     }
     if ($needsRestore -and -not $Context.DryRun -and -not $SkipRestorePoint) {
-        $restorePoint = New-OmniRestorePoint -Description 'OmniDiag repair checkpoint' -Logger $log
+        # A context may supply RestorePointProvider (scriptblock taking Description, Logger) to
+        # replace System Restore - used by tests, since mocks don't reliably reach nested modules.
+        if ($Context.PSObject.Properties['RestorePointProvider'] -and $Context.RestorePointProvider) {
+            $restorePoint = & $Context.RestorePointProvider 'OmniDiag repair checkpoint' $log
+        } else {
+            $restorePoint = New-OmniRestorePoint -Description 'OmniDiag repair checkpoint' -Logger $log
+        }
     } elseif ($needsRestore -and $Context.DryRun) {
         $log.Info('[dry-run] Would create a System Restore checkpoint before the selected repairs.', 'RepairEngine')
     }

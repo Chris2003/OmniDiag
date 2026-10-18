@@ -34,6 +34,18 @@ Phase 3 of the v1.0 roadmap: interfaces and UX.
   `Invoke-OmniDiag`, `Export-OmniReport`, `Import-OmniSession`, `Compare-OmniSession`,
   `Invoke-OmniRepairCenter`, `Invoke-OmniRepair`, `Show-OmniDiagWindow`.
 
+### Review fixes
+- Redaction: the machine DNS domain and Domain/DnsDomain/DomainName metrics are redacted even
+  without `USERDNSDOMAIN` (SYSTEM, local accounts, imported sessions); sessions record
+  `Host.Domain` / `Host.DnsDomain`.
+- Redaction: profile folders behind device paths, UNC shares, and WSL mounts; MAC/IPv6
+  addresses glued to labels or followed by ':'; run-log names written as `\u0027`/`\u0026` by
+  Windows PowerShell 5.1.
+- `Invoke-OmniRepair -WhatIf` creates no restore point; `-Confirm` asks before the restore point
+  is created. CLI `--redact` also redacts the stderr status lines.
+- Windows PowerShell 5.1: `Invoke-OmniDiagScan` and the group cmdlets work (no `GetNewClosure`
+  over validated parameters); GUI live regions work (legacy accessibility switches off).
+
 ### GUI
 - Screen-reader names on every control and grid row; status and progress announced as live
   regions; access keys and a logical Tab order with visible focus in every theme.
