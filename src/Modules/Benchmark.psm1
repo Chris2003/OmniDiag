@@ -17,6 +17,9 @@ Set-StrictMode -Version Latest
 if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
     Import-Module (Join-Path $PSScriptRoot '..\Core\Models.psm1') -Global -Force -DisableNameChecking
 }
+if (-not (Get-Command -Name 'Get-OmniDataPath' -ErrorAction SilentlyContinue)) {
+    Import-Module (Join-Path $PSScriptRoot '..\Core\Paths.psm1') -Global -Force -DisableNameChecking
+}
 
 function Get-OmniModuleManifest {
     [OutputType([hashtable])]
@@ -55,6 +58,7 @@ function Invoke-OmniModuleScan {
         $acc = 0.0
         for ($i = 0; $i -lt $iterations; $i++) {
             $acc += [math]::Sqrt($i)
+            if (($i % 100000) -eq 0 -and $Context.CancellationToken.IsCancellationRequested) { break }
         }
         $sw.Stop()
         $cpuMillis = [math]::Round($sw.Elapsed.TotalMilliseconds, 1)
@@ -71,11 +75,13 @@ function Invoke-OmniModuleScan {
 
     # --- Disk micro-benchmark --------------------------------------------
     $tempFile = $null
+    if ($Context.CancellationToken.IsCancellationRequested) { return (Complete-OmniResult -Result $result) }
     try {
         $sizeMb = 8
         $bytes = New-Object byte[] (1MB)
         (New-Object System.Random).NextBytes($bytes)
-        $tempFile = Join-Path $env:TEMP ("omnidiag_bench_{0}.tmp" -f ([guid]::NewGuid().ToString('N')))
+        # Portable scratch folder (OmniDiagData\temp), never the user's %TEMP%.
+        $tempFile = Get-OmniDataPath -Kind Temp -ChildPath ("omnidiag_bench_{0}.tmp" -f ([guid]::NewGuid().ToString('N')))
 
         # Write
         $sw = [System.Diagnostics.Stopwatch]::StartNew()

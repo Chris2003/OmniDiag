@@ -27,9 +27,45 @@ function Invoke-OmniOllamaRequest {
         [scriptblock] $Transport
     )
     if ($Transport) { return (& $Transport $Method $Uri $Body) }
-    if ($Method -eq 'GET') { return Invoke-RestMethod -Method Get -Uri $Uri -TimeoutSec 10 -ErrorAction Stop }
+    # No redirects: a 30x from whatever listens on the loopback port must not move evidence off the machine.
+    if ($Method -eq 'GET') { return Invoke-RestMethod -Method Get -Uri $Uri -TimeoutSec 10 -MaximumRedirection 0 -ErrorAction Stop }
     $json = $Body | ConvertTo-Json -Depth 12 -Compress
-    return Invoke-RestMethod -Method Post -Uri $Uri -ContentType 'application/json' -Body $json -TimeoutSec 180 -ErrorAction Stop
+    # Send UTF-8 bytes: Windows PowerShell 5.1 encodes a string body as ISO-8859-1.
+    return Invoke-RestMethod -Method Post -Uri $Uri -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($json)) `
+        -TimeoutSec 180 -MaximumRedirection 0 -ErrorAction Stop
+}
+
+function Protect-OmniPromptText {
+    <#
+    .SYNOPSIS
+        Internal: minimize identity data in text sent to the model.
+
+    .DESCRIPTION
+        Finding titles can embed certificate subjects, e-mail addresses, and the local
+        user or computer name. These are replaced with neutral placeholders before the
+        text is projected into a prompt; finding IDs are left intact so citations still
+        resolve against the local session.
+    #>
+    param([string] $Text, [string[]] $Identity = @())
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+    $out = $Text -replace '[\w.+-]+@[\w-]+(\.[\w-]+)+', '<email>'
+    $out = $out -replace '(?i)\b(CN|E|OU|O|DC|UID)=([^,;)]+)', '$1=<redacted>'
+    foreach ($name in @($Identity | Where-Object { $_ -and $_.Length -ge 3 } | Sort-Object Length -Descending)) {
+        $out = $out -replace [regex]::Escape($name), '<host-identity>'
+    }
+    return $out
+}
+
+function Get-OmniPromptIdentity {
+    <# .SYNOPSIS Internal: user/computer/domain names to redact for a session. #>
+    param([pscustomobject] $Session)
+    $names = @($env:USERNAME, $env:USER, $env:COMPUTERNAME, $env:USERDOMAIN)
+    if ($Session -and $Session.PSObject.Properties['Host'] -and $Session.Host) {
+        foreach ($p in @('ComputerName', 'UserName')) {
+            if ($Session.Host.PSObject.Properties[$p] -and $Session.Host.$p) { $names += @(([string]$Session.Host.$p) -split '\\') }
+        }
+    }
+    return @($names | Where-Object { $_ } | Select-Object -Unique)
 }
 
 function Test-OmniOllama {
@@ -67,17 +103,18 @@ function Invoke-OmniOllamaAnalysis {
     if (-not $status.Available) { throw "Ollama is not available at $($status.Endpoint): $($status.Error)" }
     if (-not $status.ModelPresent) { throw "Model '$Model' is not installed locally. Run: ollama pull $Model" }
 
+    $identity = Get-OmniPromptIdentity -Session $Session
     $findings = @(
         foreach ($result in @($Session.Results)) {
             foreach ($finding in @($result.Findings)) {
-                if ($finding.Severity -eq 'Pass') { continue }
+                if (-not $finding -or $finding.Severity -eq 'Pass') { continue }
                 [ordered]@{
                     id = [string]$finding.Id
                     severity = [string]$finding.Severity
-                    component = [string]$finding.Component
-                    title = [string]$finding.Title
-                    likelyCause = [string]$finding.LikelyCause
-                    recommendation = [string]$finding.Recommendation
+                    component = Protect-OmniPromptText ([string]$finding.Component) $identity
+                    title = Protect-OmniPromptText ([string]$finding.Title) $identity
+                    likelyCause = Protect-OmniPromptText ([string]$finding.LikelyCause) $identity
+                    recommendation = Protect-OmniPromptText ([string]$finding.Recommendation) $identity
                 }
             }
         }
@@ -104,17 +141,28 @@ function Invoke-OmniOllamaAnalysis {
     $prompt = "Technician question:`n$Question`n`nOmniDiag evidence JSON:`n$($evidence | ConvertTo-Json -Depth 8 -Compress)"
     $body = [ordered]@{ model=$Model; system=$system; prompt=$prompt; stream=$false; think=$false; format=$schema; keep_alive='5m'; options=@{ temperature=0.1; num_predict=900 } }
     $response = Invoke-OmniOllamaRequest -Method POST -Uri "$($status.Endpoint)/api/generate" -Body $body -Transport $Transport
-    if (-not $response.response) { throw 'Ollama returned no analysis content.' }
+    if (-not $response -or -not $response.PSObject.Properties['response'] -or -not $response.response) { throw 'Ollama returned no analysis content.' }
     try { $analysis = $response.response | ConvertFrom-Json -ErrorAction Stop } catch { throw "Ollama returned invalid structured JSON: $($_.Exception.Message)" }
     foreach ($required in @('summary','priorities','correlations','nextSteps','limitations')) {
         if (-not $analysis.PSObject.Properties[$required]) { throw "Ollama response is missing required property '$required'." }
     }
+    # Keep only citations to findings that were actually supplied; surface the rest.
+    $suppliedIds = @($findings | ForEach-Object { $_.id })
+    $unverified = [System.Collections.Generic.List[string]]::new()
+    foreach ($section in @('priorities', 'correlations', 'nextSteps')) {
+        foreach ($item in @($analysis.$section | Where-Object { $_ })) {
+            if (-not $item.PSObject.Properties['evidenceIds']) { continue }
+            $ids = @($item.evidenceIds | Where-Object { $_ } | ForEach-Object { [string]$_ })
+            foreach ($bad in @($ids | Where-Object { $_ -notin $suppliedIds })) { if (-not $unverified.Contains($bad)) { $unverified.Add($bad) } }
+            $item.evidenceIds = @($ids | Where-Object { $_ -in $suppliedIds })
+        }
+    }
     return [pscustomobject]@{
         PSTypeName='OmniDiag.OllamaAnalysis'; Model=$Model; Endpoint=$status.Endpoint
         Question=$Question; GeneratedAt=(Get-Date); EvidenceCount=@($findings).Count
-        Summary=[string]$analysis.summary; Priorities=@($analysis.priorities)
-        Correlations=@($analysis.correlations); NextSteps=@($analysis.nextSteps)
-        Limitations=@($analysis.limitations); Usage=[pscustomobject]@{
+        Summary=[string]$analysis.summary; Priorities=@($analysis.priorities | Where-Object { $_ })
+        Correlations=@($analysis.correlations | Where-Object { $_ }); NextSteps=@($analysis.nextSteps | Where-Object { $_ })
+        Limitations=@($analysis.limitations | Where-Object { $_ }); UnverifiedCitations=@($unverified); Usage=[pscustomobject]@{
             PromptTokens=if ($response.PSObject.Properties['prompt_eval_count']) { $response.prompt_eval_count } else { $null }
             OutputTokens=if ($response.PSObject.Properties['eval_count']) { $response.eval_count } else { $null }
             TotalDurationNs=if ($response.PSObject.Properties['total_duration']) { $response.total_duration } else { $null }
@@ -165,6 +213,7 @@ function New-OmniAssistantConversation {
         Turns           = [System.Collections.Generic.List[object]]::new()
         SeenFindingIds  = [System.Collections.Generic.HashSet[string]]::new()
         SeenRunbookIds  = [System.Collections.Generic.HashSet[string]]::new()
+        Identity        = @(Get-OmniPromptIdentity -Session $Session)
     }
 }
 
@@ -203,7 +252,9 @@ function Invoke-OmniAssistantTurn {
         healthScore = if ($c.Session.PSObject.Properties['Summary'] -and $c.Session.Summary) { $c.Session.Summary.Score } else { $null }
         findings = @(foreach ($h in $hits | Where-Object Type -eq 'Finding') {
             [void]$c.SeenFindingIds.Add($h.Id)
-            [ordered]@{ id = $h.Id; severity = $h.Item.Severity; component = $h.Item.Component; title = $h.Item.Title; likelyCause = $h.Item.LikelyCause; recommendation = $h.Item.Recommendation }
+            [ordered]@{ id = $h.Id; severity = $h.Item.Severity; component = (Protect-OmniPromptText ([string]$h.Item.Component) $c.Identity)
+                title = (Protect-OmniPromptText ([string]$h.Item.Title) $c.Identity); likelyCause = (Protect-OmniPromptText ([string]$h.Item.LikelyCause) $c.Identity)
+                recommendation = (Protect-OmniPromptText ([string]$h.Item.Recommendation) $c.Identity) }
         })
         runbooks = @(foreach ($h in $hits | Where-Object Type -eq 'Runbook') {
             [void]$c.SeenRunbookIds.Add($h.Id)
@@ -236,7 +287,7 @@ function Invoke-OmniAssistantTurn {
     }
     $body = [ordered]@{ model = $c.Model; messages = @($messages); stream = $false; think = $false; format = $schema; keep_alive = '5m'; options = @{ temperature = 0.1; num_predict = 700 } }
     $response = Invoke-OmniOllamaRequest -Method POST -Uri "$($c.Endpoint)/api/chat" -Body $body -Transport $c.Transport
-    $content = if ($response.PSObject.Properties['message'] -and $response.message) { [string]$response.message.content } else { $null }
+    $content = if ($response -and $response.PSObject.Properties['message'] -and $response.message -and $response.message.PSObject.Properties['content']) { [string]$response.message.content } else { $null }
     if (-not $content) { throw 'Ollama returned no answer content.' }
     try { $reply = $content | ConvertFrom-Json -ErrorAction Stop } catch { throw "Ollama returned invalid structured JSON: $($_.Exception.Message)" }
     if (-not $reply.PSObject.Properties['answer']) { throw "Ollama response is missing required property 'answer'." }
@@ -253,8 +304,8 @@ function Invoke-OmniAssistantTurn {
         RunbookIds          = @($citedRunbooks | Where-Object { $c.SeenRunbookIds.Contains($_) } | Select-Object -Unique)
         UnverifiedCitations = @(@($citedFindings | Where-Object { -not $c.SeenFindingIds.Contains($_) }) + @($citedRunbooks | Where-Object { -not $c.SeenRunbookIds.Contains($_) }) | Select-Object -Unique)
         RequiresApproval    = [bool]$(if ($reply.PSObject.Properties['requiresApproval']) { $reply.requiresApproval } else { $true })
-        SuggestedQuestions  = & $prop 'suggestedQuestions'
-        Limitations         = & $prop 'limitations'
+        SuggestedQuestions  = @(& $prop 'suggestedQuestions')
+        Limitations         = @(& $prop 'limitations')
         EvidenceIds         = @($hits | ForEach-Object { $_.Id } | Select-Object -Unique)
         GeneratedAt         = Get-Date
     }

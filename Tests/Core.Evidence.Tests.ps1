@@ -92,6 +92,32 @@ Describe 'Before/after comparison' {
         ($cmp.Persisting | Where-Object Id -eq 'performance-cpu-high').Change | Should -Be 'Unchanged'
     }
 
+    It 'pairs findings whose titles embed live measurements' {
+        $hot = New-TestSession -Findings @((New-OmniFinding -Title 'High CPU usage (93%)' -Severity Error -Component 'Performance/CPU')) -Score 60
+        $warm = New-TestSession -Findings @((New-OmniFinding -Title 'High CPU usage (71%)' -Severity Warning -Component 'Performance/CPU')) -Score 75
+        $cmp = Compare-OmniSession -Before $hot -After $warm
+        @($cmp.Resolved).Count | Should -Be 0
+        @($cmp.New).Count | Should -Be 0
+        $cmp.Persisting[0].Change | Should -Be 'Improved'
+        $cmp.Persisting[0].BeforeTitle | Should -Be 'High CPU usage (93%)'
+        $cmp.Verdict | Should -Be 'Improved'
+    }
+
+    It 'does not count findings from scanners that only ran in one session as resolved' {
+        $net = New-OmniResult -ModuleName 'Network' -Category Network
+        Add-OmniFinding -Result $net -Finding $script:Dns
+        Complete-OmniResult -Result $net | Out-Null
+        $cpu = New-OmniResult -ModuleName 'CPU' -Category Performance
+        Add-OmniFinding -Result $cpu -Finding $script:Cpu
+        Complete-OmniResult -Result $cpu | Out-Null
+        $full = [pscustomobject]@{ Results = @($net, $cpu); Summary = $null }
+        $netOnly = [pscustomobject]@{ Results = @($net); Summary = $null }
+        $cmp = Compare-OmniSession -Before $full -After $netOnly
+        @($cmp.Resolved).Count | Should -Be 0
+        $cmp.OutOfScope.Id | Should -Contain 'performance-cpu-high'
+        $cmp.Verdict | Should -Be 'Unchanged'
+    }
+
     It 'reports Unchanged for identical sessions' {
         (Compare-OmniSession -Before $script:Before -After $script:Before).Verdict | Should -Be 'Unchanged'
     }

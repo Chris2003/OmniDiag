@@ -22,6 +22,7 @@ rem module-analysis cache, update check, and telemetry are redirected/disabled,
 rem and TEMP points at the tool folder (the real one is kept for the temp-clean repair).
 set "OMNIDIAG_DATA=%HERE%OmniDiagData"
 if not exist "%OMNIDIAG_DATA%\temp" mkdir "%OMNIDIAG_DATA%\temp" >nul 2>nul
+if exist "%OMNIDIAG_DATA%\temp" if not exist "%OMNIDIAG_DATA%\temp\.omnidiag-scratch" (echo OmniDiag scratch folder; safe to delete.)>"%OMNIDIAG_DATA%\temp\.omnidiag-scratch" 2>nul
 if exist "%OMNIDIAG_DATA%\temp" (
     set "OMNIDIAG_HOST_TEMP=%TEMP%"
     set "TEMP=%OMNIDIAG_DATA%\temp"

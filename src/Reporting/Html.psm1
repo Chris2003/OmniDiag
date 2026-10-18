@@ -26,7 +26,7 @@ function Get-OmniBrandLogoTag {
     param([string] $LogoPath)
     if ([string]::IsNullOrWhiteSpace($LogoPath) -or -not (Test-Path -LiteralPath $LogoPath)) { return '' }
     try {
-        $bytes = [System.IO.File]::ReadAllBytes($LogoPath)
+        $bytes = [System.IO.File]::ReadAllBytes($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogoPath))
         $ext = [System.IO.Path]::GetExtension($LogoPath).TrimStart('.').ToLowerInvariant()
         $mime = switch ($ext) {
             'png'  { 'image/png' }
@@ -176,7 +176,8 @@ footer{margin-top:28px;border-top:1px solid var(--line);padding-top:14px;color:v
     # --- Header ---
     $logoTag = Get-OmniBrandLogoTag -LogoPath $BrandLogo
     $brand = if ($BrandName) { "<div class='tag'>Prepared for " + (Get-OmniHtmlEncode $BrandName) + "</div>" } else { '' }
-    $scoreNum = if ($s) { $s.Score } else { 'n/a' }
+    # Saved sessions can be edited by hand, so even numeric fields are encoded.
+    $scoreNum = if ($s) { Get-OmniHtmlEncode $s.Score } else { 'n/a' }
     $gradeCls = if ($s) { Get-OmniGradeClass $s.Grade } else { 'info' }
     $gradeTxt = if ($s) { Get-OmniHtmlEncode $s.Grade } else { 'Unknown' }
     [void]$sb.Append("<header><div>$logoTag<h1>OmniDiag Report</h1><div class='tag'>One Tool. Complete Diagnostics.</div>$brand</div>")
@@ -189,10 +190,10 @@ footer{margin-top:28px;border-top:1px solid var(--line);padding-top:14px;color:v
     [void]$sb.Append("<div class='card'><div class='k'>Scan Duration</div><div class='v'>$([math]::Round($Session.DurationMs/1000,1)) s</div></div>")
     [void]$sb.Append("<div class='card'><div class='k'>Time Range</div><div class='v'>$(Get-OmniHtmlEncode $Session.TimeRange.Label)</div></div>")
     if ($s) {
-        [void]$sb.Append("<div class='card'><div class='k'>Critical / Error</div><div class='v txt-crit'>$($s.Counts.Critical) / $($s.Counts.Error)</div></div>")
-        [void]$sb.Append("<div class='card'><div class='k'>Warnings</div><div class='v txt-warn'>$($s.Counts.Warning)</div></div>")
-        [void]$sb.Append("<div class='card'><div class='k'>Passed</div><div class='v txt-pass'>$($s.Counts.Pass)</div></div>")
-        [void]$sb.Append("<div class='card'><div class='k'>Modules Run</div><div class='v'>$($s.ModulesRun)</div></div>")
+        [void]$sb.Append("<div class='card'><div class='k'>Critical / Error</div><div class='v txt-crit'>$(Get-OmniHtmlEncode $s.Counts.Critical) / $(Get-OmniHtmlEncode $s.Counts.Error)</div></div>")
+        [void]$sb.Append("<div class='card'><div class='k'>Warnings</div><div class='v txt-warn'>$(Get-OmniHtmlEncode $s.Counts.Warning)</div></div>")
+        [void]$sb.Append("<div class='card'><div class='k'>Passed</div><div class='v txt-pass'>$(Get-OmniHtmlEncode $s.Counts.Pass)</div></div>")
+        [void]$sb.Append("<div class='card'><div class='k'>Modules Run</div><div class='v'>$(Get-OmniHtmlEncode $s.ModulesRun)</div></div>")
     }
     [void]$sb.Append('</div>')
 
@@ -268,8 +269,9 @@ footer{margin-top:28px;border-top:1px solid var(--line);padding-top:14px;color:v
     # --- Per-module breakdown ---
     [void]$sb.Append('<h2>Module Results</h2><table><thead><tr><th>Module</th><th>Category</th><th>Status</th><th>Findings</th><th>Duration</th></tr></thead><tbody>')
     foreach ($r in $Session.Results) {
-        $cls = Get-OmniSeverityClass $(if ($r.Status -eq 'Healthy') { 'Pass' } elseif ($r.Status -eq 'Warning') { 'Warning' } else { 'Critical' })
-        [void]$sb.Append("<tr><td>$(Get-OmniHtmlEncode $r.ModuleName)</td><td>$(Get-OmniHtmlEncode $r.Category)</td><td><span class='badge $cls'>$(Get-OmniHtmlEncode $r.Status)</span></td><td>$($r.Findings.Count)</td><td class='muted'>$($r.DurationMs) ms</td></tr>")
+        $cls = Get-OmniSeverityClass $(switch ([string]$r.Status) { 'Healthy' { 'Pass' } 'Warning' { 'Warning' } 'Critical' { 'Critical' } 'Failed' { 'Error' } default { 'Information' } })
+        $errorNote = if ($r.PSObject.Properties['Error'] -and $r.Error) { "<div class='muted'>$(Get-OmniHtmlEncode $r.Error)</div>" } else { '' }
+        [void]$sb.Append("<tr><td>$(Get-OmniHtmlEncode $r.ModuleName)$errorNote</td><td>$(Get-OmniHtmlEncode $r.Category)</td><td><span class='badge $cls'>$(Get-OmniHtmlEncode $r.Status)</span></td><td>$(@($r.Findings).Count)</td><td class='muted'>$(Get-OmniHtmlEncode $r.DurationMs) ms</td></tr>")
     }
     [void]$sb.Append('</tbody></table>')
 

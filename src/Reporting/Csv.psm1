@@ -67,6 +67,30 @@ function ConvertTo-OmniEventTable {
     return @($rows)
 }
 
+function ConvertTo-OmniCsvSafeRow {
+    <#
+    .SYNOPSIS
+        Internal: neutralize spreadsheet formulas in exported text.
+
+    .DESCRIPTION
+        Event messages, provider names, hosts entries, and printer names can be written
+        by any program, so a cell starting with = + - @ (or tab/CR) would run as a
+        formula when the CSV is opened in Excel. Such cells are prefixed with a single
+        quote. Applied only at export, so the GUI grid keeps the raw values.
+    #>
+    param([Parameter(ValueFromPipeline)] [object] $Row)
+    process {
+        if ($null -eq $Row) { return }
+        $copy = [ordered]@{}
+        foreach ($p in $Row.PSObject.Properties) {
+            $v = $p.Value
+            if ($v -is [string] -and $v -match '^[=+\-@\t\r]') { $v = "'" + $v }
+            $copy[$p.Name] = $v
+        }
+        [pscustomobject]$copy
+    }
+}
+
 function Export-OmniCsvReport {
     <#
     .SYNOPSIS
@@ -86,7 +110,7 @@ function Export-OmniCsvReport {
 
     $table = ConvertTo-OmniFindingTable -Session $Session
     $table | Select-Object Module, Category, Severity, Component, Title, Detail, LikelyCause, Confidence, Recommendation, Timestamp |
-        Export-Csv -Path $Path -NoTypeInformation -Encoding UTF8
+        ConvertTo-OmniCsvSafeRow | Export-Csv -Path $Path -NoTypeInformation -Encoding UTF8
     return $Path
 }
 
@@ -106,7 +130,7 @@ function Export-OmniEventCsvReport {
 
     $dir = Split-Path -Path $Path -Parent
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    $rows | Export-Csv -Path $Path -NoTypeInformation -Encoding UTF8
+    $rows | ConvertTo-OmniCsvSafeRow | Export-Csv -Path $Path -NoTypeInformation -Encoding UTF8
     return $Path
 }
 

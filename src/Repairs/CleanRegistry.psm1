@@ -15,6 +15,9 @@ Set-StrictMode -Version Latest
 if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
     Import-Module (Join-Path $PSScriptRoot '..\Repair\RepairModels.psm1') -Global -Force -DisableNameChecking
 }
+if (-not (Get-Command Get-OmniDataRoot -ErrorAction SilentlyContinue)) {
+    Import-Module (Join-Path $PSScriptRoot '..\Core\Paths.psm1') -Global -Force -DisableNameChecking
+}
 if (-not (Get-Command Get-OmniInvalidRegistryEntry -ErrorAction SilentlyContinue)) {
     Import-Module (Join-Path $PSScriptRoot '..\Core\RegistryScan.psm1') -Global -Force -DisableNameChecking
 }
@@ -52,20 +55,29 @@ function Invoke-OmniRepairAction {
     }
 
     $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-    $backup = Get-OmniDataPath -Kind Backups -ChildPath "RegBackup-$stamp.reg"
+    # Path only - Export-OmniRegistryBackup creates the folder inside the step, so a dry-run writes nothing.
+    $backup = Join-Path (Join-Path (Get-OmniDataRoot).Path 'backups') "RegBackup-$stamp.reg"
     $byCat = (@($entries | Group-Object Category | Sort-Object Count -Descending | ForEach-Object { "$($_.Count) $($_.Name)" }) -join ', ')
 
     # 1) Backup first (skipped in dry-run; the action captures $entries/$backup from this scope).
-    Invoke-OmniRepairStep -Result $r -Context $Context -Description "Back up $($entries.Count) affected registry key(s) to $backup" -Action {
+    $backedUp = Invoke-OmniRepairStep -Result $r -Context $Context -Description "Back up $($entries.Count) affected registry key(s) to $backup" -Action {
         Export-OmniRegistryBackup -Entries $entries -Path $backup | Out-Null
-    } | Out-Null
+    }
+    if (-not $backedUp) {
+        # Never delete without a complete backup.
+        return (Complete-OmniRepairResult -Result $r)
+    }
 
     # 2) Remove the invalid entries.
     Invoke-OmniRepairStep -Result $r -Context $Context -Description "Remove $($entries.Count) invalid registry entries ($byCat)" -Action {
         $removed = 0
+        $failed = [System.Collections.Generic.List[string]]::new()
         foreach ($e in $entries) {
             try { Remove-OmniRegistryEntry -Entry $e -ErrorAction Stop; $removed++ }
-            catch { }
+            catch { $failed.Add("$($e.Path): $($_.Exception.Message)") }
+        }
+        if ($failed.Count -gt 0) {
+            throw "Removed $removed of $($entries.Count) entries; $($failed.Count) failed (backup: $backup). First failure: $($failed[0])"
         }
         "Removed $removed of $($entries.Count) entries. Backup: $backup"
     } | Out-Null

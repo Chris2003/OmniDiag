@@ -57,6 +57,25 @@ Describe 'Get-OmniApplicableRepair' {
         ($annotated | Where-Object Name -eq 'Flush DNS Cache').Recommended | Should -BeTrue
         ($annotated | Where-Object Name -eq 'Repair Component Store (DISM)').Recommended | Should -BeFalse
     }
+
+    It 'does not recommend repairs from passing or informational findings' {
+        $r = New-OmniResult -ModuleName 'Network' -Category 'Network'
+        Add-OmniFinding -Result $r -Finding (New-OmniFinding -Title 'Network healthy' -Severity 'Pass' -Component 'Network')
+        Add-OmniFinding -Result $r -Finding (New-OmniFinding -Title 'Temp folder size' -Severity 'Information' -Component 'Storage/Temp')
+        $session = [pscustomobject]@{ PSTypeName = 'OmniDiag.Session'; Results = @((Complete-OmniResult -Result $r)) }
+        $annotated = @(Get-OmniApplicableRepair -Registration @(Get-OmniRepair -Path $script:RepairsPath -Logger $script:Logger) -Session $session)
+        @($annotated | Where-Object Recommended).Name | Should -BeNullOrEmpty
+    }
+
+    It 'maps printer and IP findings to their repairs' {
+        $r = New-OmniResult -ModuleName 'Mixed' -Category 'Network'
+        Add-OmniFinding -Result $r -Finding (New-OmniFinding -Title 'Printer offline' -Severity 'Warning' -Component 'Peripherals/Printer')
+        Add-OmniFinding -Result $r -Finding (New-OmniFinding -Title 'APIPA address' -Severity 'Error' -Component 'Network/IP')
+        $session = [pscustomobject]@{ PSTypeName = 'OmniDiag.Session'; Results = @((Complete-OmniResult -Result $r)) }
+        $annotated = @(Get-OmniApplicableRepair -Registration @(Get-OmniRepair -Path $script:RepairsPath -Logger $script:Logger) -Session $session)
+        ($annotated | Where-Object Name -eq 'Restart Print Spooler').Recommended | Should -BeTrue
+        ($annotated | Where-Object Name -eq 'Release / Renew IP Address').Recommended | Should -BeTrue
+    }
 }
 
 Describe 'New-OmniRestorePoint' {

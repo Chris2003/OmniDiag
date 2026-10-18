@@ -125,3 +125,45 @@ Describe 'Export-OmniReport coordinator' {
         Test-Path $zip | Should -BeTrue
     }
 }
+
+Describe 'Report hardening' {
+    It 'neutralizes spreadsheet formulas in CSV cells' {
+        $r = New-OmniResult -ModuleName 'Event Logs' -Category 'Event Logs'
+        Add-OmniFinding -Result $r -Finding (New-OmniFinding -Title "=HYPERLINK(""http://x"",""click"")" -Severity 'Warning' -Component '@SUM(A1)' -Recommendation '+1')
+        Complete-OmniResult -Result $r | Out-Null
+        $path = Join-Path $TestDrive 'inj.csv'
+        Export-OmniCsvReport -Session ([pscustomobject]@{ Results = @($r) }) -Path $path | Out-Null
+        $row = Import-Csv -LiteralPath $path | Select-Object -First 1
+        $row.Title | Should -BeLike "'=HYPERLINK*"
+        $row.Component | Should -Be "'@SUM(A1)"
+        $row.Recommendation | Should -Be "'+1"
+    }
+
+    It 'encodes summary numbers taken from an edited saved session' {
+        $tampered = New-SyntheticSession
+        $tampered.Summary.Score = '<img src=x onerror=alert(1)>'
+        $path = Join-Path $TestDrive 'tampered.html'
+        Export-OmniHtmlReport -Session $tampered -Path $path | Out-Null
+        $html = Get-Content -LiteralPath $path -Raw
+        $html | Should -Not -Match '<img src=x'
+        $html | Should -Match '&lt;img src=x'
+    }
+
+    It 'resolves relative output paths against the PowerShell location' {
+        Push-Location $TestDrive
+        try {
+            $set = Export-OmniReport -Session $script:Session -OutputDirectory 'relout' -Format Html, Json, Pdf -BaseName 'rel'
+            @($set.Warnings).Count | Should -Be 0
+            Join-Path $TestDrive 'relout/rel.html' | Should -Exist
+            Join-Path $TestDrive 'relout/rel.pdf' | Should -Exist
+        } finally { Pop-Location }
+    }
+
+    It 'exports every format for a session cancelled before any module finished' {
+        $empty = [pscustomobject]@{ StartTime = Get-Date; EndTime = Get-Date; DurationMs = 0; Cancelled = $true; IsAdmin = $false; Results = @(); Summary = $null
+            TimeRange = (Get-OmniTimeRange -Preset Last7Days); Host = $script:Session.Host }
+        $set = Export-OmniReport -Session $empty -OutputDirectory (Join-Path $TestDrive 'empty') -Format Html, Json, Csv, Pdf, Zip -BaseName 'e'
+        @($set.Warnings).Count | Should -Be 0
+        @($set.Files | Where-Object { $_ }).Count | Should -BeGreaterOrEqual 4
+    }
+}

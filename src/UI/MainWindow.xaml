@@ -245,7 +245,7 @@
 
                     <TextBlock x:Name="TxtRepairAdminNote" Grid.Row="1" Margin="0,0,0,8" TextWrapping="Wrap"
                                Foreground="{DynamicResource BrushMuted}"
-                               Text="Repairs are confirmed before they run. A System Restore point is created before system-altering repairs."/>
+                               Text="Repairs are confirmed before they run. System-altering repairs run only after a System Restore point is created (or one exists from the last 24 hours)."/>
 
                     <DataGrid x:Name="RepairGrid" Grid.Row="2" IsReadOnly="False" AutoGenerateColumns="False"
                               CanUserAddRows="False" HeadersVisibility="Column">

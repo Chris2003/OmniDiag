@@ -51,6 +51,7 @@ function Invoke-OmniModuleScan {
     $sizeGb = {
         param([string[]] $Paths)
         try {
+            if ($Context.CancellationToken.IsCancellationRequested) { return $null }
             $existing = @($Paths | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
             if ($existing.Count -eq 0) { return $null }
             $bytes = (Get-ChildItem -LiteralPath $existing -Recurse -File -Force -ErrorAction SilentlyContinue |

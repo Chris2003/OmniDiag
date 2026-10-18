@@ -18,7 +18,7 @@ function Get-OmniRepairManifest {
         Risk          = 'Moderate'
         RestorePoint  = $true
         RebootHint    = $false
-        AppliesTo     = @('health/update', 'update')
+        AppliesTo     = @('health/update', 'system/updates', 'system/servicing')
         Order         = 70
         Enabled       = $true
     }

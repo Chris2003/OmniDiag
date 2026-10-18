@@ -199,7 +199,7 @@ function Show-OmniExportDialog {
         Json = 'Full structured session (for automation)'
         Csv  = 'Findings and event tables'
         Pdf  = 'Print-ready PDF (native, no browser needed)'
-        Zip  = 'Bundle: HTML + JSON + CSV + log'
+        Zip  = 'Bundle: HTML + PDF + JSON + CSV + log'
     }
     $checkboxes = @{}
     foreach ($fmt in $formats.Keys) {
@@ -331,7 +331,7 @@ function Get-OmniSystemInfo {
         $g = $gpus[$i]
         $disp = [ordered]@{}
         & $add $disp 'Name' $g.Name
-        & $add $disp 'Chip / Vendor' (@($g.VideoProcessor, $g.AdapterCompatibility) | Where-Object { $_ } | Select-Object -Unique) -join ' / '
+        & $add $disp 'Chip / Vendor' ((@($g.VideoProcessor, $g.AdapterCompatibility) | Where-Object { $_ } | Select-Object -Unique) -join ' / ')
         if ($g.AdapterRAM -and $g.AdapterRAM -gt 0) { & $add $disp 'Dedicated Memory (approx)' ('{0} GB' -f [math]::Round([uint64]$g.AdapterRAM / 1GB, 1)) }
         if ($g.CurrentHorizontalResolution -and $g.CurrentVerticalResolution) {
             $mode = '{0} x {1}' -f $g.CurrentHorizontalResolution, $g.CurrentVerticalResolution
@@ -529,8 +529,12 @@ function Format-OmniAiAnalysis {
         [void]$lines.Add(''); [void]$lines.Add('LIMITATIONS')
         foreach ($item in @($Analysis.Limitations)) { [void]$lines.Add("- $item") }
     }
+    if ($Analysis.PSObject.Properties['UnverifiedCitations'] -and @($Analysis.UnverifiedCitations).Count -gt 0) {
+        [void]$lines.Add(''); [void]$lines.Add("UNVERIFIED CITATIONS IGNORED: $(@($Analysis.UnverifiedCitations) -join ', ')")
+    }
     [void]$lines.Add('')
-    [void]$lines.Add("Advisory only: verify guidance against the cited findings and your organization's runbooks.")
+    # Always shown: the model's requiresApproval flag can add a label but can't remove this one.
+    [void]$lines.Add("Advisory only: get approval before changing the device, and verify guidance against the cited findings and your organization's runbooks.")
     return ($lines -join [Environment]::NewLine)
 }
 
@@ -668,6 +672,7 @@ function Invoke-OmniWindow {
             if ($sync.Error) {
                 $ui.Controls.TxtStatus.Text = "Scan failed: $($sync.Error)"
             } else {
+              try {
                 $ui.Session = $sync.Session
                 Update-OmniDashboard -Ui $ui -Session $sync.Session
                 Update-OmniRepairCatalog -Ui $ui -Session $sync.Session   # light up recommended repairs
@@ -682,9 +687,20 @@ function Invoke-OmniWindow {
                     $ui.Controls.DiagGrid.Items.Refresh()
                 }
 
+                # Save the scan with the tool (like the console) so -FromSession/-CompareWith Last see GUI scans.
+                try {
+                    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+                    Export-OmniJsonReport -Session $sync.Session -Path (Get-OmniDataPath -Kind Sessions -ChildPath "session-$stamp.json") | Out-Null
+                } catch { }
+
                 $cancelledNote = if ($sync.Session.Cancelled) { ' (cancelled)' } else { '' }
-                $ui.Controls.TxtStatus.Text = "Scan complete$cancelledNote. Score $($sync.Session.Summary.Score)/100."
+                # Summary is $null when a scan is cancelled before any module finishes.
+                $scoreText = if ($sync.Session.Summary) { "Score $($sync.Session.Summary.Score)/100." } else { 'No score (no modules completed).' }
+                $ui.Controls.TxtStatus.Text = "Scan complete$cancelledNote. $scoreText"
                 $ui.Controls.BtnExport.IsEnabled = $true
+              } catch {
+                $ui.Controls.TxtStatus.Text = "Scan finished, but the results could not be displayed: $($_.Exception.Message)"
+              }
             }
             $ui.Controls.BtnScan.IsEnabled = $true
             $ui.Controls.DiagGrid.IsEnabled = $true
@@ -787,7 +803,7 @@ function Invoke-OmniWindow {
     # --- Scan ------------------------------------------------------------
     $controls.BtnScan.Add_Click({
         $ui = $script:OmniUi
-        if ($ui.Scan -or $ui.AiJob) { return }   # already busy
+        if ($ui.Scan -or $ui.Repair -or $ui.AiJob) { return }   # already busy (scan, repair, or AI)
 
         # Honor the Diagnostics tab toggles (once it has been populated). If the tab
         # was never opened, DiagRows is empty and we simply run every scanner.
@@ -825,7 +841,7 @@ function Invoke-OmniWindow {
             $btn = $e.OriginalSource -as [System.Windows.Controls.Button]
             if (-not $btn -or -not $btn.Tag) { return }
             $ui = $script:OmniUi
-            if ($ui.Scan -or $ui.AiJob) { return }
+            if ($ui.Scan -or $ui.Repair -or $ui.AiJob) { return }
             $ui.Controls.NavList.SelectedIndex = 0    # show the Dashboard for results
             Start-OmniScan -IncludeModule @([string]$btn.Tag)
         })
@@ -889,7 +905,7 @@ function Invoke-OmniWindow {
     # --- Repair: run selected --------------------------------------------
     $controls.BtnRunRepairs.Add_Click({
         $ui = $script:OmniUi
-        if ($ui.Repair -or $ui.AiJob) { return }   # already busy
+        if ($ui.Repair -or $ui.Scan -or $ui.AiJob) { return }   # already busy (scan, repair, or AI)
 
         $rows = @($ui.Controls.RepairGrid.ItemsSource | Where-Object { $_.Selected })
         if ($rows.Count -eq 0) {
@@ -903,7 +919,7 @@ function Invoke-OmniWindow {
         $list = ($rows | ForEach-Object { "  - $($_.Name)  [$($_.Risk)]" }) -join "`n"
         $msg = "About to run $($rows.Count) repair(s):`n`n$list"
         if (-not $dryRun -and @($rows | Where-Object { $_.RestorePoint }).Count -gt 0) {
-            $msg += "`n`nA System Restore point will be created first."
+            $msg += "`n`nA System Restore point will be created first; repairs that need one are skipped if it can't be."
         }
         if (@($rows | Where-Object { $_.Reboot }).Count -gt 0) {
             $msg += "`n`nOne or more repairs will require a reboot to fully apply."
@@ -984,16 +1000,21 @@ function Invoke-OmniWindow {
 
     # --- Clean up on close ----------------------------------------------
     $window.Add_Closing({
+        param($eventSender, $e)
         $ui = $script:OmniUi
+        if ($ui.Repair) {
+            # Killing the repair pipeline mid-step could leave services stopped or a registry
+            # cleanup half done. Request a cooperative cancel and keep the window open.
+            try { $ui.Repair.Cts.Cancel() } catch { }
+            $e.Cancel = $true
+            $ui.Controls.TxtStatus.Text = 'Stopping repairs after the current step... close the window again when they finish.'
+            [System.Windows.MessageBox]::Show('A repair is running. OmniDiag will stop after the current step; close the window again when it finishes.', 'OmniDiag Repair', 'OK', 'Warning') | Out-Null
+            return
+        }
         if ($ui.Scan) {
             try { $ui.Scan.Cts.Cancel() } catch { }
             try { $ui.Timer.Stop() } catch { }
             try { $ui.Scan.PowerShell.Dispose(); $ui.Scan.Runspace.Dispose() } catch { }
-        }
-        if ($ui.Repair) {
-            try { $ui.Repair.Cts.Cancel() } catch { }
-            try { $ui.RepairTimer.Stop() } catch { }
-            try { $ui.Repair.PowerShell.Dispose(); $ui.Repair.Runspace.Dispose() } catch { }
         }
         if ($ui.AiJob) {
             try { $ui.AiTimer.Stop() } catch { }

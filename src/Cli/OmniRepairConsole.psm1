@@ -52,12 +52,17 @@ function Invoke-OmniRepairConsole {
         Folder of repair plugins. Defaults to the sibling src/Repairs folder.
 
     .PARAMETER LogPath
-        Structured log path for the repair run. Defaults to a per-run temp file.
+        Structured log path for the repair run. Defaults to OmniDiagData\logs.
+
+    .PARAMETER AllowWithoutRestorePoint
+        Run repairs that normally require a System Restore point even when none could
+        be created (System Restore disabled). Off by default.
     #>
     [CmdletBinding()]
     param(
         [pscustomobject] $Session,
         [switch] $DryRun,
+        [switch] $AllowWithoutRestorePoint,
         [string] $RepairsPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'Repairs'),
         [string] $LogPath
     )
@@ -133,7 +138,7 @@ function Invoke-OmniRepairConsole {
         if ($reg.RequiresAdmin -and -not $isAdmin) {
             Write-Host '      Requires administrator - it will be skipped on this non-elevated run.' -ForegroundColor DarkYellow
         }
-        if ($reg.RestorePoint -and -not $DryRun) { Write-Host '      A System Restore point will be created before running.' -ForegroundColor Gray }
+        if ($reg.RestorePoint -and -not $DryRun) { Write-Host '      Requires a System Restore point; skipped if one cannot be created.' -ForegroundColor Gray }
         if ($reg.RebootHint) { Write-Host '      A reboot will be required to fully apply this repair.' -ForegroundColor Gray }
         $ans = Read-Host '      Run this repair? [y/N]'
         if ($ans -match '^(y|yes)$') { $confirmed.Add($reg) }
@@ -153,7 +158,7 @@ function Invoke-OmniRepairConsole {
             Write-Host ("    {0,-40} {1}" -f $p.Name, 'Skipped') -ForegroundColor DarkGray
         }
     }
-    $repairSession = Invoke-OmniRepair -Registration $confirmed -Context $ctx -ProgressCallback $progress
+    $repairSession = Invoke-OmniRepair -Registration $confirmed -Context $ctx -ProgressCallback $progress -AllowWithoutRestorePoint:$AllowWithoutRestorePoint
 
     Write-OmniRepairSummary -RepairSession $repairSession -LogPath $LogPath
     return $repairSession

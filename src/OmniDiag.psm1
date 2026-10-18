@@ -53,8 +53,8 @@ function Invoke-OmniDiag {
         LoginAndIdentity.
 
     .PARAMETER LogPath
-        Path for the structured .jsonl log. Defaults to a per-run file under
-        the user's temp folder.
+        Path for the structured .jsonl log. Defaults to a per-run file in
+        OmniDiagData\logs next to the tool (see Get-OmniDataRoot).
 
     .PARAMETER CancellationToken
         Cooperative cancellation token (used by the GUI's Cancel button).

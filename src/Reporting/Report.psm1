@@ -58,6 +58,9 @@ function Export-OmniReport {
         [string] $BrandColor
     )
 
+    # Resolve relative paths against PowerShell's location (.NET file APIs use the process directory).
+    $OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
+    if ($BrandLogo) { $BrandLogo = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BrandLogo) }
     if (-not (Test-Path -LiteralPath $OutputDirectory)) {
         New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     }

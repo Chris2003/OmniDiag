@@ -3,7 +3,7 @@
     # OmniDiag module manifest
     # ---------------------------------------------------------------------
     RootModule        = 'OmniDiag.psm1'
-    ModuleVersion     = '0.4.0'
+    ModuleVersion     = '0.4.1'
     GUID              = 'b6e9d0c2-7a4d-4f3e-9c1a-0d2f5a8e10b4'
     Author            = 'OmniDiag Contributors'
     CompanyName       = 'OmniDiag'

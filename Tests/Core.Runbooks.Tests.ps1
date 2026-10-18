@@ -55,6 +55,12 @@ Describe 'Organization runbooks' {
         $match[0].FindingIds | Should -Contain 'network-dns-failure'
     }
 
+    It 'tolerates an empty runbook list' {
+        { Find-OmniRunbook -Session $script:Session -Runbook $null } | Should -Not -Throw
+        @(Find-OmniRunbook -Session $script:Session -Runbook @()).Count | Should -Be 0
+        @(Get-OmniRunbook -Path (Join-Path $TestDrive 'missing')).Count | Should -Be 0
+    }
+
     It 'ships approved sample runbooks with the tool' {
         @(Get-OmniRunbook -Path (Get-OmniDefaultRunbookPath)).Count | Should -BeGreaterThan 2
         (Get-OmniRunbook -Path (Get-OmniDefaultRunbookPath)).Id | Should -Not -Contain 'rb-printer-spooler'

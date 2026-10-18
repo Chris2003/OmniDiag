@@ -33,6 +33,34 @@ Describe 'Local Ollama integration' {
         $analysis.NextSteps[0].requiresApproval | Should -BeFalse
     }
 
+    It 'drops citations to findings that were not supplied' {
+        $lying = {
+            param($method, $uri, $body)
+            if ($uri -like '*/api/tags') { return [pscustomobject]@{ models = @([pscustomobject]@{ model = 'gemma4:e2b' }) } }
+            [pscustomobject]@{ response = '{"summary":"s","priorities":[{"title":"t","urgency":"high","evidenceIds":["network-dns-failure","invented-id"]}],"correlations":[],"nextSteps":[],"limitations":[]}' }
+        }
+        $analysis = Invoke-OmniOllamaAnalysis -Session $script:Session -Model 'gemma4:e2b' -Transport $lying
+        $analysis.Priorities[0].evidenceIds | Should -Be @('network-dns-failure')
+        $analysis.UnverifiedCitations | Should -Be @('invented-id')
+    }
+
+    It 'redacts identity details from finding text sent to the model' {
+        $cert = New-OmniFinding -Id 'certificate-expired-abc' -Title 'Expired certificate: CN=Jane Doe, E=jane.doe@contoso.com' -Severity Warning -Component 'Security/Certificates'
+        $r = New-OmniResult -ModuleName 'Certificates' -Category Security
+        Add-OmniFinding -Result $r -Finding $cert
+        Complete-OmniResult -Result $r | Out-Null
+        $sent = [System.Collections.Generic.List[object]]::new()
+        $capture = {
+            param($method, $uri, $body)
+            if ($uri -like '*/api/tags') { return [pscustomobject]@{ models = @([pscustomobject]@{ model = 'gemma4:e2b' }) } }
+            $sent.Add($body.prompt)
+            [pscustomobject]@{ response = '{"summary":"s","priorities":[],"correlations":[],"nextSteps":[],"limitations":[]}' }
+        }.GetNewClosure()
+        Invoke-OmniOllamaAnalysis -Session ([pscustomobject]@{ Results = @($r); Summary = $null }) -Model 'gemma4:e2b' -Transport $capture | Out-Null
+        $sent[0] | Should -Not -Match 'jane'
+        $sent[0] | Should -Match 'certificate-expired-abc'
+    }
+
     It 'rejects remote endpoints and cloud model tags' {
         { Test-OmniOllama -Endpoint 'https://example.com' -Transport $script:Transport } | Should -Throw '*loopback*'
         { Test-OmniOllama -Model 'gemma4:cloud' -Transport $script:Transport } | Should -Throw '*Cloud-tag*'
@@ -64,6 +92,8 @@ Describe 'Multi-turn local assistant' {
         $t1.RunbookIds | Should -Be @('rb-dns')
         $t1.UnverifiedCitations | Should -Be @('made-up-id')
         $t1.EvidenceIds | Should -Contain 'rb-dns'
+        ,$t1.SuggestedQuestions | Should -BeOfType [object[]]
+        ,$t1.Limitations | Should -BeOfType [object[]]
 
         $t2 = Invoke-OmniAssistantTurn -Conversation $conv -Question 'And what should I check first?'
         $t2.Number | Should -Be 2

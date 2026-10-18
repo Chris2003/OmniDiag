@@ -102,3 +102,42 @@ Describe 'Invoke-OmniRepair admin gating' {
         $session.Results[0].Status | Should -Be 'Skipped'
     }
 }
+
+Describe 'Invoke-OmniRepair restore-point gate' {
+    BeforeAll {
+        $script:RpDir = Join-Path $TestDrive 'rp'
+        New-Item -ItemType Directory -Path $script:RpDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:RpDir 'FakeRestorePoint.psm1') -Value @'
+function Get-OmniRepairManifest { @{ Name = 'Fake Risky'; Category = 'Test'; Risk = 'Destructive'; RequiresAdmin = $false; RestorePoint = $true; Order = 1 } }
+function Invoke-OmniRepairAction {
+    param($Context)
+    $r = New-OmniRepairResult -Name 'Fake Risky' -Category 'Test'
+    Invoke-OmniRepairStep -Result $r -Context $Context -Description 'noop' -Action { 'ran' } | Out-Null
+    return (Complete-OmniRepairResult -Result $r)
+}
+Export-ModuleMember -Function @('Get-OmniRepairManifest','Invoke-OmniRepairAction')
+'@
+        $script:Risky = @(Get-OmniRepair -Path $script:RpDir -Logger $script:Logger)
+    }
+
+    It 'skips a RestorePoint repair when no restore point protects the run' {
+        if (Test-OmniIsAdministrator) { Set-ItResult -Skipped -Because 'elevated hosts may really create a restore point'; return }
+        $session = Invoke-OmniRepair -Registration $script:Risky -Context (New-OmniRepairContext -Logger $script:Logger)
+        $session.RestorePoint.Protected | Should -BeFalse
+        $session.Results[0].Status | Should -Be 'Skipped'
+        $session.Results[0].Steps[0].Output | Should -Match 'AllowRepairWithoutRestorePoint'
+    }
+
+    It 'runs it when the caller explicitly allows running without a restore point' {
+        $session = Invoke-OmniRepair -Registration $script:Risky -Context (New-OmniRepairContext -Logger $script:Logger) -AllowWithoutRestorePoint -SkipRestorePoint
+        $session.Results[0].Status | Should -Not -Be 'Skipped'
+    }
+
+    It 'stops a step that starts after cancellation' {
+        $cts = [System.Threading.CancellationTokenSource]::new(); $cts.Cancel()
+        $ctx = New-OmniRepairContext -Logger $script:Logger -CancellationToken $cts.Token
+        $r = New-OmniRepairResult -Name 'X' -Category 'T'
+        Invoke-OmniRepairStep -Result $r -Context $ctx -Description 'should not run' -Action { throw 'executed' } | Should -BeFalse
+        $r.Steps[0].Output | Should -Match 'cancelled'
+    }
+}

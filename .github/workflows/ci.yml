@@ -10,17 +10,42 @@ permissions:
 
 jobs:
   test:
-    name: Pester (${{ matrix.os }})
+    name: Pester (${{ matrix.os }}, ${{ matrix.shell }})
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            shell: pwsh
+          # Windows PowerShell 5.1 is a primary supported host (STA GUI, JSON dates, StrictMode).
+          - os: windows-latest
+            shell: powershell
+          - os: ubuntu-latest
+            shell: pwsh
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v5
       - name: Install Pester
-        shell: pwsh
-        run: Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          if ($PSVersionTable.PSVersion.Major -lt 6) {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force | Out-Null
+          }
+          # PowerShell Gallery lookups occasionally fail on hosted runners; retry before failing.
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+              break
+            } catch {
+              if ($attempt -eq 3) { throw }
+              Write-Warning "Install-Module Pester failed (attempt $attempt): $($_.Exception.Message)"
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
       - name: Run tests
-        shell: pwsh
-        run: Invoke-Pester -Path ./Tests -CI
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0
+          Invoke-Pester -Path ./Tests -CI

@@ -37,4 +37,9 @@ Describe 'Quick installer safety and behavior' {
         $script:Content | Should -Match '\.backup-'
         $script:Content | Should -Match 'Move-Item -LiteralPath \$destination -Destination \$backupPath'
     }
+
+    It 'installs the approved runbooks and keeps OmniDiagData across upgrades' {
+        $script:Content | Should -Match "'runbooks'"
+        $script:Content | Should -Match ([regex]::Escape("Join-Path `$destination 'OmniDiagData'"))
+    }
 }

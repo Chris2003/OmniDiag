@@ -35,10 +35,28 @@ Describe 'Portable, zero-footprint data locations' {
         $logs | Should -Exist
     }
 
+    It 'does not treat a sibling folder with the same prefix as portable' {
+        $env:OMNIDIAG_DATA = (Get-OmniToolRoot).TrimEnd('/', '\') + '-old'
+        try {
+            (Get-OmniDataRoot -Refresh).IsPortable | Should -BeFalse
+        } finally { Remove-Item -LiteralPath $env:OMNIDIAG_DATA -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'never deletes a temp folder OmniDiag did not create' {
+        $env:OMNIDIAG_DATA = Join-Path $TestDrive 'foreign'
+        $foreign = Join-Path $env:OMNIDIAG_DATA 'temp'
+        New-Item -ItemType Directory -Path $foreign -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $foreign 'user-file.txt') -Value 'keep me'
+        Get-OmniDataRoot -Refresh | Out-Null
+        Clear-OmniTempData
+        Join-Path $foreign 'user-file.txt' | Should -Exist
+    }
+
     It 'never writes to the system temp folder outside the read-only fallback' {
+        # Reading $env:TEMP (to measure or clean it) is fine; building a path under it to write is not.
         $offenders = Get-ChildItem -LiteralPath (Join-Path $script:Root 'src') -Filter '*.psm1' -Recurse |
             Where-Object Name -ne 'Paths.psm1' |
-            Select-String -Pattern 'GetTempPath\(\)' -SimpleMatch:$false
+            Select-String -Pattern 'GetTempPath\(\)', 'GetTempFileName\(\)', 'Join-Path\s+\$env:(TEMP|TMP|APPDATA|LOCALAPPDATA)\b'
         @($offenders).Count | Should -Be 0 -Because "everything OmniDiag writes must stay in its data folder: $($offenders -join '; ')"
     }
 

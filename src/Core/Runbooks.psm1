@@ -105,7 +105,9 @@ function Get-OmniRunbook {
         }
         foreach ($file in Get-ChildItem -LiteralPath $folder -Filter '*.md' -File -Recurse | Sort-Object FullName) {
             if ($file.Name -eq 'README.md') { continue }
-            $text = [System.IO.File]::ReadAllText($file.FullName)
+            # One locked or unreadable file (e.g. on a share) must not stop the scan.
+            try { $text = [System.IO.File]::ReadAllText($file.FullName) }
+            catch { Write-Warning "Skipping unreadable runbook '$($file.FullName)': $($_.Exception.Message)"; continue }
             ConvertFrom-OmniRunbookText -Text $text -Path $file.FullName
         }
     }
@@ -146,10 +148,10 @@ function Find-OmniRunbook {
         foreach ($finding in @($result.Findings)) { if ($finding -and $finding.Severity -ne 'Pass') { $finding } }
     })
 
-    $matched = foreach ($rb in @($Runbook)) {
+    $matched = foreach ($rb in @($Runbook | Where-Object { $_ })) {
         $hits = @($findings | Where-Object {
             $target = ("{0} {1}" -f $_.Id, $_.Component).ToLowerInvariant()
-            foreach ($pattern in @($rb.AppliesTo)) { if ($target.Contains($pattern.ToLowerInvariant())) { return $true } }
+            foreach ($pattern in @($rb.AppliesTo | Where-Object { $_ })) { if ($target.Contains($pattern.ToLowerInvariant())) { return $true } }
             $false
         })
         if ($hits.Count -eq 0) { continue }

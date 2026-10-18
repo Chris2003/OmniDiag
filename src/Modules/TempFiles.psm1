@@ -48,6 +48,7 @@ function Invoke-OmniModuleScan {
     $sumPath = {
         param([string] $Path)
         try {
+            if ($Context.CancellationToken.IsCancellationRequested) { return [long]0 }
             if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return [long]0 }
             $measured = Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue |
                 Measure-Object -Property Length -Sum
@@ -58,10 +59,13 @@ function Invoke-OmniModuleScan {
         }
     }
 
+    # Portable launchers point TEMP at OmniDiagData\temp; measure the user's real temp folder.
+    $userTemp = if ($env:OMNIDIAG_HOST_TEMP) { $env:OMNIDIAG_HOST_TEMP } else { $env:TEMP }
+    $windir = if ($env:WINDIR) { $env:WINDIR } else { 'C:\Windows' }
     $paths = @(
-        $env:TEMP,
-        'C:\Windows\Temp',
-        'C:\Windows\Prefetch'
+        $userTemp,
+        (Join-Path $windir 'Temp'),
+        (Join-Path $windir 'Prefetch')
     )
 
     # Per-user browser caches (best-effort, only if reachable).

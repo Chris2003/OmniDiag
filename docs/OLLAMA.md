@@ -102,9 +102,16 @@ Test-OmniOllama -Model gemma4:e2b
 - Only loopback HTTP endpoints (`localhost`, `127.0.0.1`, or `::1`) are accepted.
 - Ollama cloud-tag models are rejected.
 - The selected model must already be installed; OmniDiag never downloads one.
-- Pass findings, raw report files, logs, host identity, and scanner metrics are not
-  sent. The prompt contains only the health score, plan name, and a bounded list of
-  non-pass finding IDs, titles, components, likely causes, and recommendations.
+- Pass findings, raw report files, logs, and scanner metrics are not sent. The prompt
+  contains only the health score, plan name, and a bounded list of non-pass finding IDs,
+  titles, components, likely causes, and recommendations.
+- Finding text can mention people and devices (for example a certificate subject or a
+  printer name). Before it is sent, e-mail addresses, distinguished-name parts
+  (`CN=`, `E=`, `OU=`, …), and the local user, computer, and domain names are replaced
+  with placeholders. Other device names (printers, disks) can still appear.
+- Model output is never executed. Citations to findings that weren't supplied are dropped
+  and listed as unverified, and the "get approval before changing the device" advisory is
+  always shown, whatever the model says.
 - Output must cite finding IDs and distinguish uncertainty. In conversations, cited
   IDs are verified against the supplied evidence; anything else is flagged, never trusted.
 - Runbook text is sent only from approved runbooks and is truncated per runbook.

@@ -121,6 +121,9 @@ function Write-OmniSessionComparison {
     foreach ($f in @($c.Persisting | Where-Object Change -ne 'Unchanged')) {
         Write-Host ("    [{0,-10}] {1}: {2} -> {3}" -f $f.Change.ToLowerInvariant(), $f.Title, $f.BeforeSeverity, $f.AfterSeverity) -ForegroundColor $(if ($f.Change -eq 'Improved') { 'Green' } else { 'Red' })
     }
+    if ($c.PSObject.Properties['OutOfScope'] -and @($c.OutOfScope).Count -gt 0) {
+        Write-Host ("    {0} finding(s) from scanners that didn't run in both scans were not compared." -f @($c.OutOfScope).Count) -ForegroundColor DarkGray
+    }
     foreach ($m in @($c.ModuleChanges)) { Write-Host ("    module {0}: {1} -> {2}" -f $m.ModuleName, $m.BeforeStatus, $m.AfterStatus) -ForegroundColor DarkGray }
     Write-Host ''
 }

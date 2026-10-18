@@ -9,11 +9,11 @@ editing the engine.
 | Layer | Folder | Responsibility |
 |---|---|---|
 | **Launcher** | `OmniDiag.ps1` | Host validation, module import, runs a session, renders the console dashboard. |
-| **Public API** | `src/OmniDiag.psm1` | `Invoke-OmniDiag` and version helpers. The single call the CLI/GUI use. |
+| **Public API** | `src/OmniDiag.psm1` | `Invoke-OmniDiag`, `Invoke-OmniRepairCenter`, and version helpers. The calls the CLI/GUI use. |
 | **Core** | `src/Core/` | Data models, logging, plugin registry, orchestration engine, health scoring. |
 | **Modules** | `src/Modules/` | Diagnostic plugins — 49 scanners across endpoint, network, security, identity, and cloud categories. One `.psm1` per scanner. Discovered at runtime. |
 | **Plans** | `src/Core/Workflows.psm1` | Data-only role profiles and task workflows that resolve technician intent to scanner names without coupling the engine to UI concepts. |
-| **Portable paths** | `src/Core/Paths.psm1` | `Get-OmniDataRoot` / `Get-OmniDataPath`: every file OmniDiag writes (logs, reports, sessions, backups, scratch) goes under `OmniDiagData` next to the tool, so it runs zero-footprint from a USB stick. No module may call `GetTempPath()` directly (enforced by `Tests/Core.Portable.Tests.ps1`). |
+| **Portable paths** | `src/Core/Paths.psm1` | `Get-OmniDataRoot` / `Get-OmniDataPath`: every file OmniDiag writes (logs, reports, sessions, backups, scratch) goes under `OmniDiagData` next to the tool, so it runs zero-footprint from a USB stick. No module may build write paths from `GetTempPath()`, `GetTempFileName()`, or `$env:TEMP`/`TMP`/`APPDATA`/`LOCALAPPDATA` (enforced by `Tests/Core.Portable.Tests.ps1`); scanners may *read* those folders. |
 | **Runbooks** | `src/Core/Runbooks.psm1` | Organization-owned Markdown runbooks with front matter; approved-only by default; matched to findings by `appliesTo` (the same convention repairs use). |
 | **Evidence** | `src/Core/Evidence.psm1` | `Import-OmniSession` (saved JSON / report zip), offline `Search-OmniEvidence` over findings + runbooks, and `Compare-OmniSession` before/after diffs keyed on stable finding IDs. |
 | **Local AI** | `src/Core/Ollama.psm1` | Optional loopback-only Ollama client. Projects bounded non-pass evidence, requests structured finding-ID-linked guidance, and has no repair execution dependency. Multi-turn conversations (`New-OmniAssistantConversation` / `Invoke-OmniAssistantTurn`) retrieve evidence per turn and validate citations. |
@@ -21,7 +21,7 @@ editing the engine.
 | **Repairs** | `src/Repairs/` | Repair plugins. One `.psm1` per repair. Discovered at runtime, exactly like diagnostic modules. |
 | **Event Log subsystem** | `src/EventLog/` | Knowledge base (channels + Event-ID translation catalog) and the analysis pipeline (collection, grouping, timeline, finding/pattern generation) used by the Event Logs module. Not plugins; imported by the module. |
 | **Reporting** | `src/Reporting/` | HTML / JSON / CSV / **PDF** / ZIP exporters + `Export-OmniReport` coordinator. PDF is generated **natively** (`Pdf.psm1`, standard PDF fonts) — no browser or external dependency. Consume a session; emit no side effects beyond writing files. |
-| **UI** | `src/UI/` | WPF front-end: runtime-loaded XAML (`MainWindow.xaml`) + `Show-OmniDiagWindow`. Left-nav panels: **Dashboard** (health score, a DxDiag-style System Information panel via `Get-OmniSystemInfo`, recommendations, module results), **All Findings**, **Diagnostics** (toggle scanners on/off, or run one individually), **Repair Center**. Scans run in a background runspace; a DispatcherTimer polls a synchronized hashtable for progress; Cancel drives the engine's CancellationToken. Report export and per-scanner selection are wired here. STA-hosted when launched from MTA (PowerShell 7). |
+| **UI** | `src/UI/` | WPF front-end: runtime-loaded XAML (`MainWindow.xaml`) + `Show-OmniDiagWindow`. Left-nav panels: **Dashboard** (health score, a DxDiag-style System Information panel via `Get-OmniSystemInfo`, recommendations, module results), **All Findings**, **Diagnostics** (toggle scanners on/off, or run one individually), **Repair Center**, **Local AI** (Ollama readiness + single-question analysis, run in a background runspace). Scans run in a background runspace; a DispatcherTimer polls a synchronized hashtable for progress; Cancel drives the engine's CancellationToken. Report export and per-scanner selection are wired here. STA-hosted when launched from MTA (PowerShell 7). |
 | **CLI** | `src/Cli/` | Console presentation (dashboard + progress). |
 
 ## Core building blocks
@@ -139,7 +139,13 @@ Key rules:
 * **Safety is built in:** the engine is `SupportsShouldProcess`; admin-only repairs skip
   gracefully when not elevated; and it creates ONE System Restore checkpoint up front for a
   batch that contains any `RestorePoint` repair (never one per repair — that would hit the
-  24h throttle), failing soft when System Restore is unavailable.
+  24h throttle). The point is verified (a new sequence number, or an existing point from
+  the last 24h); if none protects the run, `RestorePoint` repairs are **skipped** unless the
+  caller passes `-AllowWithoutRestorePoint`.
+* **Cancellation is cooperative:** `Invoke-OmniRepairStep` refuses to start a step once the
+  context's token is cancelled, and the GUI never kills a running repair pipeline.
+* **Repair `Category` is a menu grouping** (Network, Storage, System, Services, Update,
+  Cleanup), separate from the 13 diagnostic categories.
 
 Result shapes: **`OmniDiag.RepairResult`** (one repair: `Status`, `Steps`, `RebootRequired`,
 timing), **`OmniDiag.RepairSession`** (a run: `Results`, `RestorePoint`, `RebootRequired`,

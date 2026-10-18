@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.4.1 — architecture review fixes
+
+From a four-reviewer swarm review against `docs/ARCHITECTURE.md` (plugin contracts, core
+layering, local-only/zero-footprint/privacy guarantees, reporting/UI/tests).
+
+### Safety
+- **Restore points are now verified.** `New-OmniRestorePoint` uses the SystemRestore WMI class
+  (Checkpoint-Computer doesn't exist in PowerShell 7) and checks that a point really exists.
+  Repairs marked `RestorePoint` are skipped when none protects the run, unless
+  `-AllowRepairWithoutRestorePoint` is passed.
+- Registry cleanup removes nothing unless its `.reg` backup completed (reg.exe failures now
+  stop the cleanup), and it reports failed removals instead of claiming success.
+- Clear Temporary Files never deletes OmniDiag's own folder or data.
+- Repair steps don't start after cancellation; closing the GUI during a repair cancels
+  cooperatively instead of killing it mid-step. Scans and repairs can't run at the same time.
+- Repair recommendations ignore Pass/Information findings, and repair `AppliesTo` values now
+  match what scanners emit (Print Spooler and IP renew were never recommended; Winsock, Temp,
+  and Windows Update reset were recommended on healthy scans).
+
+### Portable / zero footprint
+- Benchmark and the registry backup no longer write to `%TEMP%` when `OmniDiag.ps1` is run
+  directly; the portable test now also catches `GetTempFileName()` and `$env:TEMP` write paths.
+- Scratch cleanup only deletes a folder carrying OmniDiag's marker, so `OMNIDIAG_DATA` pointed at
+  an existing folder can't wipe a real `Temp`. Data-root paths are normalized (no prefix
+  false-positives); an unwritable `OMNIDIAG_DATA` falls back with a warning.
+- Scratch is cleaned on every exit path (errors included). The temp-files scanner measures the
+  user's real temp folder under the portable launchers.
+- `PORTABLE.md` now lists every network probe, and documents PowerShell's own startup cache.
+
+### Fixes
+- The launcher crashed after every scan when no approved runbooks loaded (including every
+  copy installed by `install.ps1`, which didn't install `runbooks/`). One unreadable runbook
+  no longer stops a run; a failed AI call no longer skips reports and repairs.
+- Before/after comparison only compares scanners that ran in both scans (others are listed as
+  out of scope) and pairs findings whose titles embed live values such as "High CPU usage (93%)".
+- GUI: no crash when a scan is cancelled before any module finishes; GUI scans are saved for
+  `-FromSession Last` / `-CompareWith Last`; GPU "Chip / Vendor" joins correctly.
+- Reports: relative `-ReportPath` / `-BrandLogo` resolve against the current PowerShell folder;
+  module badges no longer show Skipped/Unknown as Critical; failed scanners show their error.
+
+### Security & privacy
+- CSV exports neutralize spreadsheet formulas (`=`, `+`, `-`, `@`) from event text and other
+  attacker-writable strings. HTML reports encode every value from (possibly edited) saved sessions.
+- Local AI: requests refuse HTTP redirects and are sent as UTF-8 on Windows PowerShell 5.1;
+  e-mail addresses, certificate DN parts, and local user/computer/domain names are redacted from
+  prompts; analysis-mode citations are verified like chat mode; the approval advisory is always shown.
+- `install.ps1` installs `runbooks/` and carries `OmniDiagData` across upgrades.
+
+### CI
+- Added a Windows PowerShell 5.1 job and retries for flaky PowerShell Gallery installs.
+
 ## 0.4.0
 
 ### Portable, zero-footprint operation

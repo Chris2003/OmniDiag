@@ -122,6 +122,13 @@ function Invoke-OmniRepairStep {
         return $true
     }
 
+    if ($Context.PSObject.Properties['CancellationToken'] -and $Context.CancellationToken -and
+        $Context.CancellationToken.IsCancellationRequested) {
+        Add-OmniRepairStep -Result $Result -Description $Description -Succeeded $false -Output '(cancelled: not executed)'
+        if ($log) { $log.Warn("Cancelled before: $Description", 'Repair') }
+        return $false
+    }
+
     if ($log) { $log.Info("Repair step: $Description", 'Repair') }
 
     # Seed LASTEXITCODE so reading it under StrictMode is always safe, even when the

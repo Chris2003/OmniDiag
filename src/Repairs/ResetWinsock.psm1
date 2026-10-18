@@ -18,7 +18,7 @@ function Get-OmniRepairManifest {
         Risk          = 'Moderate'
         RestorePoint  = $true
         RebootHint    = $true
-        AppliesTo     = @('network')
+        AppliesTo     = @('network/connectivity')
         Order         = 30
         Enabled       = $true
     }

@@ -45,6 +45,8 @@ function Invoke-OmniRepair {
         [Parameter(Mandatory)] [object[]] $Registration,
         [Parameter(Mandatory)] [pscustomobject] $Context,
         [switch] $SkipRestorePoint,
+        # Run RestorePoint repairs even when no restore point could be created or found.
+        [switch] $AllowWithoutRestorePoint,
         [scriptblock] $ProgressCallback
     )
 
@@ -102,6 +104,21 @@ function Invoke-OmniRepair {
             Complete-OmniRepairResult -Result $skip -Status 'Skipped' | Out-Null
             $results.Add($skip)
             $log.Warn("Skipped repair '$($reg.Name)': requires administrator.", 'RepairEngine')
+            & $report ($i + 1) $reg.Name 'Skipped' $skip
+            continue
+        }
+
+        # Repairs that promise a restore point never run without one, unless the caller
+        # explicitly opted out (-SkipRestorePoint / -AllowWithoutRestorePoint).
+        if ($reg.RestorePoint -and -not $Context.DryRun -and -not $SkipRestorePoint -and -not $AllowWithoutRestorePoint -and
+            -not ($restorePoint -and $restorePoint.PSObject.Properties['Protected'] -and $restorePoint.Protected)) {
+            $skip = New-OmniRepairResult -Name $reg.Name -Category $reg.Category
+            $why = if ($restorePoint) { $restorePoint.Message } else { 'No restore point was attempted.' }
+            Add-OmniRepairStep -Result $skip -Description 'Requires a System Restore point' -Succeeded $false `
+                -Output "$why Enable System Restore on the system drive, or re-run with -AllowRepairWithoutRestorePoint to proceed anyway."
+            Complete-OmniRepairResult -Result $skip -Status 'Skipped' | Out-Null
+            $results.Add($skip)
+            $log.Warn("Skipped repair '$($reg.Name)': no restore point.", 'RepairEngine')
             & $report ($i + 1) $reg.Name 'Skipped' $skip
             continue
         }

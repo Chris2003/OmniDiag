@@ -107,7 +107,7 @@ param(
 
         # Keep the installed surface small and exclude tests/repository metadata.
         $include = @(
-            'OmniDiag.ps1','OmniDiag.cmd','OmniDiag-GUI.cmd','install.ps1','src','docs',
+            'OmniDiag.ps1','OmniDiag.cmd','OmniDiag-GUI.cmd','install.ps1','src','docs','runbooks',
             'README.md','PORTABLE.md','ROADMAP.md','CHANGELOG.md','LICENSE','SECURITY.md'
         )
         foreach ($item in $include) {
@@ -121,6 +121,12 @@ param(
         # archive layout validation and optional hash verification above.
         Get-ChildItem -LiteralPath $newPath -Recurse -File -ErrorAction Stop |
             Unblock-File -ErrorAction Stop
+
+        # Keep logs, saved sessions, reports, and registry backups across upgrades.
+        $oldData = Join-Path $destination 'OmniDiagData'
+        if (Test-Path -LiteralPath $oldData) {
+            Copy-Item -LiteralPath $oldData -Destination $newPath -Recurse -Force
+        }
 
         if (Test-Path -LiteralPath $destination) {
             $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')

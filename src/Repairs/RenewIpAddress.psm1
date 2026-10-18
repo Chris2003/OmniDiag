@@ -18,7 +18,7 @@ function Get-OmniRepairManifest {
         Risk          = 'Safe'
         RestorePoint  = $false
         RebootHint    = $false
-        AppliesTo     = @('network/adapter', 'network/dhcp', 'network/gateway')
+        AppliesTo     = @('network/adapter', 'network/ip')
         Order         = 20
         Enabled       = $true
     }

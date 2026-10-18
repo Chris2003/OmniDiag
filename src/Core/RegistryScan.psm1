@@ -273,16 +273,18 @@ function Export-OmniRegistryBackup {
     [void]$sb.AppendLine('Windows Registry Editor Version 5.00')
     [void]$sb.AppendLine('')
     foreach ($k in $keys) {
-        $tmp = [System.IO.Path]::GetTempFileName()
+        # Scratch file next to the backup (portable data folder), never %TEMP%.
+        $tmp = Join-Path $dir ('.export-' + [System.IO.Path]::GetRandomFileName())
         try {
-            $null = & reg.exe export "$k" "$tmp" /y 2>&1
-            if ((Test-Path -LiteralPath $tmp) -and (Get-Item -LiteralPath $tmp).Length -gt 0) {
-                $content = Get-Content -LiteralPath $tmp -Raw
-                $content = $content -replace '(?s)^\s*﻿?Windows Registry Editor Version 5\.00\s*', ''
-                [void]$sb.AppendLine($content.Trim())
-                [void]$sb.AppendLine('')
+            $exportOutput = & reg.exe export "$k" "$tmp" /y 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $tmp) -or (Get-Item -LiteralPath $tmp).Length -eq 0) {
+                # A missing backup must stop the cleanup: the caller only removes entries after this succeeds.
+                throw "reg.exe export failed for '$k' (exit $LASTEXITCODE): $($exportOutput -join ' ')"
             }
-        } catch {
+            $content = Get-Content -LiteralPath $tmp -Raw
+            $content = $content -replace '(?s)^\s*﻿?Windows Registry Editor Version 5\.00\s*', ''
+            [void]$sb.AppendLine($content.Trim())
+            [void]$sb.AppendLine('')
         } finally {
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         }

@@ -1,7 +1,9 @@
 # OmniDiag — Portable Edition
 
 OmniDiag runs **fully locally** on the machine being diagnosed. There is no
-required installer, service, remoting, or runtime network access. This portable
+required installer, service, or remoting, and nothing is uploaded. The only network
+traffic is the small set of diagnostic probes listed under
+[Network activity](#network-activity). This portable
 package is a self-contained folder you can copy to a USB stick, a network share,
 or push through your existing management tooling — then run in place. The optional
 quick installer only uses the network to download that same application folder.
@@ -72,7 +74,7 @@ network share, or a USB stick. It keeps **everything it writes** in an
 | `OmniDiagData\sessions` | A JSON snapshot of every console scan (for `-CompareWith Last` / `-FromSession Last`) |
 | `OmniDiagData\reports` | Reports (default location for the console, GUI, and `Export-OmniReport`) |
 | `OmniDiagData\backups` | `.reg` backups taken before the registry-cleanup repair |
-| `OmniDiagData\temp` | Scratch files; removed when OmniDiag exits |
+| `OmniDiagData\temp` | Scratch files; removed when OmniDiag exits (only if it carries OmniDiag's `.omnidiag-scratch` marker) |
 | `OmniDiagData\cache` | PowerShell's module-analysis cache (launchers only) |
 
 Nothing is written to `%TEMP%`, `%APPDATA%`, `%LOCALAPPDATA%`, or the registry by
@@ -102,9 +104,28 @@ falls back to `%TEMP%\OmniDiag`. Set `OMNIDIAG_DATA` to choose another location.
 Windows records some things about *any* program that runs, and no portable tool can
 prevent them: USB device history (`USBSTOR`), Prefetch/Amcache execution records,
 Defender scan history, and PowerShell event logs if your organization enables
-script-block or module logging. **Repairs change the system by design**, and the risky
+script-block or module logging. PowerShell itself also keeps a small startup cache
+(`StartupProfileData-NonInteractive`) under `%LOCALAPPDATA%\Microsoft\...\PowerShell`
+that cannot be redirected; it is PowerShell's file, not OmniDiag's, and is shared by
+every PowerShell script that runs on the machine. **Repairs change the system by design**, and the risky
 ones create a System Restore point first. Use `-RepairDryRun` to look without touching
 anything.
+
+## Network activity
+
+OmniDiag never uploads anything and never connects to other machines through
+remoting. A few scanners deliberately send small probes so they can diagnose
+connectivity:
+
+| Source | Traffic |
+|---|---|
+| Network scanner | ICMP ping to the default gateway and to `1.1.1.1`; DNS lookup of `www.microsoft.com` |
+| DNS Resolver scanner | DNS lookup of `www.microsoft.com` through the configured resolvers |
+| Active Directory scanner | Secure-channel check against the domain controller (domain-joined devices only) |
+| Repair Center → **Repair Component Store (DISM)** | Downloads replacement files from Windows Update (only when you run that repair) |
+| Local AI (optional) | HTTP to Ollama on the loopback interface only; redirects are refused |
+
+To avoid all probes, exclude those scanners (for example `-ExcludeCategory Network`).
 
 ## Common commands
 

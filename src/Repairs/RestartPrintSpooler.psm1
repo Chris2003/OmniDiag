@@ -18,7 +18,7 @@ function Get-OmniRepairManifest {
         Risk          = 'Safe'
         RestorePoint  = $false
         RebootHint    = $false
-        AppliesTo     = @('health/services', 'printing', 'spooler')
+        AppliesTo     = @('peripherals/printer', 'spooler')
         Order         = 40
         Enabled       = $true
     }

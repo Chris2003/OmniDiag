@@ -74,7 +74,7 @@ interface**, interprets the results, and tells you the **likely cause** and the
 
 ## Status
 
-OmniDiag is being built in milestones. **Current: 0.4.0 — fully portable (zero-footprint) operation, multi-turn local AI over saved findings and approved runbooks, and before/after scan comparison.**
+OmniDiag is being built in milestones. **Current: 0.4.1 — architecture-review hardening of 0.4.0 (portable, zero-footprint operation; multi-turn local AI over saved findings and approved runbooks; before/after scan comparison).**
 
 | Capability | State |
 |---|---|
@@ -148,7 +148,8 @@ already have (Intune / ConfigMgr / GPO / RMM) and collect the reports — see
 
 **Zero footprint.** Run OmniDiag from the folder you downloaded it to or straight from a
 USB stick: logs, reports, saved sessions, and backups go to an `OmniDiagData` folder
-**next to the tool** — never to `%TEMP%`, `%APPDATA%`, or `%LOCALAPPDATA%`. The `.cmd`
+**next to the tool** — never to `%TEMP%` or `%APPDATA%`, and only to `%LOCALAPPDATA%` if you
+installed OmniDiag there with the optional installer. The `.cmd`
 launchers also point PowerShell's own caches and `TEMP` at that folder, so removing the
 OmniDiag folder (or unplugging the USB stick) leaves no OmniDiag files on the host. See
 [PORTABLE.md](PORTABLE.md#zero-footprint--usb-use) for exactly what is and isn't covered.

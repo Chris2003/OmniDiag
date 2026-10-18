@@ -8,6 +8,9 @@ Set-StrictMode -Version Latest
 if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
     Import-Module (Join-Path $PSScriptRoot '..\Repair\RepairModels.psm1') -Global -Force -DisableNameChecking
 }
+if (-not (Get-Command Get-OmniDataRoot -ErrorAction SilentlyContinue)) {
+    Import-Module (Join-Path $PSScriptRoot '..\Core\Paths.psm1') -Global -Force -DisableNameChecking
+}
 
 function Get-OmniRepairManifest {
     @{
@@ -18,7 +21,7 @@ function Get-OmniRepairManifest {
         Risk          = 'Safe'
         RestorePoint  = $false
         RebootHint    = $false
-        AppliesTo     = @('storage')
+        AppliesTo     = @('storage/temp')
         Order         = 60
         Enabled       = $true
     }
@@ -37,11 +40,21 @@ function Invoke-OmniRepairAction {
     $targets.Add([string]$userTemp)
     if ($Context.IsAdmin) { $targets.Add((Join-Path $env:WINDIR 'Temp')) }
 
+    # Never delete OmniDiag itself or its data (logs, sessions, registry backups), e.g. when
+    # the tool was extracted under %TEMP% or the data root fell back to %TEMP%\OmniDiag.
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $protected = @((Get-OmniDataRoot).Path, (Get-OmniToolRoot)) | Where-Object { $_ } |
+        ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd($sep) + $sep }
+
     foreach ($path in $targets) {
         $p = $path   # local copy captured by the action closure
         Invoke-OmniRepairStep -Result $r -Context $Context -Description "Delete temp files in $p" -Action {
             if (Test-Path -LiteralPath $p) {
                 Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue |
+                    Where-Object {
+                        $child = $_.FullName.TrimEnd($sep) + $sep
+                        -not ($protected | Where-Object { $_.StartsWith($child, [System.StringComparison]::OrdinalIgnoreCase) })
+                    } |
                     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
             }
         } | Out-Null

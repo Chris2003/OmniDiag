@@ -206,7 +206,10 @@ function Compare-OmniSession {
         Before/after comparison of two sessions (e.g. before and after a repair).
 
     .DESCRIPTION
-        Findings are matched by their stable Id. Non-pass findings are classified as
+        Findings are matched by their stable Id. Findings whose auto-generated Id embeds a
+        live value (e.g. "High CPU usage (93%)") are then paired by Component plus the title
+        with numbers masked, so a changed measurement reads as Persisting, not Resolved + New.
+        Non-pass findings are classified as
         Resolved (only before), New (only after), or Persisting (both, with a
         severity change of Improved / Worsened / Unchanged). Health score and
         per-module status deltas are included, plus an overall Verdict.
@@ -227,10 +230,20 @@ function Compare-OmniSession {
     if ($Before -is [string]) { $Before = Import-OmniSession -Path $Before }
     if ($After -is [string]) { $After = Import-OmniSession -Path $After }
 
+    # Only modules that actually ran in BOTH sessions are comparable: a finding from a
+    # scanner the second scan didn't run (different workflow, admin-only skip) is not "resolved".
+    $statusOf = { param($s) $m = @{}; foreach ($r in @($s.Results)) { if ($r) { $m[[string]$r.ModuleName] = [string]$r.Status } }; $m }
+    $bs = & $statusOf $Before; $as = & $statusOf $After
+    $ranIn = { param($m, $name) $m.ContainsKey($name) -and $m[$name] -notin @('Skipped', 'Failed') }
+    $comparable = @{}
+    foreach ($name in $bs.Keys) { if ((& $ranIn $bs $name) -and (& $ranIn $as $name)) { $comparable[$name] = $true } }
+    $outOfScope = [System.Collections.Generic.List[object]]::new()
+
     $index = {
         param($Session)
         $map = [ordered]@{}
         foreach ($f in @(Get-OmniSessionFinding -Session $Session)) {
+            if (-not $comparable.ContainsKey($f.ModuleName)) { $outOfScope.Add($f); continue }
             # Keep the most severe occurrence when an Id repeats.
             if (-not $map.Contains($f.Id) -or (Get-OmniSeverityRank $f.Severity) -gt (Get-OmniSeverityRank $map[$f.Id].Severity)) { $map[$f.Id] = $f }
         }
@@ -239,14 +252,34 @@ function Compare-OmniSession {
     $b = & $index $Before
     $a = & $index $After
 
-    $resolved = @(foreach ($id in $b.Keys) { if (-not $a.Contains($id)) { $b[$id] } })
-    $new = @(foreach ($id in $a.Keys) { if (-not $b.Contains($id)) { $a[$id] } })
-    $persisting = @(foreach ($id in $b.Keys) {
-        if (-not $a.Contains($id)) { continue }
-        $delta = (Get-OmniSeverityRank $a[$id].Severity) - (Get-OmniSeverityRank $b[$id].Severity)
+    # Pair by Id first, then by Component + number-masked title for Ids that embed live values.
+    $signature = { param($f) ('{0}|{1}' -f $f.Component, ($f.Title -replace '\d+([.,]\d+)?', '#')).ToLowerInvariant() }
+    $pairs = [System.Collections.Generic.List[object]]::new()
+    $unmatchedBefore = [System.Collections.Generic.List[object]]::new()
+    $afterUsed = @{}
+    foreach ($id in $b.Keys) {
+        if ($a.Contains($id)) { $pairs.Add(@($b[$id], $a[$id])); $afterUsed[$id] = $true } else { $unmatchedBefore.Add($b[$id]) }
+    }
+    $afterBySignature = @{}
+    foreach ($id in $a.Keys) {
+        if ($afterUsed.ContainsKey($id)) { continue }
+        $sig = & $signature $a[$id]
+        if (-not $afterBySignature.ContainsKey($sig)) { $afterBySignature[$sig] = [System.Collections.Generic.Queue[object]]::new() }
+        $afterBySignature[$sig].Enqueue($a[$id])
+    }
+    $resolved = @(foreach ($f in $unmatchedBefore) {
+        $sig = & $signature $f
+        if ($afterBySignature.ContainsKey($sig) -and $afterBySignature[$sig].Count -gt 0) {
+            $match = $afterBySignature[$sig].Dequeue(); $afterUsed[$match.Id] = $true; $pairs.Add(@($f, $match))
+        } else { $f }
+    })
+    $new = @(foreach ($id in $a.Keys) { if (-not $afterUsed.ContainsKey($id)) { $a[$id] } })
+    $persisting = @(foreach ($pair in $pairs) {
+        $was = $pair[0]; $now = $pair[1]
+        $delta = (Get-OmniSeverityRank $now.Severity) - (Get-OmniSeverityRank $was.Severity)
         [pscustomobject]@{
-            PSTypeName = 'OmniDiag.FindingChange'; Id = $id; Title = $a[$id].Title; Component = $a[$id].Component
-            BeforeSeverity = $b[$id].Severity; AfterSeverity = $a[$id].Severity
+            PSTypeName = 'OmniDiag.FindingChange'; Id = $now.Id; Title = $now.Title; Component = $now.Component
+            BeforeSeverity = $was.Severity; AfterSeverity = $now.Severity; BeforeTitle = $was.Title
             Change = $(if ($delta -lt 0) { 'Improved' } elseif ($delta -gt 0) { 'Worsened' } else { 'Unchanged' })
         }
     })
@@ -256,9 +289,7 @@ function Compare-OmniSession {
     $afterScore = & $scoreOf $After
     $scoreDelta = if ($null -ne $beforeScore -and $null -ne $afterScore) { $afterScore - $beforeScore } else { $null }
 
-    $statusOf = { param($s) $m = @{}; foreach ($r in @($s.Results)) { if ($r) { $m[[string]$r.ModuleName] = [string]$r.Status } }; $m }
-    $bs = & $statusOf $Before; $as = & $statusOf $After
-    $moduleChanges = @(foreach ($name in @($bs.Keys + $as.Keys | Sort-Object -Unique)) {
+    $moduleChanges = @(foreach ($name in (@($bs.Keys) + @($as.Keys) | Sort-Object -Unique)) {
         $was = $bs[$name]; $now = $as[$name]
         if ($was -ne $now) { [pscustomobject]@{ ModuleName = $name; BeforeStatus = $was; AfterStatus = $now } }
     })
@@ -272,12 +303,14 @@ function Compare-OmniSession {
 
     return [pscustomobject]@{
         PSTypeName    = 'OmniDiag.SessionComparison'
-        BeforeTime    = $Before.StartTime
-        AfterTime     = $After.StartTime
+        BeforeTime    = $(if ($Before.PSObject.Properties['StartTime']) { $Before.StartTime })
+        AfterTime     = $(if ($After.PSObject.Properties['StartTime']) { $After.StartTime })
         BeforeScore   = $beforeScore
         AfterScore    = $afterScore
         ScoreDelta    = $scoreDelta
         Verdict       = $verdict
+        # Findings from modules that did not run (successfully) in both sessions - not compared.
+        OutOfScope    = @($outOfScope)
         Resolved      = @($resolved | Sort-Object @{ Expression = { Get-OmniSeverityRank $_.Severity }; Descending = $true }, Id)
         New           = @($new | Sort-Object @{ Expression = { Get-OmniSeverityRank $_.Severity }; Descending = $true }, Id)
         Persisting    = @($persisting)

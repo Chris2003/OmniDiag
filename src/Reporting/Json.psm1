@@ -14,6 +14,8 @@ Set-StrictMode -Version Latest
 function Write-OmniTextFile {
     <# .SYNOPSIS Internal: write text as UTF-8 (no BOM), creating the folder. #>
     param([string] $Path, [string] $Content)
+    # .NET resolves relative paths against the process directory, not PowerShell's location.
+    $Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
     $dir = Split-Path -Path $Path -Parent
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null

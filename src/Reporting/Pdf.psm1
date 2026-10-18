@@ -393,7 +393,7 @@ function Export-OmniPdfReport {
         'Privacy: OmniDiag runs entirely on the local machine and uploads nothing. This report may ' +
         'contain usernames, device names, file paths, and domain information. Review before sharing.')
 
-    [System.IO.File]::WriteAllBytes($Path, (ConvertTo-OmniPdfBytes -Doc $doc))
+    [System.IO.File]::WriteAllBytes(($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)), (ConvertTo-OmniPdfBytes -Doc $doc))
     return $Path
 }
 

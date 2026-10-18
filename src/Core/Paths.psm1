@@ -21,6 +21,17 @@ Set-StrictMode -Version Latest
 # src/Core -> tool root (the folder holding OmniDiag.ps1 and the launchers).
 $script:OmniToolRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $script:OmniDataRootCache = $null
+# Marker written into the scratch folder; Clear-OmniTempData deletes only folders that carry it.
+$script:OmniScratchMarker = '.omnidiag-scratch'
+
+function Test-OmniPathWithin {
+    <# .SYNOPSIS Internal: true when Path is Root or inside it (normalized, separator-aware). #>
+    param([string] $Path, [string] $Root)
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $p = [System.IO.Path]::GetFullPath($Path).TrimEnd($sep, '/') + $sep
+    $r = [System.IO.Path]::GetFullPath($Root).TrimEnd($sep, '/') + $sep
+    return $p.StartsWith($r, [System.StringComparison]::OrdinalIgnoreCase)
+}
 
 function Test-OmniDirectoryWritable {
     <# .SYNOPSIS Internal: true when a probe file can be created and removed in the folder. #>
@@ -56,10 +67,11 @@ function Get-OmniDataRoot {
     if ($script:OmniDataRootCache -and -not $Refresh) { return $script:OmniDataRootCache }
 
     $candidate = $null; $source = $null; $portable = $true
-    if ($env:OMNIDIAG_DATA) {
-        $candidate = $env:OMNIDIAG_DATA; $source = 'Environment'
-        $portable = $candidate.StartsWith($script:OmniToolRoot, [System.StringComparison]::OrdinalIgnoreCase)
+    if ($env:OMNIDIAG_DATA -and (Test-OmniDirectoryWritable -Path $env:OMNIDIAG_DATA)) {
+        $candidate = [System.IO.Path]::GetFullPath($env:OMNIDIAG_DATA); $source = 'Environment'
+        $portable = Test-OmniPathWithin -Path $candidate -Root $script:OmniToolRoot
     } else {
+        if ($env:OMNIDIAG_DATA) { Write-Warning "OMNIDIAG_DATA '$($env:OMNIDIAG_DATA)' is not writable; using the default location." }
         $toolData = Join-Path $script:OmniToolRoot 'OmniDiagData'
         if (Test-OmniDirectoryWritable -Path $toolData) {
             $candidate = $toolData; $source = 'ToolFolder'
@@ -97,16 +109,30 @@ function Get-OmniDataPath {
     )
     $dir = Join-Path (Get-OmniDataRoot).Path $Kind.ToLowerInvariant()
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    if ($Kind -eq 'Temp') {
+        $marker = Join-Path $dir $script:OmniScratchMarker
+        if (-not (Test-Path -LiteralPath $marker)) { [System.IO.File]::WriteAllText($marker, 'OmniDiag scratch folder; safe to delete.') }
+    }
     if ($ChildPath) { return (Join-Path $dir $ChildPath) }
     return $dir
 }
 
 function Clear-OmniTempData {
-    <# .SYNOPSIS Removes OmniDiag's scratch folder (data root\temp). Logs and reports are kept. #>
+    <#
+    .SYNOPSIS
+        Removes OmniDiag's scratch folder (data root\temp). Logs and reports are kept.
+
+    .DESCRIPTION
+        Deletes the folder only when it carries OmniDiag's marker file, so pointing
+        OMNIDIAG_DATA at an existing folder (e.g. %LOCALAPPDATA%, whose Temp is the
+        user's real temp folder) can never wipe data OmniDiag didn't create.
+    #>
     [CmdletBinding()]
     param()
     $temp = Join-Path (Get-OmniDataRoot).Path 'temp'
-    if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath (Join-Path $temp $script:OmniScratchMarker)) {
+        Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Export-ModuleMember -Function @('Get-OmniToolRoot', 'Get-OmniDataRoot', 'Get-OmniDataPath', 'Clear-OmniTempData')

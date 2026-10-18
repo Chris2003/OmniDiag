@@ -169,6 +169,8 @@ function Get-OmniApplicableRepair {
     if ($Session -and $Session.PSObject.Properties['Results']) {
         foreach ($r in @($Session.Results)) {
             foreach ($f in @($r.Findings)) {
+                # Only actionable findings recommend a repair; Pass/Information would match broad needles.
+                if (-not $f -or ($f.PSObject.Properties['Severity'] -and [string]$f.Severity -in @('Pass', 'Information'))) { continue }
                 if ($f.PSObject.Properties['Id'] -and $f.Id)              { $haystack.Add(([string]$f.Id).ToLowerInvariant()) }
                 if ($f.PSObject.Properties['Component'] -and $f.Component) { $haystack.Add(([string]$f.Component).ToLowerInvariant()) }
             }
@@ -198,13 +200,18 @@ function New-OmniRestorePoint {
         Creates a System Restore checkpoint, failing soft when it can't.
 
     .DESCRIPTION
-        Wraps Checkpoint-Computer. Returns a status object instead of throwing so the
-        repair engine can proceed (with a clear record) when System Restore is
-        unavailable - not elevated, disabled on the system drive, throttled to once per
-        24h, or not Windows.
+        Calls the SystemRestore WMI class directly (Checkpoint-Computer does not exist
+        in PowerShell 7) and verifies that a new restore point actually appeared, because
+        Windows silently skips creation when one was made in the last 24 hours. Returns
+        a status object instead of throwing.
+
+        Protected is $true when a new point was created, or when Windows throttled the
+        request but a restore point from the last 24 hours already exists. The repair
+        engine refuses RestorePoint repairs unless Protected is $true.
 
     .OUTPUTS
-        PSCustomObject: Created [bool], Status (Created|Skipped|Failed), Message.
+        PSCustomObject: Created [bool], Protected [bool], Status
+        (Created|RecentExisting|Skipped|Failed), Message.
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -213,7 +220,7 @@ function New-OmniRestorePoint {
         [pscustomobject] $Logger
     )
 
-    $status = [pscustomobject]@{ Created = $false; Status = 'Skipped'; Message = '' }
+    $status = [pscustomobject]@{ Created = $false; Protected = $false; Status = 'Skipped'; Message = '' }
 
     try { if ($IsWindows -eq $false) { $status.Message = 'System Restore is Windows-only.'; return $status } } catch { }
 
@@ -223,11 +230,35 @@ function New-OmniRestorePoint {
         return $status
     }
 
+    # Newest existing restore point (sequence number + creation time), or $null.
+    $latest = {
+        $points = @(Get-CimInstance -Namespace 'root/default' -ClassName 'SystemRestore' -ErrorAction SilentlyContinue)
+        $newest = $points | Sort-Object { [int64]$_.SequenceNumber } -Descending | Select-Object -First 1
+        if (-not $newest) { return $null }
+        $created = $null
+        try { $created = [datetime]::ParseExact(([string]$newest.CreationTime).Substring(0, 14), 'yyyyMMddHHmmss', $null).ToLocalTime() } catch { }
+        [pscustomobject]@{ Sequence = [int64]$newest.SequenceNumber; Created = $created }
+    }
+
     try {
-        Checkpoint-Computer -Description $Description -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
-        $status.Created = $true
-        $status.Status = 'Created'
-        $status.Message = "Restore point '$Description' created."
+        $before = & $latest
+        # RestorePointType 12 = MODIFY_SETTINGS, EventType 100 = BEGIN_SYSTEM_CHANGE.
+        $call = Invoke-CimMethod -Namespace 'root/default' -ClassName 'SystemRestore' -MethodName 'CreateRestorePoint' `
+            -Arguments @{ Description = $Description; RestorePointType = [uint32]12; EventType = [uint32]100 } -ErrorAction Stop
+        if ($call.ReturnValue -ne 0) { throw "SystemRestore.CreateRestorePoint returned $($call.ReturnValue) (System Restore may be disabled on the system drive)" }
+        $after = & $latest
+        if ($after -and (-not $before -or $after.Sequence -gt $before.Sequence)) {
+            $status.Created = $true
+            $status.Protected = $true
+            $status.Status = 'Created'
+            $status.Message = "Restore point '$Description' created."
+        } elseif ($after -and $after.Created -and $after.Created -gt (Get-Date).AddHours(-24)) {
+            $status.Protected = $true
+            $status.Status = 'RecentExisting'
+            $status.Message = "Windows allows one restore point per 24 hours; using the existing one from $($after.Created.ToString('yyyy-MM-dd HH:mm'))."
+        } else {
+            throw 'Windows reported success but no restore point was created'
+        }
         if ($Logger) { $Logger.Info($status.Message, 'Repair') }
     } catch {
         $status.Status = 'Failed'

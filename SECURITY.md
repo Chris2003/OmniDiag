@@ -55,5 +55,7 @@ and change controls for that domain are established.
   Running elevated grants it broad read access to the system — only run it from
   trusted sources.
 - Optional repair actions (the Repair Center) change system state and always require
-  explicit confirmation; a System Restore point is created before system-altering repairs,
-  and a dry-run mode describes every repair without executing it.
+  explicit confirmation. System-altering repairs run only after a System Restore point is
+  verified (a new one, or one from the last 24 hours); otherwise they are skipped unless
+  `-AllowRepairWithoutRestorePoint` is passed. The registry cleanup removes nothing unless
+  its `.reg` backup completed, and a dry-run mode describes every repair without executing it.
