@@ -82,12 +82,12 @@ function Invoke-OmniModuleScan {
     Set-OmniResultMetric -Result $result -Name 'StartupItemCount' -Value $count
     Set-OmniResultMetric -Result $result -Name 'StartupItems' -Value ($names | Sort-Object -Unique)
 
-    Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+    Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'startup-items-summary' `
         -Title ("$count startup item(s) found") -Severity 'Information' -Component 'System/Startup' `
         -Detail ("Enumerated $count autostart entries from registry Run keys and startup commands."))
 
     if ($count -gt 25) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'startup-items-high-count' `
             -Title ("High number of startup items ($count)") -Severity 'Warning' -Component 'System/Startup' `
             -Detail "There are $count autostart entries configured." `
             -LikelyCause 'A large number of startup programs slows boot and consumes resources.' `
@@ -97,7 +97,7 @@ function Invoke-OmniModuleScan {
 
     # Always record at least one positive finding when nothing is wrong.
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'startup-items-ok' `
             -Title 'Startup entries within normal range' -Severity 'Pass' -Component 'System/Startup' `
             -Detail 'The number of autostart entries is within an acceptable range.')
     }
