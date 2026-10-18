@@ -11,7 +11,8 @@ is the "v1.0 target" section of [ARCHITECTURE.md](ARCHITECTURE.md).
 |---|---|---|---|
 | 0 — Reconnaissance | ✅ Done 2026-10-18 | 0.4.1 | Baseline below; decisions approved (ROADMAP.md) |
 | 1 — Foundation | ✅ Done 2026-10-18 | 0.5.0 | PR #2; CI run 39154720085 green on all legs |
-| 2 — Diagnostic modules | Next | — | — |
+| 2 — Diagnostic modules | ✅ Done 2026-10-18 | 0.6.0 + 0.7.0 | PR #4 (wave A), PR #5 (wave B); CI run 39164402996 green on all legs |
+| 3 — Interfaces & UX | Next | — | — |
 
 ### Phase 1 results (0.5.0)
 
@@ -37,6 +38,46 @@ is the "v1.0 target" section of [ARCHITECTURE.md](ARCHITECTURE.md).
 - **Unverified on real clients**: `.cmd` exit-code pass-through on a desktop, the real elevation
   path for exit 4, Windows 10/11 client behavior (hosted runners are Windows Server).
 - `ARM64` leg is non-blocking until it has a green history (green so far).
+
+### Phase 2 results (0.6.0 wave A, 0.7.0 wave B)
+
+| Acceptance criterion | Result | Evidence |
+|---|---|---|
+| Every sub-item in the coverage table is ✅ or has a documented reason | ✅ | Table below; the remaining tool-output parsing (`netsh wlan`, `dsregcmd` behind `--network-probes`) is documented in `docs/modules/network.md` and `extras.md` |
+| A default scan makes no outbound connection | ✅ | Blocking CI job `build/Test-NoNetworkRuntime.ps1` (WFP auditing + outbound block + positive control + per-module attribution): PASS. It found and verified the fix for one real leak (the Certificates scanner's `Cert:` enumeration fetched CRLs) |
+| Full scan < 60 s on `windows-latest` (median of 3, soft gate) | ✅ | 58 scanners: median 20.8 s, startup 1.2 s (run 39164402996) |
+| Standard user: elevation-dependent modules return a structured skip reason | 🟡 | Engine `skippedReason` (RequiresElevation / NotSupported / Cancelled) and per-scanner "requires elevation" findings, covered by tests; the standard-user CI leg is Phase 4 |
+| Pester passes on `windows-11-arm` | ✅ | Blocking leg: 743 passed, 0 failed |
+| Each group: CLI command, `Get-OmniDiag<Group>` cmdlet, tests, docs page | ✅ | `omnidiag <group>`, 11 group cmdlets, `Tests/Modules.<Group>.Tests.ps1`, `docs/modules/<group>.md` |
+
+**Coverage now** (was the baseline table below):
+
+| # | Group | Sub-items | State |
+|---|---|---|---|
+| 1 | System | OS build/support status, uptime, hardware, firmware/TPM/Secure Boot (incl. requires-elevation and legacy BIOS) | ✅ |
+| 2 | Performance | CPU/RAM, handles and threads, top consumers | ✅ |
+| 3 | Services & drivers | start types, crash/start-failure history, unsigned and third-party drivers, problem devices | ✅ |
+| 4 | Startup & persistence | Run keys, scheduled tasks, services as persistence (`startup.service-persistence`), Startup folders (`startup.startup-folders`) | ✅ |
+| 5 | Event log triage | grouped/de-duplicated Critical/Error events, known-bad hints (41, 6008, 1001, disk/NTFS) | ✅ |
+| 6 | Reliability & crashes | Reliability Monitor (`reliability.reliability-monitor`), minidump inventory (`reliability.crash-dumps`) | ✅ |
+| 7 | Storage | volumes/free space, SMART/health, TRIM (`storage.trim`) | ✅ |
+| 8 | Network | adapters/IP, DNS, routes (`network.routes`), listening ports + owning process (`network.listening-ports`), proxy (registry), connectivity tests (opt-in `--network-probes`) | ✅ |
+| 9 | Windows Update | last install and failed updates (`updates.update-history`, local history only), pending reboot | ✅ |
+| 10 | Security posture | Defender, firewall profiles, BitLocker, UAC (incl. consent/secure desktop), local admins (`security.local-admins`) | ✅ |
+| 11 | Report bundle | `omnidiag report` (HTML + JSON v1, safe modules) | 🟡 Redaction is Phase 3 |
+
+**How Phase 2 ran:** 2 wave A agents + 5 wave B agents in parallel worktrees, 1 reviewer, 1 fixer.
+The worktree agents could not run PowerShell; the lead ran every suite and fixed the integration
+issues (tests that mocked the function under test, Windows-only mocking of CDXML cmdlets,
+COM-only tests). The reviewer's 10 defects and 7 noise risks were all fixed before merge.
+
+**Open risks after Phase 2**
+- Behaviour on real Windows 10/11 desktops (hosted runners are Windows Server): battery, Wi-Fi,
+  Entra/Intune, Reliability Monitor data, real crash dumps, client-SKU severities.
+- Registry layouts without a Microsoft specification: `WinHttpSettings` (from Wine and a
+  Microsoft sample), `RefsDisableDeleteNotification`, CloudDomainJoin.
+- Whether WUA history dates are UTC; Reliability WMI filtering performance on large histories.
+- Standard-user CI leg not yet in place (Phase 4); Repair coverage below 80%.
 
 ---
 
