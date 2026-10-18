@@ -137,6 +137,7 @@ the GUI was started (each value is when that phase finished):
 | `ModuleImported` | PowerShell 7 only: OmniDiag imported in the STA runspace |
 | `InitializeStart` | window construction starts |
 | `WpfAssembliesLoaded` | WPF assemblies loaded (already loaded on PowerShell 7) |
+| `XamlEngineReady` | a trivial fragment parsed: the XAML engine's cold-start cost, measured apart from the shell |
 | `ShellParsed` | `MainWindow.xaml` (the shell) parsed into the window |
 | `XamlParsed` | all XAML needed for first paint parsed (same moment as `ShellParsed`; kept for older logs) |
 | `WindowConstructed` | shell controls looked up, handlers wired, initial state set |

@@ -135,7 +135,7 @@ function Add-OmniStartupMark {
     .DESCRIPTION
         Phases, in order: Entry, StaRunspaceReady, WpfPreloaded (MTA host only: loaded on
         the calling thread while the STA runspace imports OmniDiag), ModuleImported,
-        InitializeStart, WpfAssembliesLoaded, ShellParsed, XamlParsed, WindowConstructed,
+        InitializeStart, WpfAssembliesLoaded, XamlEngineReady, ShellParsed, XamlParsed, WindowConstructed,
         ShowCalled, ContentRendered; then one Section<Name>Loaded per lazily loaded
         section (the clock keeps running after first render). Thread-safe: the MTA host
         marks from two threads.
@@ -2350,6 +2350,11 @@ function Initialize-OmniMainWindow {
     Disable-OmniLegacyAccessibility
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml -ErrorAction Stop
     Add-OmniStartupMark -Name 'WpfAssembliesLoaded' -Clock $StartupClock
+
+    # Diagnostic split of the parse cost: a trivial fragment first measures the XAML
+    # engine's cold start (type system, theme lookups), separate from the shell's own size.
+    $null = [System.Windows.Markup.XamlReader]::Parse('<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"/>')
+    Add-OmniStartupMark -Name 'XamlEngineReady' -Clock $StartupClock
 
     # Parse the cached shell text directly (no XmlDocument round trip; the XAML has no
     # inline text runs, so whitespace handling is the same).

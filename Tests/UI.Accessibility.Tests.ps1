@@ -209,7 +209,9 @@ Describe 'GUI code-behind matches the XAML (cross-platform)' {
     It 'loads sections lazily: the window factory parses only the shell, navigation loads the rest' {
         $factory = [regex]::Match($script:GuiSource, '(?s)function Initialize-OmniMainWindow \{.*?\n\}\r?\n').Value
         $factory | Should -Not -BeNullOrEmpty
-        $factory | Should -Not -Match 'Import-OmniSection|Get-OmniSectionXaml'
+        # Code only: the factory's help and comments mention Import-OmniSection by name.
+        $factoryCode = (($factory -replace '(?s)<#.*?#>', '') -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+        $factoryCode | Should -Not -Match 'Import-OmniSection|Get-OmniSectionXaml'
         $nav = [regex]::Match($script:GuiSource, '(?s)function Show-OmniNavPanel \{.*?\n\}\r?\n').Value
         $nav | Should -Match 'Import-OmniSection'
         # Every navigation panel except the Dashboard is a lazily loaded section.
@@ -280,7 +282,7 @@ Describe 'GUI code-behind matches the XAML (cross-platform)' {
 
     It 'records startup phase checkpoints and turns off the legacy accessibility switches before WPF loads' {
         foreach ($phase in 'Entry', 'StaRunspaceReady', 'WpfPreloaded', 'ModuleImported', 'InitializeStart', 'WpfAssembliesLoaded',
-            'ShellParsed', 'XamlParsed', 'WindowConstructed', 'ShowCalled', 'ContentRendered') {
+            'XamlEngineReady', 'ShellParsed', 'XamlParsed', 'WindowConstructed', 'ShowCalled', 'ContentRendered') {
             $script:GuiSource | Should -Match ("Add-OmniStartupMark -Name '" + $phase + "'")
         }
         # Each lazily loaded section is marked when it loads.
