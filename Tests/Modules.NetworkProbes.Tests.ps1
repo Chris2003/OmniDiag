@@ -39,6 +39,10 @@ BeforeAll {
     $script:NetMod = Import-PluginCopy -File 'Network.psm1' -AsName 'OmniProbeTestNetwork'
     $script:DnsMod = Import-PluginCopy -File 'DnsResolver.psm1' -AsName 'OmniProbeTestDns'
     $script:AdMod = Import-PluginCopy -File 'ActiveDirectory.psm1' -AsName 'OmniProbeTestAd'
+
+    # ALWAYS define a simple Get-CimInstance stub inside the AD plugin copy's module scope:
+    # the function shadows the real CDXML-backed cmdlet, so Pester mocks the stub.
+    & $script:AdMod { function script:Get-CimInstance { [CmdletBinding()] param([string] $ClassName, [Parameter(ValueFromRemainingArguments)] $Rest) } }
 }
 
 AfterAll {
