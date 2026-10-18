@@ -483,7 +483,8 @@ function ConvertTo-OmniRedactedValue {
 
     if ($raw -is [System.Collections.IEnumerable]) {
         $isList = $raw -is [System.Collections.IList] -and -not ($raw -is [array])
-        $list = if ($raw -is [System.Collections.ArrayList]) { [System.Collections.ArrayList]::new() } else { [System.Collections.Generic.List[object]]::new() }
+        # Assign inside the branches: an empty list returned from an if expression unrolls to $null.
+        if ($raw -is [System.Collections.ArrayList]) { $list = [System.Collections.ArrayList]::new() } else { $list = [System.Collections.Generic.List[object]]::new() }
         foreach ($item in $raw) { [void]$list.Add((ConvertTo-OmniRedactedValue -Value $item -Context $Context -Depth ($Depth + 1))) }
         if ($isList) { return , $list }
         return , $list.ToArray()

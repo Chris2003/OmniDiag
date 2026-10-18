@@ -32,6 +32,7 @@
         'Repair/RepairModels.psm1',
         'Repair/RepairRegistry.psm1',
         'Repair/RepairEngine.psm1',
+        'Core/Redaction.psm1',
         'Reporting/ReportV1.psm1',
         'Reporting/Json.psm1',
         'Reporting/Markdown.psm1',
@@ -97,7 +98,7 @@
         'Get-OmniStatusColor', 'New-OmniConsoleProgressCallback', 'Write-OmniConsoleDashboard',
         'Write-OmniSessionComparison',
         # Reporting
-        'Export-OmniReport', 'Export-OmniHtmlReport', 'Export-OmniJsonReport',
+        'Export-OmniReport', 'New-OmniRedactionContext', 'ConvertTo-OmniRedacted', 'Get-OmniRedactionMap', 'Export-OmniRedactionMapFile', 'Export-OmniHtmlReport', 'Export-OmniJsonReport',
         'Export-OmniCsvReport', 'Export-OmniEventCsvReport', 'Export-OmniReportPackage',
         'Export-OmniPdfReport',
         'ConvertTo-OmniFindingTable', 'ConvertTo-OmniEventTable',
