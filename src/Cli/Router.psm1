@@ -1358,7 +1358,7 @@ function Invoke-OmniCliGui {
     if ($Parsed.Options.Format.Count -gt 0 -or $Parsed.Options.Output) { throw (New-OmniCliUsageError 'gui takes no --format or --output') }
     if (-not (Test-OmniCliWindows)) { throw (New-OmniCliUsageError 'the GUI needs Windows (WPF); use the other omnidiag commands on this system') }
     Write-OmniCliStatus $Io 'Opening the OmniDiag window...'
-    Show-OmniDiagWindow -ModulesPath @($ModulesPath)[0] -RepairsPath $RepairsPath
+    Show-OmniDiagGui -ModulesPath @($ModulesPath)[0] -RepairsPath $RepairsPath
     return 0
 }
 

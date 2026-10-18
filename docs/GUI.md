@@ -35,7 +35,7 @@ Press **F1** (or the **?** button) in the window for this list.
 | Tab / Shift+Tab | Move between controls (top bar, then navigation, then the section). Inside lists and grids use the arrow keys |
 | Space | Toggle the checkbox in the focused grid cell (Diagnostics "On", Repair Center "Run") |
 
-Shortcuts are window-level `KeyBinding`s in `src/UI/MainWindow.xaml`; each raises
+Shortcuts are window-level `KeyBinding`s in `src/UI/MainWindow.xaml` (the window shell); each raises
 `NavigationCommands.GoToPage` with a parameter that `Invoke-OmniShortcut` dispatches.
 
 ## Export
@@ -44,7 +44,7 @@ Export (Ctrl+E) opens a dialog with HTML, JSON, CSV (default), Markdown, PDF, an
 **Bundle (.zip)**, plus **Redact identifiers for sharing** (off by default), which
 replaces host names, user names, domains, SIDs, profile paths, and IP/MAC addresses
 with stable pseudonyms. The redaction option is disabled, with a tooltip, when the
-installed reporting module has no `Export-OmniReport -Redact`. Reports are written in
+installed reporting module cannot redact (`Export-OmniDiagReport -Redact`). Reports are written in
 the background to `OmniDiagData\reports` and the folder opens when done. Nothing is
 uploaded.
 
@@ -94,29 +94,59 @@ Record the result (date, Windows version, pass/fail per item) in `docs/STATUS.md
 
 ## Startup time
 
-Target: first render under 2 s. The time from `Show-OmniDiagWindow` to the window's
-first render is logged at Info to `OmniDiagData\logs\omnidiag-gui-*.jsonl` and exposed
-as the window's UI Automation ItemStatus (`StartupMs=<n>`). System Information,
-the repair and scanner catalogs, and group scanner counts load after first paint.
+Target: first render under 2 s. The time from `Show-OmniDiagGui` (internally
+`Start-OmniGuiWindow`) to the window's first render is logged at Info to
+`OmniDiagData\logs\omnidiag-gui-*.jsonl` and exposed as the window's UI Automation
+ItemStatus (`StartupMs=<n>`).
+
+### What loads when
+
+The XAML is split so first paint parses as little as possible:
+
+| File | Contents | Loaded |
+|---|---|---|
+| `src/UI/MainWindow.xaml` | Shell: window, key bindings, brushes and the few shared styles (buttons, check boxes, combo boxes, list items, labels), top bar, navigation, the Dashboard (score, System Information, recommendations), status bar, and an empty `Border` host per section | Before first paint |
+| `src/UI/Sections/DashboardModules.xaml` | The Dashboard's Module Results grid | Right after first paint (Background priority) |
+| `src/UI/Sections/SectionStyles.xaml` | Data grid, grid row, and detail box styles (a `ResourceDictionary` merged into the window) | With the first section |
+| `src/UI/Sections/Groups.xaml`, `Findings.xaml`, `Diagnostics.xaml`, `Repair.xaml`, `LocalAi.xaml` | One section each | On first navigation to it (click, arrow keys, Ctrl+1..6, Ctrl+F) |
+
+Each fragment is parsed once (`Import-OmniSection`), inserted into its host, and cached;
+its controls are looked up on the fragment and its handlers wired then
+(`Initialize-OmniSection`). Fragments are parsed on their own, so they use
+`DynamicResource` (never `StaticResource`) for the shell's brushes and styles. To add a
+control to a section, add it to the fragment and to that section's `Controls` list in
+`$script:OmniSections` (`src/UI/OmniDiagGui.psm1`); `Tests/UI.Xaml.Tests.ps1` checks that
+every name the code uses exists in the shell or a fragment.
+
+After first paint, in order: Background priority opens the GUI log, records the startup
+timing, sets the help tooltip, registers the group names, and loads the Module Results
+grid; ApplicationIdle starts one background runspace for System Information, the repair
+catalog, and the scanner and group catalogs. The elevation check for the Repair Center
+note runs when that section loads.
+
+### Phase breakdown
 
 The same log has a second Info line with the phase breakdown, in milliseconds since
-`Show-OmniDiagWindow` was called (each value is when that phase finished):
+the GUI was started (each value is when that phase finished):
 
 | Phase | Meaning |
 |---|---|
-| `Entry` | `Show-OmniDiagWindow` called (0) |
+| `Entry` | `Start-OmniGuiWindow` called (0) |
 | `StaRunspaceReady` | PowerShell 7 only: the STA runspace that hosts the window is open |
 | `WpfPreloaded` | PowerShell 7 only: WPF assemblies loaded on the calling thread, in parallel with the module import |
 | `ModuleImported` | PowerShell 7 only: OmniDiag imported in the STA runspace |
 | `InitializeStart` | window construction starts |
 | `WpfAssembliesLoaded` | WPF assemblies loaded (already loaded on PowerShell 7) |
-| `XamlParsed` | `MainWindow.xaml` parsed into the window |
-| `WindowConstructed` | controls looked up, handlers wired, initial state set |
+| `ShellParsed` | `MainWindow.xaml` (the shell) parsed into the window |
+| `XamlParsed` | all XAML needed for first paint parsed (same moment as `ShellParsed`; kept for older logs) |
+| `WindowConstructed` | shell controls looked up, handlers wired, initial state set |
 | `ShowCalled` | the window is shown |
 | `ContentRendered` | first render (= `StartupMs`) |
+| `Section<Name>Loaded` | after first render: a lazily loaded section finished loading (`SectionDashboardModulesLoaded`, `SectionGroupsLoaded`, ...); each load time is also logged on its own line |
 
 The UI Automation test (`Tests/UI.Accessibility.Tests.ps1`) prints the breakdown next to
 the first-render time; its clock starts at window construction, after the module import.
-Startup work kept small on purpose: `MainWindow.xaml` is read once and parsed from text,
-the Light theme the XAML already declares is not applied a second time, and live-region
-announcements are skipped until the window is loaded.
+It also visits every section (loading each one) and checks names and Tab order there.
+Other startup savings: the shell XAML is read once and parsed from text, the Light theme
+the XAML already declares is not applied a second time, and live-region announcements are
+skipped until the window is loaded.

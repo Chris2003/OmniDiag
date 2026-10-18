@@ -94,7 +94,71 @@ function Write-OmniRepairAudit {
 function Invoke-OmniRepair {
     <#
     .SYNOPSIS
-        Executes selected repairs and returns a complete repair session.
+        Deprecated: executes selected repairs. Use Invoke-OmniDiagRepair.
+
+    .DESCRIPTION
+        The pre-1.0 user-facing name of the repair engine, kept for one minor version. It
+        prints a one-time deprecation warning when called from outside OmniDiag, then runs
+        Invoke-OmniRepairRun with the same parameters (including -WhatIf / -Confirm).
+
+    .PARAMETER Registration
+        Repair registrations (from Get-OmniRepair) the caller has chosen to run.
+
+    .PARAMETER Context
+        Repair context from New-OmniRepairContext (logger, IsAdmin, DryRun, token).
+
+    .PARAMETER SkipRestorePoint
+        Do not create a restore point even if a selected repair requests one.
+
+    .PARAMETER AllowWithoutRestorePoint
+        Run RestorePoint repairs even when no restore point could be created or found.
+
+    .PARAMETER ProgressCallback
+        Optional scriptblock invoked as each repair starts/finishes.
+
+    .PARAMETER AuditLogPath
+        Where applied steps are logged.
+
+    .OUTPUTS
+        OmniDiag.RepairSession
+
+    .NOTES
+        Deprecated as a user-facing command in 0.8.0: use Invoke-OmniDiagRepair, which
+        adds -WhatIf / -Confirm handling and the exit code.
+
+    .EXAMPLE
+        $ctx = New-OmniRepairContext -Logger (New-OmniLogger) -DryRun
+        Invoke-OmniRepair -Registration (Get-OmniRepair -Path .\src\Repairs) -Context $ctx
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)] [object[]] $Registration,
+        [Parameter(Mandatory)] [pscustomobject] $Context,
+        [switch] $SkipRestorePoint,
+        [switch] $AllowWithoutRestorePoint,
+        [scriptblock] $ProgressCallback,
+        [string] $AuditLogPath
+    )
+
+    if (Get-Command Write-OmniDeprecationWarning -ErrorAction SilentlyContinue) {
+        Write-OmniDeprecationWarning -Name 'Invoke-OmniRepair' -Replacement 'Invoke-OmniDiagRepair'
+    }
+    # @PSBoundParameters carries -WhatIf / -Confirm through as well.
+    Invoke-OmniRepairRun @PSBoundParameters
+}
+
+function Invoke-OmniRepairRun {
+    <#
+    .SYNOPSIS
+        Internal: the repair engine - executes selected repairs and returns a complete
+        repair session.
+
+    .DESCRIPTION
+        Not deprecated; the engine entry for OmniDiag's own surfaces that need what the
+        curated Invoke-OmniDiagRepair does not offer (a progress callback, a dry run
+        through the repair context rather than -WhatIf). Users should call
+        Invoke-OmniDiagRepair.
 
     .PARAMETER Registration
         Repair registrations (from Get-OmniRepair) the caller has chosen to run.
@@ -117,13 +181,12 @@ function Invoke-OmniRepair {
         OmniDiag.RepairSession
 
     .NOTES
-        Deprecated as a user-facing command in 0.8.0: use Invoke-OmniDiagRepair, which
-        adds -WhatIf / -Confirm handling and the exit code. OmniDiag's own surfaces
-        (console, CLI, GUI) keep calling this engine without a warning.
+        OmniDiag's own surfaces (console, CLI, GUI) call this engine; the deprecated
+        Invoke-OmniRepair is a thin wrapper over it.
 
     .EXAMPLE
         $ctx = New-OmniRepairContext -Logger (New-OmniLogger) -DryRun
-        Invoke-OmniRepair -Registration (Get-OmniRepair -Path .\src\Repairs) -Context $ctx
+        Invoke-OmniRepairRun -Registration (Get-OmniRepair -Path .\src\Repairs) -Context $ctx
     #>
     [CmdletBinding(SupportsShouldProcess)]
     [OutputType([pscustomobject])]
@@ -136,10 +199,6 @@ function Invoke-OmniRepair {
         [scriptblock] $ProgressCallback,
         [string] $AuditLogPath
     )
-
-    if (Get-Command Write-OmniDeprecationWarning -ErrorAction SilentlyContinue) {
-        Write-OmniDeprecationWarning -Name 'Invoke-OmniRepair' -Replacement 'Invoke-OmniDiagRepair'
-    }
 
     $log = $Context.Logger
     $token = $Context.CancellationToken
@@ -326,4 +385,4 @@ function Invoke-OmniRepair {
     return $session
 }
 
-Export-ModuleMember -Function @('Invoke-OmniRepair', 'Get-OmniRepairAuditPath')
+Export-ModuleMember -Function @('Invoke-OmniRepair', 'Invoke-OmniRepairRun', 'Get-OmniRepairAuditPath')

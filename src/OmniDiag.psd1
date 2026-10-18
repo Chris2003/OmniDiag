@@ -102,7 +102,7 @@
         'New-OmniRepairResult', 'Add-OmniRepairStep', 'Invoke-OmniRepairStep',
         'Complete-OmniRepairResult', 'Get-OmniRepairRiskNames',
         'Get-OmniRepair', 'New-OmniRepairContext', 'Get-OmniApplicableRepair',
-        'New-OmniRestorePoint', 'Invoke-OmniRepair',
+        'New-OmniRestorePoint', 'Invoke-OmniRepair', 'Invoke-OmniRepairRun',
         'Invoke-OmniRepairConsole', 'Write-OmniRepairSummary',
         # Console
         'Get-OmniStatusColor', 'New-OmniConsoleProgressCallback', 'Write-OmniConsoleDashboard',
@@ -122,7 +122,7 @@
         # must be globally resolvable, not just private to Json.psm1).
         'Write-OmniTextFile',
         # GUI
-        'Show-OmniDiagWindow', 'Set-OmniTheme', 'Get-OmniThemePalette'
+        'Show-OmniDiagWindow', 'Start-OmniGuiWindow', 'Set-OmniTheme', 'Get-OmniThemePalette'
     )
 
     CmdletsToExport   = @()

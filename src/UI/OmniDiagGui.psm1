@@ -17,15 +17,29 @@
     side.
 
     WPF requires an STA thread. Windows PowerShell 5.1 consoles are STA; PowerShell 7
-    is MTA, so Show-OmniDiagWindow hosts the window in a dedicated STA runspace when
+    is MTA, so Start-OmniGuiWindow hosts the window in a dedicated STA runspace when
     needed. No display is created until the window is shown, so importing this module
     is safe on headless/Server Core hosts.
 
+    XAML is split for startup time: MainWindow.xaml is a small shell (window chrome,
+    top bar, navigation, the Dashboard, status bar). Every other section is a fragment
+    in Sections\*.xaml, parsed on first navigation into its host (Import-OmniSection),
+    cached, and wired by its own init (Initialize-OmniSection). Controls of a section
+    that has not loaded yet are $null in $ui.Controls; code that touches them checks
+    Test-OmniSectionLoaded first.
+
+    Background runspaces call the curated cmdlets (Invoke-OmniDiagScan -AsSession,
+    Export-OmniDiagReport, Get-OmniDiagRepair) or, where a curated cmdlet lacks what the
+    GUI needs (repair progress callback, dry run without -WhatIf), the internal engine
+    entry Invoke-OmniRepairRun - never the deprecated pre-1.0 names.
+
     Threading model:
-        UI thread  -- BtnScan --> spawn background runspace (Invoke-OmniDiag)
+        UI thread  -- BtnScan --> spawn background runspace (Invoke-OmniDiagScan)
                    <-- DispatcherTimer polls $sync (Progress/Phase/Done) --
         Cancel     -- $cts.Cancel()  (engine checks the token between modules)
-        Startup    -- ContentRendered --> Dispatcher.BeginInvoke(ApplicationIdle)
+        Startup    -- ContentRendered --> Dispatcher.BeginInvoke(Background)
+                      --> logger, help tooltip, group names, Module Results grid
+                   -- then Dispatcher.BeginInvoke(ApplicationIdle)
                       --> one background task (system info, repair + scanner catalogs)
 
     Accessibility: every interactive control has an AutomationProperties.Name; status
@@ -41,30 +55,51 @@ $script:OmniUi = $null
 $script:OmniStartupClock = $null
 # Startup phase checkpoints (phase -> ms on the startup clock), see Add-OmniStartupMark.
 $script:OmniStartupMarks = $null
-# MainWindow.xaml text, read once per module instance (or handed in by the MTA host).
+# MainWindow.xaml (shell) text, read once per module instance (or handed in by the MTA host).
 $script:OmniXamlText = $null
+# Section fragment texts (Sections\<file> -> text), read on first use.
+$script:OmniSectionXamlText = $null
 
-# Every x:Name the code looks up with FindName. Tests check each exists in MainWindow.xaml
-# and that the code never reaches for a control outside this list.
-$script:OmniUiControlNames = @(
+# Every x:Name in the shell (MainWindow.xaml) that the code looks up with FindName.
+$script:OmniShellControlNames = @(
     'BtnScan', 'BtnCancel', 'BtnExport', 'BtnTheme', 'BtnHelp', 'CmbRange', 'ChkNetworkProbes', 'NavList',
     'PanelDashboard', 'PanelSysInfo', 'TxtScore', 'TxtGrade', 'TxtComputer', 'TxtUser', 'TxtRange',
-    'TxtDuration', 'TxtCounts', 'ItemsRecommendations', 'GridModules',
-    'PanelGroups', 'GroupListView', 'GroupDetailView', 'GridGroups', 'BtnGroupOpen', 'TxtGroupsHint',
-    'BtnGroupBack', 'TxtGroupTitle', 'TxtGroupSummary', 'GridGroupModules', 'GridGroupFindings', 'TxtGroupFindingDetail',
-    'PanelFindings', 'GridFindings', 'TxtFindingFilter', 'CmbSeverityFilter', 'TxtFindingCount', 'TxtFindingDetail',
-    'PanelDiagnostics', 'DiagGrid', 'BtnDiagEnableAll', 'BtnDiagDisableAll', 'BtnDiagRunSelected',
-    'PanelRepair', 'RepairGrid', 'RepairResultGrid', 'BtnRunRepairs', 'BtnRepairCancel',
-    'BtnRepairRecommended', 'BtnRepairClear', 'ChkRepairDryRun', 'TxtRepairBanner', 'TxtRepairAdminNote',
-    'PanelLocalAi', 'CmbAiModel', 'TxtAiEndpoint', 'BtnAiCheck', 'TxtAiQuestion', 'BtnAiAnalyze',
-    'TxtAiStatus', 'TxtAiOutput',
+    'TxtDuration', 'TxtCounts', 'ItemsRecommendations', 'PanelDashboardModules',
+    'PanelGroups', 'PanelFindings', 'PanelDiagnostics', 'PanelRepair', 'PanelLocalAi',
     'ProgressBarMain', 'TxtStatus'
 )
+
+# Lazily loaded sections: fragment file (under Sections\), the shell element that hosts it
+# (a Border; the fragment becomes its Child), and the x:Names looked up in the fragment.
+$script:OmniSections = [ordered]@{
+    DashboardModules = @{ File = 'DashboardModules.xaml'; Host = 'PanelDashboardModules'; Controls = @('GridModules') }
+    Groups           = @{ File = 'Groups.xaml'; Host = 'PanelGroups'; Controls = @(
+            'GroupListView', 'GroupDetailView', 'GridGroups', 'BtnGroupOpen', 'TxtGroupsHint',
+            'BtnGroupBack', 'TxtGroupTitle', 'TxtGroupSummary', 'GridGroupModules', 'GridGroupFindings', 'TxtGroupFindingDetail') }
+    Findings         = @{ File = 'Findings.xaml'; Host = 'PanelFindings'; Controls = @(
+            'GridFindings', 'TxtFindingFilter', 'CmbSeverityFilter', 'TxtFindingCount', 'TxtFindingDetail') }
+    Diagnostics      = @{ File = 'Diagnostics.xaml'; Host = 'PanelDiagnostics'; Controls = @(
+            'DiagGrid', 'BtnDiagEnableAll', 'BtnDiagDisableAll', 'BtnDiagRunSelected') }
+    Repair           = @{ File = 'Repair.xaml'; Host = 'PanelRepair'; Controls = @(
+            'RepairGrid', 'RepairResultGrid', 'BtnRunRepairs', 'BtnRepairCancel',
+            'BtnRepairRecommended', 'BtnRepairClear', 'ChkRepairDryRun', 'TxtRepairBanner', 'TxtRepairAdminNote') }
+    LocalAi          = @{ File = 'LocalAi.xaml'; Host = 'PanelLocalAi'; Controls = @(
+            'CmbAiModel', 'TxtAiEndpoint', 'BtnAiCheck', 'TxtAiQuestion', 'BtnAiAnalyze', 'TxtAiStatus', 'TxtAiOutput') }
+}
+
+# Shared section-only styles (data grids, row styles, detail boxes), merged into the
+# window's resources before the first section loads.
+$script:OmniSectionStyleFile = 'SectionStyles.xaml'
+
+# Every x:Name the code looks up (shell + all sections). Tests check each exists in the
+# shell or a fragment, and that the code never reaches for a control outside this list.
+$script:OmniUiControlNames = @($script:OmniShellControlNames + @($script:OmniSections.Values | ForEach-Object { $_.Controls }))
 
 # Content panels in navigation order (NavList item i shows panel i; Ctrl+<i+1> jumps there).
 $script:OmniNavPanels = @('PanelDashboard', 'PanelGroups', 'PanelFindings', 'PanelDiagnostics', 'PanelRepair', 'PanelLocalAi')
 
-# Controls made polite UIA live regions at startup (screen readers announce changes).
+# Controls made polite UIA live regions (screen readers announce changes): at startup for
+# the shell, when their section loads for the others (TxtFindingCount: All Findings).
 $script:OmniLiveRegionControls = @('TxtStatus', 'ProgressBarMain', 'TxtFindingCount')
 
 # Keyboard reference shown by F1 / the Help button and documented in docs/GUI.md.
@@ -95,13 +130,15 @@ function Add-OmniStartupMark {
     <#
     .SYNOPSIS
         Internal: record a startup checkpoint - milliseconds on the startup clock (from
-        Show-OmniDiagWindow entry) at which a phase finished. The first mark per phase wins.
+        Start-OmniGuiWindow entry) at which a phase finished. The first mark per phase wins.
 
     .DESCRIPTION
         Phases, in order: Entry, StaRunspaceReady, WpfPreloaded (MTA host only: loaded on
         the calling thread while the STA runspace imports OmniDiag), ModuleImported,
-        InitializeStart, WpfAssembliesLoaded, XamlParsed, WindowConstructed, ShowCalled,
-        ContentRendered. Thread-safe: the MTA host marks from two threads.
+        InitializeStart, WpfAssembliesLoaded, ShellParsed, XamlParsed, WindowConstructed,
+        ShowCalled, ContentRendered; then one Section<Name>Loaded per lazily loaded
+        section (the clock keeps running after first render). Thread-safe: the MTA host
+        marks from two threads.
     #>
     param([Parameter(Mandatory)] [string] $Name, [System.Diagnostics.Stopwatch] $Clock = $script:OmniStartupClock)
     if (-not $Clock) { return }
@@ -149,6 +186,86 @@ function Get-OmniMainWindowXaml {
         $script:OmniXamlText = [System.IO.File]::ReadAllText((Join-Path $script:OmniUiRoot 'MainWindow.xaml'), [System.Text.Encoding]::UTF8)
     }
     return $script:OmniXamlText
+}
+
+function Get-OmniSectionXaml {
+    <# .SYNOPSIS Internal: a section fragment's text (Sections folder; read once, then cached). #>
+    [OutputType([string])]
+    param([Parameter(Mandatory)] [string] $File)
+    if ($null -eq $script:OmniSectionXamlText) { $script:OmniSectionXamlText = @{} }
+    if (-not $script:OmniSectionXamlText.ContainsKey($File)) {
+        $path = Join-Path (Join-Path $script:OmniUiRoot 'Sections') $File
+        $script:OmniSectionXamlText[$File] = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+    }
+    return $script:OmniSectionXamlText[$File]
+}
+
+function Test-OmniSectionLoaded {
+    <# .SYNOPSIS Internal: has this lazily loaded section been parsed and wired? #>
+    [OutputType([bool])]
+    param([Parameter(Mandatory)] [string] $Name)
+    $ui = $script:OmniUi
+    if ($null -eq $ui -or $null -eq $ui.Sections) { return $false }
+    return [bool]$ui.Sections.ContainsKey($Name)
+}
+
+function Get-OmniSectionForHost {
+    <# .SYNOPSIS Internal: the section name hosted by a shell element (e.g. PanelGroups -> Groups), or $null. #>
+    [OutputType([string])]
+    param([string] $HostName)
+    foreach ($key in $script:OmniSections.Keys) {
+        if ($script:OmniSections[$key].Host -eq $HostName) { return [string]$key }
+    }
+    return $null
+}
+
+function Use-OmniSectionStyle {
+    <# .SYNOPSIS Internal: merge Sections\SectionStyles.xaml into the window resources (once). #>
+    $ui = $script:OmniUi
+    if ($ui.SectionStylesLoaded) { return }
+    $dict = [System.Windows.Markup.XamlReader]::Parse((Get-OmniSectionXaml -File $script:OmniSectionStyleFile))
+    [void]$ui.Window.Resources.MergedDictionaries.Add($dict)
+    $ui.SectionStylesLoaded = $true
+}
+
+function Import-OmniSection {
+    <#
+    .SYNOPSIS
+        Internal: load a lazily loaded section (parse its fragment, look up its controls,
+        insert it into its host, wire it) once; later calls return the cached root.
+
+    .DESCRIPTION
+        UI thread only. Element lookups happen on the fragment's own name scope (each
+        XamlReader.Parse root has one), so $ui.Controls gets the section's controls only
+        after this runs. Records a Section<Name>Loaded startup mark and logs the load time.
+    #>
+    param([Parameter(Mandatory)] [string] $Name)
+    $ui = $script:OmniUi
+    if (-not $ui) { return $null }
+    if ($ui.Sections.ContainsKey($Name)) { return $ui.Sections[$Name] }
+    $def = $script:OmniSections[$Name]
+    if (-not $def) { throw [System.ArgumentException]::new("Unknown GUI section '$Name'.") }
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    Use-OmniSectionStyle
+    $root = [System.Windows.Markup.XamlReader]::Parse((Get-OmniSectionXaml -File $def.File))
+    foreach ($n in $def.Controls) { $ui.Controls[$n] = $root.FindName($n) }
+    # Cache before wiring: the init may raise events that ask whether the section is loaded.
+    $ui.Sections[$Name] = $root
+    $ui.Controls[$def.Host].Child = $root
+    foreach ($n in $script:OmniLiveRegionControls) {
+        if ($def.Controls -contains $n -and $ui.Controls[$n]) { [void](Enable-OmniLiveRegion -Element $ui.Controls[$n]) }
+    }
+    Initialize-OmniSection -Name $Name
+    Sync-OmniBusyState
+    $sw.Stop()
+    $ms = [int]$sw.Elapsed.TotalMilliseconds
+    $ui.SectionLoadMs[$Name] = $ms
+    Add-OmniStartupMark -Name "Section${Name}Loaded" -Clock $ui.StartupClock
+    if ($ui.Logger) {
+        try { $ui.Logger.Log('Info', "GUI section $Name loaded in $ms ms.", 'Gui', @{ Section = $Name; LoadMs = $ms }) } catch { $null = $_ }
+    }
+    return $root
 }
 
 # ---------------------------------------------------------------------------
@@ -408,12 +525,20 @@ function Sync-OmniBusyState {
     $c.BtnScan.IsEnabled = -not $busy
     $c.BtnCancel.IsEnabled = $scan -and -not $ui.Scan['Cancelling']
     $c.BtnExport.IsEnabled = $hasSession -and -not $busy
-    $c.BtnRunRepairs.IsEnabled = -not $busy
-    $c.BtnRepairCancel.IsEnabled = $repair -and -not $ui.Repair['Cancelling']
-    $c.BtnAiCheck.IsEnabled = -not $busy
-    $c.BtnAiAnalyze.IsEnabled = $hasSession -and -not $busy
-    $c.BtnDiagRunSelected.IsEnabled = -not $busy
-    $c.DiagGrid.IsEnabled = -not $scan
+    # Section controls exist only once their section has loaded (Import-OmniSection
+    # calls this again after loading one).
+    if (Test-OmniSectionLoaded -Name 'Repair') {
+        $c.BtnRunRepairs.IsEnabled = -not $busy
+        $c.BtnRepairCancel.IsEnabled = $repair -and -not $ui.Repair['Cancelling']
+    }
+    if (Test-OmniSectionLoaded -Name 'LocalAi') {
+        $c.BtnAiCheck.IsEnabled = -not $busy
+        $c.BtnAiAnalyze.IsEnabled = $hasSession -and -not $busy
+    }
+    if (Test-OmniSectionLoaded -Name 'Diagnostics') {
+        $c.BtnDiagRunSelected.IsEnabled = -not $busy
+        $c.DiagGrid.IsEnabled = -not $scan
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -791,15 +916,20 @@ function Update-OmniDashboard {
     $Ui.Controls.TxtRange.Text    = "Range: $($Session.TimeRange.Label)"
     $Ui.Controls.TxtDuration.Text = "Duration: {0:N1} s" -f ($Session.DurationMs / 1000)
 
-    $Ui.Controls.GridModules.ItemsSource = @(Get-OmniModuleRow -Session $Session -GroupNames $Ui.GroupNames)
+    # The Module Results grid loads right after first paint; if it has not yet, its
+    # init binds the session itself.
+    if (Test-OmniSectionLoaded -Name 'DashboardModules') {
+        $Ui.Controls.GridModules.ItemsSource = @(Get-OmniModuleRow -Session $Session -GroupNames $Ui.GroupNames)
+    }
     $Ui.FindingRows = @(ConvertTo-OmniGuiFindingRow -Session $Session -GroupNames $Ui.GroupNames)
     Show-OmniFindingFilter
     Show-OmniGroupSummary
 }
 
 function Show-OmniFindingFilter {
-    <# .SYNOPSIS Internal: apply the text + severity filter to the All Findings grid. #>
+    <# .SYNOPSIS Internal: apply the text + severity filter to the All Findings grid (once that section has loaded). #>
     $ui = $script:OmniUi
+    if (-not (Test-OmniSectionLoaded -Name 'Findings')) { return }
     $c = $ui.Controls
     $sevItem = $c.CmbSeverityFilter.SelectedItem
     $sev = if ($sevItem) { [string]$sevItem.Content } else { '' }
@@ -836,8 +966,9 @@ function Show-OmniFindingDetail {
 }
 
 function Show-OmniGroupSummary {
-    <# .SYNOPSIS Internal: (re)build the Groups grid from the catalog and the latest session. #>
+    <# .SYNOPSIS Internal: (re)build the Groups grid from the catalog and the latest session (once that section has loaded). #>
     $ui = $script:OmniUi
+    if (-not (Test-OmniSectionLoaded -Name 'Groups')) { return }
     $grid = $ui.Controls.GridGroups
     $selectedId = if ($grid.SelectedItem) { [string]$grid.SelectedItem.Id } else { '' }
     $rows = @(Get-OmniGroupSummaryRow -Group @($ui.GroupCatalog) -Session $ui.Session)
@@ -923,18 +1054,19 @@ function Show-OmniRepairCatalog {
         }
     })
     $ui.RepairCatalog = $rows
-    $ui.Controls.RepairGrid.ItemsSource = $rows
+    # The Repair Center binds $ui.RepairCatalog itself when it loads later.
+    if (Test-OmniSectionLoaded -Name 'Repair') { $ui.Controls.RepairGrid.ItemsSource = $rows }
 }
 
 # Background script: repair catalog as plain hashtables (registrations hold PSModuleInfo).
+# Get-OmniDiagRepair -Session flags the repairs recommended for that scan.
 $script:OmniRepairCatalogScript = {
     param($SyncHash, $A)
-    $log = New-OmniLogger -MinimumLevel Error
-    $cat = if ($A.Session) {
-        @(Invoke-OmniRepairCenter -Session $A.Session -RepairsPath $A.RepairsPath -Logger $log)
+    $cat = @(if ($A.Session) {
+        Get-OmniDiagRepair -Session $A.Session -RepairsPath $A.RepairsPath
     } else {
-        @(Invoke-OmniRepairCenter -RepairsPath $A.RepairsPath -Logger $log)
-    }
+        Get-OmniDiagRepair -RepairsPath $A.RepairsPath
+    })
     , @($cat | ForEach-Object {
         @{
             Name = [string]$_.Name; Category = [string]$_.Category; Risk = [string]$_.Risk
@@ -1148,7 +1280,7 @@ $script:OmniStartupScript = {
 
     # 2. Repair catalog (plain values only).
     try {
-        $SyncHash.Repairs = @(Invoke-OmniRepairCenter -RepairsPath $A.RepairsPath -Logger $log | ForEach-Object {
+        $SyncHash.Repairs = @(Get-OmniDiagRepair -RepairsPath $A.RepairsPath | ForEach-Object {
             @{
                 Name = [string]$_.Name; Category = [string]$_.Category; Risk = [string]$_.Risk
                 RequiresAdmin = [bool]$_.RequiresAdmin; Recommended = [bool]$_.Recommended
@@ -1160,9 +1292,10 @@ $script:OmniStartupScript = {
     }
     $SyncHash.RepairsDone = $true
 
-    # 3. Scanner and group catalog (Diagnostics tab + Groups view).
+    # 3. Scanner and group catalog (Diagnostics tab + Groups view). Enabled scanners only:
+    # the engine never runs a disabled one, and Invoke-OmniDiagScan -Module rejects it.
     try {
-        $SyncHash.Scanners = @(Get-OmniModule -Path $A.ModulesPath -Logger $log | ForEach-Object {
+        $SyncHash.Scanners = @(Get-OmniModule -Path $A.ModulesPath -Logger $log | Where-Object { $_.Enabled } | ForEach-Object {
             @{ Name = [string]$_.Name; Category = [string]$_.Category; Order = [int]$_.Order; Group = [string]$_.Group; Id = [string]$_.Id }
         })
         $SyncHash.Groups = @(Get-OmniDiagGroup -ModulesPath $A.ModulesPath | ForEach-Object {
@@ -1238,7 +1371,7 @@ function Initialize-OmniDiagPanel {
         after first paint; until it arrives the tab shows a loading status.
     #>
     $ui = $script:OmniUi
-    if ($ui.DiagRows) { return }
+    if ($ui.DiagRows -or -not (Test-OmniSectionLoaded -Name 'Diagnostics')) { return }
     if (-not $ui.ScannerCatalog) { Write-OmniStatus -Text 'Loading the scanner list...'; return }
     $rows = @($ui.ScannerCatalog | Sort-Object { $_.Category }, { $_.Order }, { $_.Name } | ForEach-Object {
         $gname = if ($ui.GroupNames.ContainsKey([string]$_.Group)) { $ui.GroupNames[[string]$_.Group] } else { [string]$_.Group }
@@ -1294,13 +1427,15 @@ function Start-OmniScan {
                 $SyncHash.CurrentModule = $p.Name
                 $SyncHash.Phase = $p.Phase
             }.GetNewClosure()
+            # Curated scan cmdlet; -AsSession returns the native session the GUI renders.
+            # Its logger never writes to the console, and -Module takes scanner names.
             $params = @{
-                Range = $Range; ProgressCallback = $cb; CancellationToken = $Token
-                Quiet = $true; ModulesPath = $ModulesPath
+                AsSession = $true; Range = $Range; ProgressCallback = $cb; CancellationToken = $Token
                 NetworkProbes = [bool]$NetworkProbes
             }
-            if ($IncludeModule) { $params.IncludeModule = $IncludeModule }
-            $SyncHash.Session = Invoke-OmniDiag @params
+            if ($ModulesPath) { $params.ModulesPath = $ModulesPath }
+            if ($IncludeModule) { $params.Module = $IncludeModule }
+            $SyncHash.Session = Invoke-OmniDiagScan @params
             # Save with the tool (like the console) so -FromSession/-CompareWith Last see GUI
             # scans. Done here, not on the UI thread: serializing a session can take a while.
             try { Save-OmniSession -Session $SyncHash.Session | Out-Null } catch { $SyncHash.SaveError = $_.Exception.Message }
@@ -1422,7 +1557,8 @@ function Request-OmniCancel {
     $ui = $script:OmniUi
     if ($ui.Scan) { Request-OmniScanCancel; return }
     if ($ui.Repair) { Request-OmniRepairCancel; return }
-    if ($ui.Controls.PanelGroups.Visibility -eq 'Visible' -and $ui.Controls.GroupDetailView.Visibility -eq 'Visible') { Hide-OmniGroupDetail }
+    if ((Test-OmniSectionLoaded -Name 'Groups') -and $ui.Controls.PanelGroups.Visibility -eq 'Visible' -and
+        $ui.Controls.GroupDetailView.Visibility -eq 'Visible') { Hide-OmniGroupDetail }
 }
 
 # ---------------------------------------------------------------------------
@@ -1430,11 +1566,20 @@ function Request-OmniCancel {
 # ---------------------------------------------------------------------------
 
 function Test-OmniRedactSupported {
-    <# .SYNOPSIS Internal: does Export-OmniReport accept -Redact (shared-report pseudonymization)? #>
+    <#
+    .SYNOPSIS
+        Internal: can Export-OmniDiagReport -Redact run (shared-report pseudonymization)?
+
+    .DESCRIPTION
+        True when Export-OmniDiagReport has -Redact and the redaction module's commands
+        (New-OmniRedactionContext, ConvertTo-OmniRedacted) are loaded.
+    #>
     [OutputType([bool])]
     param()
-    $cmd = Get-Command -Name Export-OmniReport -ErrorAction SilentlyContinue
-    return [bool]($cmd -and $cmd.Parameters.ContainsKey('Redact'))
+    $cmd = Get-Command -Name Export-OmniDiagReport -ErrorAction SilentlyContinue
+    if (-not ($cmd -and $cmd.Parameters.ContainsKey('Redact'))) { return $false }
+    return [bool]((Get-Command -Name New-OmniRedactionContext -ErrorAction SilentlyContinue) -and
+        (Get-Command -Name ConvertTo-OmniRedacted -ErrorAction SilentlyContinue))
 }
 
 function Show-OmniExportDialog {
@@ -1453,7 +1598,7 @@ function Show-OmniExportDialog {
         The main window, so the dialog centers on it and is modal to it.
 
     .PARAMETER RedactSupported
-        Whether Export-OmniReport has -Redact. When not, the redaction option is shown
+        Whether Export-OmniDiagReport -Redact can run. When not, the redaction option is shown
         disabled with an explanatory tooltip.
     #>
     param(
@@ -1537,7 +1682,7 @@ function Show-OmniExportDialog {
         $redactHelp = 'Replaces host names, user names, domains, SIDs, profile paths, and IP/MAC addresses with stable pseudonyms in every format.'
         $chkRedact.ToolTip = $redactHelp
     } else {
-        $redactHelp = 'Not available in this build: the report exporter does not support redaction (Export-OmniReport -Redact).'
+        $redactHelp = 'Not available in this build: the report exporter does not support redaction (Export-OmniDiagReport -Redact).'
         $chkRedact.IsEnabled = $false
         $chkRedact.ToolTip = $redactHelp
     }
@@ -1600,7 +1745,7 @@ $script:OmniExportScript = {
     param($SyncHash, $A)
     $p = @{ Session = $A.Session; OutputDirectory = (Get-OmniDataPath -Kind Reports); Format = [string[]]$A.Formats }
     if ($A.Redact) { $p.Redact = $true }
-    $set = Export-OmniReport @p
+    $set = Export-OmniDiagReport @p
     [pscustomobject]@{
         OutputDirectory = [string]$set.OutputDirectory
         Files           = [string[]]@($set.Files)
@@ -1851,7 +1996,10 @@ function Invoke-OmniRepairRequest {
                 $SyncHash.Progress = $p.PercentComplete
             }.GetNewClosure()
             $ctx = New-OmniRepairContext -Logger $log -DryRun:$DryRun -CancellationToken $Token
-            $SyncHash.Session = Invoke-OmniRepair -Registration $chosen -Context $ctx -ProgressCallback $cb
+            # The engine entry, not Invoke-OmniDiagRepair: the GUI needs the progress
+            # callback and a dry run driven by the checkbox (not -WhatIf), and it has
+            # already confirmed the whole selection in its own dialog.
+            $SyncHash.Session = Invoke-OmniRepairRun -Registration $chosen -Context $ctx -ProgressCallback $cb
         } catch {
             $SyncHash.Error = $_.Exception.Message
         } finally {
@@ -1934,11 +2082,20 @@ function Select-OmniNavSection {
 }
 
 function Show-OmniNavPanel {
-    <# .SYNOPSIS Internal: NavList selection changed - show the matching panel. #>
+    <# .SYNOPSIS Internal: NavList selection changed - load the section on first visit, then show its panel. #>
     $ui = $script:OmniUi
     $sel = $ui.Controls.NavList.SelectedItem
     if (-not $sel) { return }
     $panelName = [string]$sel.Tag
+    $section = Get-OmniSectionForHost -HostName $panelName
+    if ($section -and -not (Test-OmniSectionLoaded -Name $section)) {
+        # Parsed while its host is still collapsed, so it is laid out once, when shown.
+        try {
+            [void](Import-OmniSection -Name $section)
+        } catch {
+            Write-OmniStatus -Text "Could not load the $($sel.Content) section: $($_.Exception.Message)" -Announce
+        }
+    }
     foreach ($p in $script:OmniNavPanels) {
         $ui.Controls[$p].Visibility = if ($p -eq $panelName) { 'Visible' } else { 'Collapsed' }
     }
@@ -1970,10 +2127,13 @@ function Invoke-OmniShortcut {
         '^Cancel$' { Request-OmniCancel }
         '^Export$' { if ($ui.Controls.BtnExport.IsEnabled) { Invoke-OmniExportRequest } else { Write-OmniStatus -Text 'Nothing to export yet: run a scan first (F5).' -Announce } }
         '^Find$'   {
+            # Navigating loads the All Findings section (first time) synchronously.
             Select-OmniNavSection -Index ([Array]::IndexOf([string[]]$script:OmniNavPanels, 'PanelFindings')) -NoFocus
-            $ui.Window.UpdateLayout()
-            [void]$ui.Controls.TxtFindingFilter.Focus()
-            $ui.Controls.TxtFindingFilter.SelectAll()
+            if (Test-OmniSectionLoaded -Name 'Findings') {
+                $ui.Window.UpdateLayout()
+                [void]$ui.Controls.TxtFindingFilter.Focus()
+                $ui.Controls.TxtFindingFilter.SelectAll()
+            }
         }
         '^Theme$'  { Invoke-OmniThemeToggle }
         '^Help$'   { Show-OmniShortcutHelp }
@@ -1985,15 +2145,200 @@ function Invoke-OmniShortcut {
 # Window
 # ---------------------------------------------------------------------------
 
+function Initialize-OmniSection {
+    <#
+    .SYNOPSIS
+        Internal: wire a section that Import-OmniSection just loaded (handlers, initial
+        state). Its controls are in $ui.Controls by now.
+    #>
+    param([Parameter(Mandatory)] [string] $Name)
+    $ui = $script:OmniUi
+    $controls = $ui.Controls
+    switch ($Name) {
+        'DashboardModules' {
+            if ($ui.Session) { $controls.GridModules.ItemsSource = @(Get-OmniModuleRow -Session $ui.Session -GroupNames $ui.GroupNames) }
+        }
+
+        'Groups' {
+            $controls.BtnGroupOpen.Add_Click({ Open-OmniSelectedGroup })
+            $controls.BtnGroupBack.Add_Click({ Hide-OmniGroupDetail })
+            $controls.GridGroups.Add_PreviewKeyDown({
+                param($eventSender, $e)
+                if ($e.Key -eq [System.Windows.Input.Key]::Enter -and $eventSender.SelectedItem) {
+                    $e.Handled = $true
+                    Open-OmniSelectedGroup
+                }
+            })
+            $controls.GridGroups.Add_MouseDoubleClick({ Open-OmniSelectedGroup })
+            $controls.GroupDetailView.Add_PreviewKeyDown({
+                param($eventSender, $e)
+                $isBack = ($e.Key -eq [System.Windows.Input.Key]::Back -and -not ($e.OriginalSource -is [System.Windows.Controls.Primitives.TextBoxBase])) -or
+                          ($e.Key -eq [System.Windows.Input.Key]::System -and $e.SystemKey -eq [System.Windows.Input.Key]::Left)
+                if ($isBack) { $e.Handled = $true; Hide-OmniGroupDetail }
+            })
+            $controls.GridGroupFindings.Add_SelectionChanged({
+                $c = $script:OmniUi.Controls
+                if ($c.GridGroupFindings.SelectedItem) { $c.TxtGroupFindingDetail.Text = Format-OmniFindingDetail -Row $c.GridGroupFindings.SelectedItem }
+            })
+            $controls.GridGroupFindings.Add_PreviewKeyDown({
+                param($eventSender, $e)
+                if ($e.Key -eq [System.Windows.Input.Key]::Enter -and $eventSender.SelectedItem) {
+                    $e.Handled = $true
+                    Show-OmniFindingDetail -Grid $eventSender -Target $script:OmniUi.Controls.TxtGroupFindingDetail
+                }
+            })
+            Show-OmniGroupSummary
+        }
+
+        'Findings' {
+            $controls.TxtFindingFilter.Add_TextChanged({ Show-OmniFindingFilter })
+            $controls.CmbSeverityFilter.Add_SelectionChanged({ Show-OmniFindingFilter })
+            $controls.GridFindings.Add_SelectionChanged({
+                $c = $script:OmniUi.Controls
+                if ($c.GridFindings.SelectedItem) { $c.TxtFindingDetail.Text = Format-OmniFindingDetail -Row $c.GridFindings.SelectedItem }
+            })
+            $controls.GridFindings.Add_PreviewKeyDown({
+                param($eventSender, $e)
+                if ($e.Key -eq [System.Windows.Input.Key]::Enter -and $eventSender.SelectedItem) {
+                    $e.Handled = $true
+                    Show-OmniFindingDetail -Grid $eventSender -Target $script:OmniUi.Controls.TxtFindingDetail
+                }
+            })
+            $controls.GridFindings.Add_MouseDoubleClick({
+                param($eventSender, $e)
+                if ($eventSender.SelectedItem) { Show-OmniFindingDetail -Grid $eventSender -Target $script:OmniUi.Controls.TxtFindingDetail }
+            })
+            Show-OmniFindingFilter
+        }
+
+        'Diagnostics' {
+            $controls.BtnDiagEnableAll.Add_Click({
+                $ui = $script:OmniUi
+                foreach ($r in @($ui.DiagRows)) { if ($r) { $r.Enabled = $true } }
+                $ui.Controls.DiagGrid.Items.Refresh()
+            })
+            $controls.BtnDiagDisableAll.Add_Click({
+                $ui = $script:OmniUi
+                foreach ($r in @($ui.DiagRows)) { if ($r) { $r.Enabled = $false } }
+                $ui.Controls.DiagGrid.Items.Refresh()
+            })
+            $controls.BtnDiagRunSelected.Add_Click({
+                $ui = $script:OmniUi
+                $row = $ui.Controls.DiagGrid.SelectedItem
+                if (-not $row) {
+                    [System.Windows.MessageBox]::Show('Select a scanner in the list first.', 'OmniDiag', 'OK', 'Information') | Out-Null
+                    return
+                }
+                if (Test-OmniUiBusy) { return }
+                Select-OmniNavSection -Index 0 -NoFocus    # show the Dashboard for results
+                Start-OmniScan -IncludeModule @([string]$row.Name)
+            })
+            # A row's "Run" button runs just that one scanner; results land on the Dashboard.
+            # The handler is attached at the grid level and filters to Button clicks (the
+            # checkbox-toggle and column-header clicks are not [Button], so they're ignored).
+            $controls.DiagGrid.AddHandler(
+                [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent,
+                [System.Windows.RoutedEventHandler] {
+                    param($eventSender, $e)
+                    $btn = $e.OriginalSource -as [System.Windows.Controls.Button]
+                    if (-not $btn -or -not $btn.Tag) { return }
+                    if (Test-OmniUiBusy) { return }
+                    Select-OmniNavSection -Index 0 -NoFocus    # show the Dashboard for results
+                    Start-OmniScan -IncludeModule @([string]$btn.Tag)
+                })
+            # Rows come from the scanner catalog (Initialize-OmniDiagPanel, called by
+            # Show-OmniNavPanel, or by the deferred startup when the catalog arrives).
+        }
+
+        'Repair' {
+            $controls.BtnRepairRecommended.Add_Click({
+                $ui = $script:OmniUi
+                foreach ($r in @($ui.Controls.RepairGrid.ItemsSource)) { if ($r) { $r.Selected = [bool]$r.Recommended } }
+                $ui.Controls.RepairGrid.Items.Refresh()
+            })
+            $controls.BtnRepairClear.Add_Click({
+                $ui = $script:OmniUi
+                foreach ($r in @($ui.Controls.RepairGrid.ItemsSource)) { if ($r) { $r.Selected = $false } }
+                $ui.Controls.RepairGrid.Items.Refresh()
+            })
+            $controls.BtnRepairCancel.Add_Click({ Request-OmniRepairCancel })
+            $controls.BtnRunRepairs.Add_Click({ Invoke-OmniRepairRequest })
+            # The elevation check used to run at startup; it is only needed here.
+            if (-not (Test-OmniIsAdministrator)) {
+                $controls.TxtRepairAdminNote.Text =
+                    'Not elevated: repairs marked "Yes" under Admin will be skipped - re-run OmniDiag elevated for the full set. ' +
+                    $controls.TxtRepairAdminNote.Text
+            }
+            if (@($ui.RepairCatalog).Count -gt 0) { $controls.RepairGrid.ItemsSource = @($ui.RepairCatalog) }
+        }
+
+        'LocalAi' {
+            $controls.BtnAiCheck.Add_Click({ Start-OmniAiOperation -Mode Status })
+            $controls.BtnAiAnalyze.Add_Click({ Start-OmniAiOperation -Mode Analyze })
+            # The editable model box's inner text field is what takes keyboard focus; give
+            # it the combo box's name so screen readers (and UI Automation) announce it.
+            try {
+                $cmb = $controls.CmbAiModel
+                [void]$cmb.ApplyTemplate()
+                $edit = $cmb.Template.FindName('PART_EditableTextBox', $cmb)
+                if ($edit) { [System.Windows.Automation.AutomationProperties]::SetName($edit, 'Ollama model') }
+            } catch { $null = $_ }
+        }
+    }
+}
+
+function Write-OmniStartupLog {
+    <# .SYNOPSIS Internal: log the first-render time and the startup phase breakdown. #>
+    $ui = $script:OmniUi
+    if (-not $ui.Logger -or $null -eq $ui.StartupMs) { return }
+    $ms = $ui.StartupMs
+    try {
+        $ui.Logger.Log('Info', "GUI first render in $ms ms (target: under 2000 ms).", 'Gui', @{ StartupMs = $ms; TargetMs = 2000 })
+        $phases = Format-OmniStartupTiming -Marks $ui.StartupTimings
+        if ($phases) { $ui.Logger.Log('Info', "GUI startup phases (ms since entry): $phases", 'Gui', @{ StartupTimings = $ui.StartupTimings }) }
+        if ($ms -gt 2000) { $ui.Logger.Log('Warn', "GUI first render took $ms ms, over the 2000 ms target.", 'Gui', @{ StartupMs = $ms }) }
+    } catch { $null = $_ }
+}
+
+function Invoke-OmniPostRenderSetup {
+    <#
+    .SYNOPSIS
+        Internal: cheap UI-thread work that is not needed for first paint.
+
+    .DESCRIPTION
+        Queued at Background priority from ContentRendered (before the ApplicationIdle
+        background task): open the GUI log and record the startup timing, set the help
+        tooltip, register the group names, and load the Dashboard's Module Results grid.
+    #>
+    $ui = $script:OmniUi
+    if (-not $ui -or $ui.PostRenderDone) { return }
+    $ui.PostRenderDone = $true
+    try {
+        $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+        $ui.Logger = New-OmniLogger -Path (Get-OmniDataPath -Kind Logs -ChildPath "omnidiag-gui-$stamp.jsonl") -MinimumLevel Info
+    } catch { $ui.Logger = $null }
+    Write-OmniStartupLog
+    $ui.Controls.BtnHelp.ToolTip = Get-OmniShortcutHelpText
+    Initialize-OmniGroupCatalog
+    Show-OmniGroupSummary
+    try {
+        [void](Import-OmniSection -Name 'DashboardModules')
+    } catch {
+        Write-OmniStatus -Text "Could not load the module results: $($_.Exception.Message)"
+    }
+}
+
 function Initialize-OmniMainWindow {
     <#
     .SYNOPSIS
-        Internal: load the XAML, wire every handler, and return the (not yet shown) window.
+        Internal: load the shell XAML, wire its handlers, and return the (not yet shown) window.
 
     .DESCRIPTION
         Separate from Invoke-OmniWindow so tests can show the window modelessly. Must run
-        on an STA thread. Only cheap work happens here; anything slow is deferred until
-        after first paint (ContentRendered -> ApplicationIdle -> Invoke-OmniDeferredStartup).
+        on an STA thread. Only the shell (MainWindow.xaml) is parsed here; every other
+        section loads on first navigation (Import-OmniSection). Anything not needed for
+        first paint runs after it: ContentRendered -> Background (Invoke-OmniPostRenderSetup)
+        -> ApplicationIdle (Invoke-OmniDeferredStartup, background runspace).
     #>
     param(
         [string] $RootManifest, [string] $ModulesPath, [string] $RepairsPath,
@@ -2006,19 +2351,17 @@ function Initialize-OmniMainWindow {
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml -ErrorAction Stop
     Add-OmniStartupMark -Name 'WpfAssembliesLoaded' -Clock $StartupClock
 
-    # Parse the cached text directly (no XmlDocument round trip; the XAML has no inline
-    # text runs, so whitespace handling is the same).
+    # Parse the cached shell text directly (no XmlDocument round trip; the XAML has no
+    # inline text runs, so whitespace handling is the same).
     $window = [System.Windows.Markup.XamlReader]::Parse((Get-OmniMainWindowXaml))
+    Add-OmniStartupMark -Name 'ShellParsed' -Clock $StartupClock
+    # Everything first paint needs is parsed now (kept for continuity with older logs).
     Add-OmniStartupMark -Name 'XamlParsed' -Clock $StartupClock
 
+    # Section controls stay $null until their section loads (Import-OmniSection).
     $controls = @{}
-    foreach ($n in $script:OmniUiControlNames) { $controls[$n] = $window.FindName($n) }
-
-    $logger = $null
-    try {
-        $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-        $logger = New-OmniLogger -Path (Get-OmniDataPath -Kind Logs -ChildPath "omnidiag-gui-$stamp.jsonl") -MinimumLevel Info
-    } catch { $logger = $null }
+    foreach ($n in $script:OmniUiControlNames) { $controls[$n] = $null }
+    foreach ($n in $script:OmniShellControlNames) { $controls[$n] = $window.FindName($n) }
 
     # Shared GUI state (module scope so event handlers can reach it).
     $script:OmniUi = @{
@@ -2029,11 +2372,15 @@ function Initialize-OmniMainWindow {
         Manifest       = $RootManifest
         ModulesPath    = $ModulesPath
         RepairsPath    = $RepairsPath
-        Logger         = $logger
+        Logger         = $null   # opened after first paint (Invoke-OmniPostRenderSetup)
         StartupClock   = $StartupClock
         StartupMs      = $null
         StartupTimings = $null   # phase -> ms (OrderedDictionary), set at first render
         StartupTask    = $null
+        PostRenderDone = $false
+        Sections       = @{}     # loaded section name -> fragment root
+        SectionLoadMs  = @{}     # loaded section name -> load time (ms)
+        SectionStylesLoaded = $false
         Scan           = $null
         Session        = $null
         Timer          = $null
@@ -2058,18 +2405,10 @@ function Initialize-OmniMainWindow {
     }
     $ui = $script:OmniUi
 
+    # Essentials only before first paint: the effective theme (high contrast) and the
+    # shell's live regions. Help tooltip, group names, log file: Invoke-OmniPostRenderSetup.
     Sync-OmniEffectiveTheme -Initial
     foreach ($n in $script:OmniLiveRegionControls) { if ($controls[$n]) { [void](Enable-OmniLiveRegion -Element $controls[$n]) } }
-    $controls.BtnHelp.ToolTip = Get-OmniShortcutHelpText
-    Initialize-OmniGroupCatalog
-    Show-OmniGroupSummary
-    Show-OmniFindingFilter
-
-    if (-not (Test-OmniIsAdministrator)) {
-        $controls.TxtRepairAdminNote.Text =
-            'Not elevated: repairs marked "Yes" under Admin will be skipped - re-run OmniDiag elevated for the full set. ' +
-            $controls.TxtRepairAdminNote.Text
-    }
 
     # --- Timers (all on the UI thread) ---------------------------------
     $mkTimer = {
@@ -2105,110 +2444,9 @@ function Initialize-OmniMainWindow {
     $controls.BtnTheme.Add_Click({ Invoke-OmniThemeToggle })
     $controls.BtnHelp.Add_Click({ Show-OmniShortcutHelp })
 
-    # --- Navigation ------------------------------------------------------
+    # --- Navigation (loads a section on its first visit) -------------------
+    # Section handlers are wired by Initialize-OmniSection when each section loads.
     $controls.NavList.Add_SelectionChanged({ Show-OmniNavPanel })
-
-    # --- All Findings: filter, details, Enter ----------------------------
-    $controls.TxtFindingFilter.Add_TextChanged({ Show-OmniFindingFilter })
-    $controls.CmbSeverityFilter.Add_SelectionChanged({ Show-OmniFindingFilter })
-    $controls.GridFindings.Add_SelectionChanged({
-        $c = $script:OmniUi.Controls
-        if ($c.GridFindings.SelectedItem) { $c.TxtFindingDetail.Text = Format-OmniFindingDetail -Row $c.GridFindings.SelectedItem }
-    })
-    $controls.GridFindings.Add_PreviewKeyDown({
-        param($eventSender, $e)
-        if ($e.Key -eq [System.Windows.Input.Key]::Enter -and $eventSender.SelectedItem) {
-            $e.Handled = $true
-            Show-OmniFindingDetail -Grid $eventSender -Target $script:OmniUi.Controls.TxtFindingDetail
-        }
-    })
-    $controls.GridFindings.Add_MouseDoubleClick({
-        param($eventSender, $e)
-        if ($eventSender.SelectedItem) { Show-OmniFindingDetail -Grid $eventSender -Target $script:OmniUi.Controls.TxtFindingDetail }
-    })
-
-    # --- Groups: drill-down ----------------------------------------------
-    $controls.BtnGroupOpen.Add_Click({ Open-OmniSelectedGroup })
-    $controls.BtnGroupBack.Add_Click({ Hide-OmniGroupDetail })
-    $controls.GridGroups.Add_PreviewKeyDown({
-        param($eventSender, $e)
-        if ($e.Key -eq [System.Windows.Input.Key]::Enter -and $eventSender.SelectedItem) {
-            $e.Handled = $true
-            Open-OmniSelectedGroup
-        }
-    })
-    $controls.GridGroups.Add_MouseDoubleClick({ Open-OmniSelectedGroup })
-    $controls.GroupDetailView.Add_PreviewKeyDown({
-        param($eventSender, $e)
-        $isBack = ($e.Key -eq [System.Windows.Input.Key]::Back -and -not ($e.OriginalSource -is [System.Windows.Controls.Primitives.TextBoxBase])) -or
-                  ($e.Key -eq [System.Windows.Input.Key]::System -and $e.SystemKey -eq [System.Windows.Input.Key]::Left)
-        if ($isBack) { $e.Handled = $true; Hide-OmniGroupDetail }
-    })
-    $controls.GridGroupFindings.Add_SelectionChanged({
-        $c = $script:OmniUi.Controls
-        if ($c.GridGroupFindings.SelectedItem) { $c.TxtGroupFindingDetail.Text = Format-OmniFindingDetail -Row $c.GridGroupFindings.SelectedItem }
-    })
-    $controls.GridGroupFindings.Add_PreviewKeyDown({
-        param($eventSender, $e)
-        if ($e.Key -eq [System.Windows.Input.Key]::Enter -and $eventSender.SelectedItem) {
-            $e.Handled = $true
-            Show-OmniFindingDetail -Grid $eventSender -Target $script:OmniUi.Controls.TxtGroupFindingDetail
-        }
-    })
-
-    # --- Diagnostics tab: enable/disable all + per-tool run --------------
-    $controls.BtnDiagEnableAll.Add_Click({
-        $ui = $script:OmniUi
-        foreach ($r in @($ui.DiagRows)) { if ($r) { $r.Enabled = $true } }
-        $ui.Controls.DiagGrid.Items.Refresh()
-    })
-    $controls.BtnDiagDisableAll.Add_Click({
-        $ui = $script:OmniUi
-        foreach ($r in @($ui.DiagRows)) { if ($r) { $r.Enabled = $false } }
-        $ui.Controls.DiagGrid.Items.Refresh()
-    })
-    $controls.BtnDiagRunSelected.Add_Click({
-        $ui = $script:OmniUi
-        $row = $ui.Controls.DiagGrid.SelectedItem
-        if (-not $row) {
-            [System.Windows.MessageBox]::Show('Select a scanner in the list first.', 'OmniDiag', 'OK', 'Information') | Out-Null
-            return
-        }
-        if (Test-OmniUiBusy) { return }
-        Select-OmniNavSection -Index 0 -NoFocus    # show the Dashboard for results
-        Start-OmniScan -IncludeModule @([string]$row.Name)
-    })
-    # A row's "Run" button runs just that one scanner; results land on the Dashboard.
-    # The handler is attached at the grid level and filters to Button clicks (the
-    # checkbox-toggle and column-header clicks are not [Button], so they're ignored).
-    $controls.DiagGrid.AddHandler(
-        [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent,
-        [System.Windows.RoutedEventHandler] {
-            param($eventSender, $e)
-            $btn = $e.OriginalSource -as [System.Windows.Controls.Button]
-            if (-not $btn -or -not $btn.Tag) { return }
-            if (Test-OmniUiBusy) { return }
-            Select-OmniNavSection -Index 0 -NoFocus    # show the Dashboard for results
-            Start-OmniScan -IncludeModule @([string]$btn.Tag)
-        })
-
-    # --- Local AI -------------------------------------------------------
-    $controls.BtnAiCheck.Add_Click({ Start-OmniAiOperation -Mode Status })
-    $controls.BtnAiAnalyze.Add_Click({ Start-OmniAiOperation -Mode Analyze })
-
-    # --- Repair Center ----------------------------------------------------
-    $controls.BtnRepairRecommended.Add_Click({
-        $ui = $script:OmniUi
-        foreach ($r in @($ui.Controls.RepairGrid.ItemsSource)) { if ($r) { $r.Selected = [bool]$r.Recommended } }
-        $ui.Controls.RepairGrid.Items.Refresh()
-    })
-    $controls.BtnRepairClear.Add_Click({
-        $ui = $script:OmniUi
-        foreach ($r in @($ui.Controls.RepairGrid.ItemsSource)) { if ($r) { $r.Selected = $false } }
-        $ui.Controls.RepairGrid.Items.Refresh()
-    })
-    $controls.BtnRepairCancel.Add_Click({ Request-OmniRepairCancel })
-    $controls.BtnRunRepairs.Add_Click({ Invoke-OmniRepairRequest })
 
     # --- High contrast: follow the Windows setting live --------------------
     # SystemParameters.StaticPropertyChanged fires (on this UI thread) when the setting
@@ -2230,27 +2468,25 @@ function Initialize-OmniMainWindow {
         if ($ui.HighContrast -or (Test-OmniHighContrast)) { Sync-OmniEffectiveTheme }
     })
 
-    # --- First paint: measure startup, then start the deferred work ----------
+    # --- First paint: measure startup, then the deferred work ----------------
     $window.Add_ContentRendered({
         $ui = $script:OmniUi
         if ($null -ne $ui.StartupMs) { return }
         $ms = -1
         if ($ui.StartupClock) {
             Add-OmniStartupMark -Name 'ContentRendered' -Clock $ui.StartupClock
-            $ui.StartupClock.Stop(); $ms = [int]$ui.StartupClock.Elapsed.TotalMilliseconds
+            # The clock keeps running: section loads are marked on it afterwards.
+            $ms = [int]$ui.StartupClock.Elapsed.TotalMilliseconds
         }
         $ui.StartupTimings = $script:OmniStartupMarks
         $ui.StartupMs = $ms
         # Hidden diagnostic: readable through UI Automation (ItemStatus) by tests and tools.
         try { [System.Windows.Automation.AutomationProperties]::SetItemStatus($ui.Window, "StartupMs=$ms") } catch { $null = $_ }
-        if ($ui.Logger) {
-            try {
-                $ui.Logger.Log('Info', "GUI first render in $ms ms (target: under 2000 ms).", 'Gui', @{ StartupMs = $ms; TargetMs = 2000 })
-                $phases = Format-OmniStartupTiming -Marks $ui.StartupTimings
-                if ($phases) { $ui.Logger.Log('Info', "GUI startup phases (ms since entry): $phases", 'Gui', @{ StartupTimings = $ui.StartupTimings }) }
-                if ($ms -gt 2000) { $ui.Logger.Log('Warn', "GUI first render took $ms ms, over the 2000 ms target.", 'Gui', @{ StartupMs = $ms }) }
-            } catch { $null = $_ }
-        }
+        # Not needed for first paint: cheap UI-thread setup first (Background), then the
+        # slow work in a background runspace (ApplicationIdle).
+        [void]$ui.Window.Dispatcher.BeginInvoke(
+            [System.Windows.Threading.DispatcherPriority]::Background,
+            [Action] { Invoke-OmniPostRenderSetup })
         [void]$ui.Window.Dispatcher.BeginInvoke(
             [System.Windows.Threading.DispatcherPriority]::ApplicationIdle,
             [Action] { Invoke-OmniDeferredStartup })
@@ -2312,17 +2548,19 @@ function Invoke-OmniWindow {
     [void]$window.ShowDialog()
 }
 
-function Show-OmniDiagWindow {
+function Start-OmniGuiWindow {
     <#
     .SYNOPSIS
-        Launches the OmniDiag GUI. Ensures an STA thread (hosting one when needed).
+        Internal: launches the OmniDiag GUI. Ensures an STA thread (hosting one when needed).
 
     .DESCRIPTION
-        Opens the WPF window: Dashboard, Groups (per-group drill-down), All Findings
-        (filter + details), Diagnostics, Repair Center, and Local AI. Press F1 in the
-        window for keyboard shortcuts. The time from this call to the window's first
-        render is logged (OmniDiagData\logs\omnidiag-gui-*.jsonl) and exposed as the
-        window's UI Automation ItemStatus ("StartupMs=<n>").
+        The implementation behind Show-OmniDiagGui (and the deprecated pre-1.0 GUI
+        command, which Core/PublicApi.psm1 keeps as a wrapper). Opens the WPF window:
+        Dashboard, Groups (per-group drill-down), All Findings (filter + details),
+        Diagnostics, Repair Center, and Local AI. Press F1 in the window for keyboard
+        shortcuts. The time from this call to the window's first render is logged
+        (OmniDiagData\logs\omnidiag-gui-*.jsonl) and exposed as the window's UI
+        Automation ItemStatus ("StartupMs=<n>").
 
     .PARAMETER RootManifest
         Path to OmniDiag.psd1. Defaults to the sibling module manifest.
@@ -2337,7 +2575,7 @@ function Show-OmniDiagWindow {
         Initial theme: Light (default) or Dark. Ignored while Windows high contrast is on.
 
     .EXAMPLE
-        Show-OmniDiagWindow -Theme Dark
+        Start-OmniGuiWindow -Theme Dark
     #>
     [CmdletBinding()]
     param(
@@ -2346,7 +2584,6 @@ function Show-OmniDiagWindow {
         [string] $RepairsPath  = (Join-Path (Split-Path $script:OmniUiRoot -Parent) 'Repairs'),
         [ValidateSet('Dark', 'Light')] [string] $Theme = 'Light'
     )
-    if (Get-Command Write-OmniDeprecationWarning -ErrorAction SilentlyContinue) { Write-OmniDeprecationWarning -Name 'Show-OmniDiagWindow' -Replacement 'Show-OmniDiagGui' }
 
     # Startup clock: from here to first render. Kept when an outer MTA call handed one in
     # (together with the phase marks recorded so far).
@@ -2374,7 +2611,7 @@ function Show-OmniDiagWindow {
     $rs.ThreadOptions = 'ReuseThread'
     $rs.Open()
     Add-OmniStartupMark -Name 'StaRunspaceReady'
-    # Read the XAML here and hand it over, so the STA runspace does not read it again.
+    # Read the shell XAML here and hand it over, so the STA runspace does not read it again.
     $xamlText = $null
     try { $xamlText = Get-OmniMainWindowXaml } catch { $xamlText = $null }
     $ps = [PowerShell]::Create()
@@ -2396,7 +2633,7 @@ function Show-OmniDiagWindow {
                 Add-OmniStartupMark -Name 'ModuleImported'
             } $Clock $Marks $XamlText
         }
-        Show-OmniDiagWindow -RootManifest $Manifest -ModulesPath $ModulesPath -RepairsPath $RepairsPath -Theme $Theme
+        Start-OmniGuiWindow -RootManifest $Manifest -ModulesPath $ModulesPath -RepairsPath $RepairsPath -Theme $Theme
     }).AddParameters(@{
         Manifest = $RootManifest; ModulesPath = $ModulesPath; RepairsPath = $RepairsPath; Theme = $Theme
         Clock = $script:OmniStartupClock; Marks = $script:OmniStartupMarks; XamlText = $xamlText
@@ -2416,4 +2653,4 @@ function Show-OmniDiagWindow {
     }
 }
 
-Export-ModuleMember -Function @('Show-OmniDiagWindow', 'Set-OmniTheme', 'Get-OmniThemePalette')
+Export-ModuleMember -Function @('Start-OmniGuiWindow', 'Set-OmniTheme', 'Get-OmniThemePalette')
