@@ -1,11 +1,49 @@
 # OmniDiag status
 
-Baseline for the v1.0 program. Recorded at commit `ad0a369` (version 0.4.1), 2026-10-18,
-from the Phase 0 reconnaissance (repo inventory, build/test/lint run, gap analysis against
-the v1.0 specification). The plan to close the gaps is in [ROADMAP.md](ROADMAP.md);
-the target design is the "v1.0 target" section of [ARCHITECTURE.md](ARCHITECTURE.md).
+Current state of the v1.0 program. The plan is in [ROADMAP.md](ROADMAP.md); the target design
+is the "v1.0 target" section of [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Legend:** ✅ works · 🟡 partial · ❌ missing · 🔴 broken / violates a v1.0 principle
+
+## Phase log
+
+| Phase | State | Version | Evidence |
+|---|---|---|---|
+| 0 — Reconnaissance | ✅ Done 2026-10-18 | 0.4.1 | Baseline below; decisions approved (ROADMAP.md) |
+| 1 — Foundation | ✅ Done 2026-10-18 | 0.5.0 | PR #2; CI run 39154720085 green on all legs |
+| 2 — Diagnostic modules | Next | — | — |
+
+### Phase 1 results (0.5.0)
+
+| Acceptance criterion | Result | Evidence |
+|---|---|---|
+| Every plugin has a unique `Id`, a `Group`, a `NetworkAccess` | ✅ | `Tests/Core.Contract.Tests.ps1`, `Tests/Phase1.Acceptance.Tests.ps1` (incl. a dropped-duplicate mutation check) |
+| `list` / `scan --format json` validate against schema v1; golden-file tests | ✅ | `Tests/Cli.Router.Tests.ps1`, `Tests/Reporting.ReportV1.Tests.ps1`, `Tests/golden/`; a default scan over the real scanners validates (PowerShell 7 legs; `Test-Json -Schema` doesn't exist on 5.1) |
+| Every documented exit code produced by a test | ✅ | 0–4 and 10 from real CLI runs; 5 from a cancelled engine run; 11/12 from the repair engine with fake repairs; 20 from the router; doc table = `Get-OmniExitCodeTable` |
+| PSScriptAnalyzer 0 errors in CI; coverage reported | ✅ | Lint job green (97 files, 0 errors). Coverage on Windows pwsh 7: Core 88%, Repair 77.9%, Reporting 90.8% |
+| Static no-network test fails outside the allowlist | ✅ | `Tests/NoNetwork.Tests.ps1`: .NET/cmdlet/native-tool detector with self-tests and a mutation check; `.cmd` launchers scanned |
+| CI green on Windows pwsh 7, Windows PowerShell 5.1, Ubuntu | ✅ | Run 39154720085: Windows pwsh 7 395 pass / 3 skip, Windows PowerShell 5.1 391 / 7, Ubuntu 390 / 8, Windows 11 ARM64 395 / 3; lint and package green |
+| `--verbose` → Debug in the local log only; stdout carries only data | ✅ | Child-process tests in `Tests/Phase1.Acceptance.Tests.ps1` |
+
+**Open risks after Phase 1**
+- **Network probes still run by default** from `OmniDiag.ps1` and the GUI. The new CLI
+  already leaves `NetworkAccess` ≠ `None` scanners out unless they are named with `--module`.
+  Making the probes opt-in everywhere is Phase 2 (decision 1).
+- **Repair coverage is 77.9%**, below the 80% Phase 4 goal.
+- **Lint warnings**: about 74 remain (mostly deliberate empty catch blocks and `ShouldProcess`
+  on in-memory factories). Errors are gated; warnings are not yet.
+- **Dependency review** needs "Dependency graph" enabled in the repository settings; the job is
+  non-blocking until then.
+- **Unverified on real clients**: `.cmd` exit-code pass-through on a desktop, the real elevation
+  path for exit 4, Windows 10/11 client behavior (hosted runners are Windows Server).
+- `ARM64` leg is non-blocking until it has a green history (green so far).
+
+---
+
+## Baseline at 0.4.1 (Phase 0)
+
+Recorded at commit `ad0a369` (version 0.4.1), 2026-10-18, from the Phase 0 reconnaissance.
+Rows fixed in Phase 1 are marked in the defect table below.
 
 ## Summary
 
@@ -116,20 +154,20 @@ matches an English string, so it only works on English Windows).
 
 | Item | State | Where |
 |---|---|---|
-| Literal U+FEFF in a regex in a file without a BOM; likely breaks `.reg` header stripping on Windows PowerShell 5.1 (unverified on Windows) | 🔴 | `src/Core/RegistryScan.psm1:285` |
-| `-BrandLogo` / `-TimeoutSeconds` accepted but unused, so PDF reports never show the logo | 🔴 | `src/Reporting/Pdf.psm1:292-294` |
+| Literal U+FEFF in a regex in a file without a BOM; likely breaks `.reg` header stripping on Windows PowerShell 5.1 (unverified on Windows) | ✅ fixed 0.5.0 | `src/Core/RegistryScan.psm1:285` |
+| `-BrandLogo` / `-TimeoutSeconds` accepted but unused, so PDF reports never show the logo | ✅ fixed 0.5.0 (JPEG logos) | `src/Reporting/Pdf.psm1:292-294` |
 | Scanner can run SFC (scanners must be read-only) | 🔴 | `src/Modules/WindowsHealth.psm1:124-139` |
-| Assigns to automatic `$matches` | 🟡 | `src/Modules/WifiNetworks.psm1:95` |
-| Unused `$log` | 🟡 | `src/Modules/Reliability.psm1:46` |
+| Assigns to automatic `$matches` | ✅ fixed 0.5.0 | `src/Modules/WifiNetworks.psm1:95` |
+| Unused `$log` | ✅ fixed 0.5.0 | `src/Modules/Reliability.psm1:46` |
 | Documented `RunDism` option never implemented | 🟡 | `src/Modules/WindowsHealth.psm1:12,17` |
 | `Get-OmniEventCatalog` never called | 🟡 | `src/EventLog/EventLogCatalog.psm1:221` |
 | GUI re-implements the System Information scanner's CIM queries | 🟡 | `src/UI/OmniDiagGui.psm1:258` vs `src/Modules/SystemInformation.psm1:52-135` |
 | Very large functions | 🟡 | `Invoke-OmniWindow` 430 lines (`src/UI/OmniDiagGui.psm1:601`), `Export-OmniHtmlReport` 210, `Network` scan 167, `Invoke-OmniRepair` 166 |
 | Overlapping scanners | 🟡 | System/SystemInformation, Disk/Storage, SystemHealth/WindowsHealth (pending reboot), Performance/Processes/Cpu/Memory, `Win32_StartupCommand` ×3, `Get-MpComputerStatus` ×2 |
-| Stale committed artifact | 🟡 | `dist/OmniDiag-0.1.0-portable.zip` (+ `.sha256`); `dist/` not git-ignored |
-| Stale comments / headers / links | 🟡 | `src/Cli/OmniConsole.psm1:3-8`, `src/OmniDiag.psm1:36`, `Tests/Modules.All.Tests.ps1:5`, `CHANGELOG.md` link refs stop at 0.3.2 |
-| Tests write `OmniDiagData/` into the repo root | 🟡 | Test isolation (git-ignored, but not cleaned) |
-| Lint gate claimed but not enforced | 🟡 | `CONTRIBUTING.md:26,33-35` vs `.github/workflows/ci.yml` |
+| Stale committed artifact | ✅ fixed 0.5.0 | `dist/OmniDiag-0.1.0-portable.zip` (+ `.sha256`); `dist/` not git-ignored |
+| Stale comments / headers / links | ✅ fixed 0.5.0 (except `src/OmniDiag.psm1:36`) | `src/Cli/OmniConsole.psm1:3-8`, `src/OmniDiag.psm1:36`, `Tests/Modules.All.Tests.ps1:5`, `CHANGELOG.md` link refs stop at 0.3.2 |
+| Tests write `OmniDiagData/` into the repo root | ✅ fixed 0.5.0 (`build/Invoke-Tests.ps1`) | Test isolation (git-ignored, but not cleaned) |
+| Lint gate claimed but not enforced | ✅ fixed 0.5.0 | `CONTRIBUTING.md:26,33-35` vs `.github/workflows/ci.yml` |
 
 ## What can't be verified on GitHub-hosted runners
 
