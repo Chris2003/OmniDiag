@@ -355,11 +355,17 @@ Describe 'Exit codes reach the shell (child process)' {
     }
 
     It 'omnidiag.ps1 returns 10 for an unknown option' {
+        # Windows PowerShell 5.1 turns a child's stderr into an error record even with 2>$null;
+        # the usage message on stderr is expected here, so don't let it stop the test.
+        $ErrorActionPreference = 'Continue'
         & $script:PwshExe -NoProfile -File $script:CliScript scan --bogus 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 10
     }
 
     It 'OmniDiag.ps1 returns 10 for conflicting selections' {
+        # Windows PowerShell 5.1 turns a child's stderr into an error record even with 2>$null;
+        # the usage message on stderr is expected here, so don't let it stop the test.
+        $ErrorActionPreference = 'Continue'
         & $script:PwshExe -NoProfile -File (Join-Path $script:Root 'OmniDiag.ps1') -Profile HelpDesk -Workflow QuickTriage 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 10
     }

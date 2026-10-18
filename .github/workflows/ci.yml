@@ -140,6 +140,9 @@ jobs:
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'
+    # Needs "Dependency graph" enabled in the repository's security settings; non-blocking
+    # until it is, so a settings gap can't fail every pull request.
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
