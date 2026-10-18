@@ -399,7 +399,9 @@ function Export-OmniPdfReport {
         [string] $BrandColor
     )
 
-    $dir = Split-Path -Path $Path -Parent
+    # Canonical path; device paths, NTFS streams, and reserved names are refused.
+    $fullPath = Resolve-OmniOutputPath -Path $Path
+    $dir = Split-Path -Path $fullPath -Parent
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
     $summary = $Session.Summary
@@ -505,7 +507,7 @@ function Export-OmniPdfReport {
     }
     Add-OmniPdfParagraph -Doc $doc -Size 8 -Rgb $muted -Text $privacy
 
-    [System.IO.File]::WriteAllBytes(($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)), (ConvertTo-OmniPdfBinary -Doc $doc))
+    [System.IO.File]::WriteAllBytes($fullPath, (ConvertTo-OmniPdfBinary -Doc $doc))
     return $Path
 }
 

@@ -429,9 +429,15 @@ function Get-OmniCliFormatFromPath {
 }
 
 function Resolve-OmniCliPath {
-    <# .SYNOPSIS Internal: resolve a path against PowerShell's location (not the process directory). #>
+    <#
+    .SYNOPSIS
+        Internal: canonical --output / --redaction-map path, resolved against PowerShell's
+        location (not the process directory). Device paths (\\.\, \\?\), NTFS streams
+        (file:stream), and reserved names (NUL, CON, ...) are usage errors.
+    #>
     param([string] $Path)
-    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    try { return (Resolve-OmniOutputPath -Path $Path -Purpose '--output') }
+    catch { throw (New-OmniCliUsageError $_.Exception.Message) }
 }
 
 function Test-OmniCliDirectoryTarget {

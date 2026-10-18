@@ -14,8 +14,9 @@ Set-StrictMode -Version Latest
 
 function Get-OmniSafeName {
     param([string] $Value)
+    <# .SYNOPSIS Host-derived text as a file-name fragment: [A-Za-z0-9._-] only, never '.', '..', or a device name. #>
     if ([string]::IsNullOrWhiteSpace($Value)) { return 'host' }
-    return ($Value -replace '[^A-Za-z0-9._-]', '_')
+    return (ConvertTo-OmniSafeFileName -Name ($Value -replace '[^A-Za-z0-9._-]', '_') -Default 'host')
 }
 
 function Export-OmniReport {
@@ -34,7 +35,8 @@ function Export-OmniReport {
         Default: Html, Json, Csv.
 
     .PARAMETER BaseName
-        Base file name (no extension). Default: OmniDiag-<computer>-<timestamp>.
+        Base file name (no extension). Default: OmniDiag-<computer>-<timestamp>. Used as a
+        single file-name component: separators, ':', and other invalid characters become '_'.
 
     .PARAMETER BrandName
         Optional organization name for report branding.
@@ -102,8 +104,9 @@ function Export-OmniReport {
 
     if ($RedactionMapPath -and -not $Redact) { throw '-RedactionMapPath requires -Redact.' }
 
-    # Resolve relative paths against PowerShell's location (.NET file APIs use the process directory).
-    $OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
+    # Resolve relative paths against PowerShell's location (.NET file APIs use the process directory),
+    # canonicalize ('..' collapsed), and refuse device / stream targets (docs/SECURITY-REVIEW.md).
+    $OutputDirectory = Resolve-OmniOutputPath -Path $OutputDirectory -Purpose 'report directory'
     if ($BrandLogo) { $BrandLogo = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BrandLogo) }
     if (-not (Test-Path -LiteralPath $OutputDirectory)) {
         New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
@@ -129,10 +132,14 @@ function Export-OmniReport {
         # A caller-supplied name may embed the computer or user name too.
         $BaseName = ConvertTo-OmniRedacted -InputObject $BaseName -Context $ctx
     }
+    # The base name is one file-name component: no separators, '..', ':' streams, or device
+    # names, whatever the host (or caller) supplied - so no file can land outside the folder.
+    $BaseName = ConvertTo-OmniSafeFileName -Name $BaseName -Default 'OmniDiag-report'
 
     $files = [System.Collections.Generic.List[string]]::new()
     $warnings = [System.Collections.Generic.List[string]]::new()
     $base = Join-Path $OutputDirectory $BaseName
+    $null = Resolve-OmniOutputPath -Path "$base.json" -Root $OutputDirectory -Purpose 'report file'
 
     foreach ($fmt in ($Format | Select-Object -Unique)) {
         switch ($fmt) {
