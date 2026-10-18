@@ -9,7 +9,7 @@
         'Battery'               = @{ NetworkAccess = 'None' }
         'Benchmark'             = @{ NetworkAccess = 'None' }
         'Browser Diagnostics'   = @{ NetworkAccess = 'None' }
-        'Entra ID'              = @{ NetworkAccess = 'None' }
+        'Entra ID'              = @{ NetworkAccess = 'Internet' }
         'Environment Variables' = @{ NetworkAccess = 'None' }
         'GPU'                   = @{ NetworkAccess = 'None' }
         'Installed Software'    = @{ NetworkAccess = 'None' }
