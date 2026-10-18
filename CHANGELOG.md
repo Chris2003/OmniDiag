@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.6.0 (unreleased)
+
+Phase 2, wave A of the v1.0 roadmap: the shared foundation for the module groups.
+
+### Network
+- **Connectivity probes are opt-in** (owner decision 1): `--network-probes` (CLI),
+  `-NetworkProbes` (`OmniDiag.ps1`), or the "Run connectivity probes" GUI checkbox. Without it,
+  the Network, DNS Resolver, and Active Directory scanners do only local work and add a
+  "Connectivity probe not run" Information finding. Probe targets are configurable
+  (`Config.ProbeTargets`). Network-capable scanners now run in default, group, and plan scans.
+- **Runtime no-network test** (`build/Test-NoNetworkRuntime.ps1`, blocking CI job): audits
+  Windows Filtering Platform connections and DNS queries while PowerShell is blocked outbound,
+  requires a positive control to be detected, and fails on any outbound attempt from a default
+  scan or report.
+
+### Engine
+- Runspace-pool engine (`-MaxParallel`, default CPU count up to 8; `1` = sequential), per-module
+  `TimeoutSec` enforcement (a timeout is a Failed result, exit code 3), cancellation of running
+  modules, results in registration order, progress on the caller's thread, worker logs merged
+  into the single run log.
+- Structured skips: `skippedReason` RequiresElevation / NotSupported / Cancelled. New optional
+  manifest fields `SupportedPlatforms` and `Parallel` (`$false` runs on the caller's thread).
+- Event Logs collection bounded (2,000 events per channel, 20,000 total); Benchmark runs alone.
+
+### Groups
+- `omnidiag <group>` (e.g. `omnidiag network`), and cmdlets `Get-OmniDiagGroup`,
+  `Get-OmniDiagModule`, `Invoke-OmniDiagScan`, and one per group (`Get-OmniDiagSystem` …
+  `Get-OmniDiagSecurity`, `Get-OmniDiagExtras`) returning v1 finding objects.
+- Group documentation pages under `docs/modules/`; contract expectations split per group
+  (`Tests/data/scanner-groups/`).
+
+### CI
+- Scan performance job (`build/Measure-ScanPerformance.ps1`): median of three full scans
+  against the 60-second budget, startup time, and the slowest modules (soft gate).
+- The Windows ARM64 test leg now blocks merges.
+
+
 ## 0.5.0 (unreleased)
 
 Phase 1 (Foundation) of the v1.0 roadmap.

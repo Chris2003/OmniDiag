@@ -116,10 +116,7 @@ jobs:
     # Runtime half of the no-network enforcement (docs/ARCHITECTURE.md): WFP connection
     # auditing + an outbound firewall block on the PowerShell executables, then a default
     # scan and report; any outbound attempt or DNS query from their process tree fails it.
-    # Non-blocking only until Phase 2 wave A (opt-in --network-probes) is merged: before
-    # that the default scan still probes the network, so this job is expected to fail on
-    # main. The lead removes continue-on-error in the wave A merge to make it gating.
-    continue-on-error: true
+    # Blocking: connectivity probes run only with --network-probes.
     defaults:
       run:
         shell: pwsh

@@ -217,8 +217,10 @@ omnidiag version
 echo %ERRORLEVEL%                           :: 0 ok, 1 warnings, 2 critical, 3 partial, ...
 ```
 
-Scanners that need network access (`network.network`, `network.dns-resolver`,
-`extras.active-directory`) run only when named with `--module`. JSON output follows
+A default scan never touches the network: the connectivity probes in `network.network`,
+`network.dns-resolver`, and `extras.active-directory` run only with `--network-probes`
+(`-NetworkProbes` for `OmniDiag.ps1`, a checkbox in the GUI). `omnidiag <group>` scans one
+group, e.g. `omnidiag security --format md`. JSON output follows
 [schemas/omnidiag-report.v1.json](schemas/omnidiag-report.v1.json). See
 [docs/CLI.md](docs/CLI.md) for every option and exit code and [docs/SCHEMA.md](docs/SCHEMA.md)
 for the report format. `OmniDiag.ps1` sets the same exit codes.
