@@ -60,6 +60,52 @@ and Windows blocks it, unblock the files once:
 Get-ChildItem -Recurse -File | Unblock-File
 ```
 
+## Zero footprint / USB use
+
+OmniDiag is built to run from wherever it was copied: your Downloads folder, a
+network share, or a USB stick. It keeps **everything it writes** in an
+`OmniDiagData` folder **next to the tool**:
+
+| Folder | Contents |
+|---|---|
+| `OmniDiagData\logs` | Structured `.jsonl` run logs (scans and repairs) |
+| `OmniDiagData\sessions` | A JSON snapshot of every console scan (for `-CompareWith Last` / `-FromSession Last`) |
+| `OmniDiagData\reports` | Reports (default location for the console, GUI, and `Export-OmniReport`) |
+| `OmniDiagData\backups` | `.reg` backups taken before the registry-cleanup repair |
+| `OmniDiagData\temp` | Scratch files; removed when OmniDiag exits |
+| `OmniDiagData\cache` | PowerShell's module-analysis cache (launchers only) |
+
+Nothing is written to `%TEMP%`, `%APPDATA%`, `%LOCALAPPDATA%`, or the registry by
+OmniDiag itself, and no install, service, scheduled task, or execution-policy change
+is made. When you remove the folder or unplug the USB stick, no OmniDiag files
+remain on the host. On a USB stick, your reports and logs leave with you.
+
+The `.cmd` launchers go one step further for the PowerShell process they start
+(settings apply to that process only):
+
+- `TEMP`/`TMP` point at `OmniDiagData\temp`, so .NET and PowerShell scratch files
+  stay on the stick too. (The **Clear Temporary Files** repair still cleans the
+  user's real temp folder.)
+- `PSModuleAnalysisCachePath` points at `OmniDiagData\cache`, so PowerShell doesn't
+  write its module cache to `%LOCALAPPDATA%`.
+- PowerShell 7 telemetry and the update check are switched off.
+
+**Use the `.cmd` launchers on a USB stick.** Running `OmniDiag.ps1` directly still
+keeps OmniDiag's own files in `OmniDiagData`, but PowerShell may write its module
+cache to the profile.
+
+If the tool folder is read-only (e.g. write-protected media), OmniDiag warns you and
+falls back to `%TEMP%\OmniDiag`. Set `OMNIDIAG_DATA` to choose another location.
+
+### What zero footprint can't cover
+
+Windows records some things about *any* program that runs, and no portable tool can
+prevent them: USB device history (`USBSTOR`), Prefetch/Amcache execution records,
+Defender scan history, and PowerShell event logs if your organization enables
+script-block or module logging. **Repairs change the system by design**, and the risky
+ones create a System Restore point first. Use `-RepairDryRun` to look without touching
+anything.
+
 ## Common commands
 
 ```powershell
@@ -74,6 +120,12 @@ Get-ChildItem -Recurse -File | Unblock-File
 
 # Scan then open the Repair Center (dry-run: describes, changes nothing)
 ./OmniDiag.ps1 -Repair -RepairDryRun
+
+# After a fix: re-scan and compare with the previous scan
+./OmniDiag.ps1 -CompareWith Last
+
+# Search the last saved scan and the approved runbooks
+./OmniDiag.ps1 -FromSession Last -Search 'printer offline'
 ```
 
 All the same switches work through `OmniDiag.cmd`, e.g.

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.4.0
+
+### Portable, zero-footprint operation
+- OmniDiag now keeps everything it writes in an `OmniDiagData` folder next to the tool:
+  logs, reports, saved sessions, registry backups, and scratch files. Nothing goes to
+  `%TEMP%`, `%APPDATA%`, or `%LOCALAPPDATA%`, so it can run from the download folder or
+  a USB stick and leave no OmniDiag files behind (`Get-OmniDataRoot`, `Get-OmniDataPath`).
+- The `.cmd` launchers point `TEMP`/`TMP` and PowerShell's module-analysis cache at the
+  tool folder and turn off PowerShell 7 telemetry and the update check, for that process only.
+- Falls back to `%TEMP%\OmniDiag` with a warning when the tool folder is read-only;
+  `OMNIDIAG_DATA` overrides the location.
+- The Clear Temporary Files repair still cleans the user's real temp folder when launched
+  from the portable launchers.
+
+### Version 5 complete — runbooks, search, multi-turn AI, before/after
+- Organization-owned Markdown runbooks with front matter (`runbooks/`, `-RunbookPath`,
+  `OMNIDIAG_RUNBOOK_PATH`); only `status: approved` runbooks are used. Matching runbooks
+  are listed after every console scan (`Get-OmniRunbook`, `Find-OmniRunbook`).
+- Saved sessions: every console scan is saved to `OmniDiagData\sessions`; `-FromSession`
+  and `Import-OmniSession` reload a JSON report, report .zip, or `Last`.
+- Offline plain-language search over findings and approved runbooks (`-Search`,
+  `Search-OmniEvidence`).
+- Multi-turn local Ollama conversation (`-AiChat`, `New-OmniAssistantConversation`,
+  `Invoke-OmniAssistantTurn`): retrieves evidence for each turn, keeps bounded history, and
+  validates every cited finding/runbook ID. Citations the model invents are flagged and ignored.
+- Before/after comparison (`-CompareWith`, `Compare-OmniSession`): resolved, new, and
+  worsened/improved findings, score delta, module status changes, and an overall verdict.
+
+### Fixed
+- The console launcher failed to start any scan without `-Profile` or `-Workflow`
+  (an empty value was passed to a validated parameter).
+
+### Other
+- Added `CREDITS.md` and an authorship and AI-disclosure section to the README.
+
 ## 0.3.2
 
 - Added a dedicated Local AI page to the WPF GUI with editable model, loopback endpoint, and technician question controls.

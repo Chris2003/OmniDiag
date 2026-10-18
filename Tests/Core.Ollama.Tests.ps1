@@ -43,3 +43,40 @@ Describe 'Local Ollama integration' {
         { Invoke-OmniOllamaAnalysis -Session $script:Session -Model 'gemma4:e2b' -Transport $missing } | Should -Throw '*ollama pull gemma4:e2b*'
     }
 }
+
+Describe 'Multi-turn local assistant' {
+    BeforeAll {
+        $script:Runbook = [pscustomobject]@{ Id = 'rb-dns'; Title = 'DNS resolution failures'; Approved = $true; Owner = 'Net'; AppliesTo = @('network/dns'); Tags = @('dns'); Body = 'Check resolvers.' }
+        $script:Requests = [System.Collections.Generic.List[object]]::new()
+        $script:ChatTransport = {
+            param($method, $uri, $body)
+            if ($uri -like '*/api/tags') { return [pscustomobject]@{ models = @([pscustomobject]@{ model = 'gemma4:e2b' }) } }
+            $script:Requests.Add($body)
+            return [pscustomobject]@{ message = [pscustomobject]@{ role = 'assistant'; content = '{"answer":"Follow the DNS runbook.","findingIds":["network-dns-failure","made-up-id"],"runbookIds":["rb-dns"],"requiresApproval":false,"suggestedQuestions":["Which resolvers are configured?"],"limitations":[]}' } }
+        }
+    }
+
+    It 'grounds each turn in retrieved findings and runbooks and keeps history' {
+        $conv = New-OmniAssistantConversation -Session $script:Session -Runbook @($script:Runbook) -Model 'gemma4:e2b' -Transport $script:ChatTransport
+        $t1 = Invoke-OmniAssistantTurn -Conversation $conv -Question 'Why is DNS failing?'
+        $t1.Answer | Should -Be 'Follow the DNS runbook.'
+        $t1.FindingIds | Should -Be @('network-dns-failure')
+        $t1.RunbookIds | Should -Be @('rb-dns')
+        $t1.UnverifiedCitations | Should -Be @('made-up-id')
+        $t1.EvidenceIds | Should -Contain 'rb-dns'
+
+        $t2 = Invoke-OmniAssistantTurn -Conversation $conv -Question 'And what should I check first?'
+        $t2.Number | Should -Be 2
+        $last = $script:Requests[$script:Requests.Count - 1]
+        @($last.messages).Count | Should -Be 4
+        $last.messages[1].content | Should -Be 'Why is DNS failing?'
+        $last.messages[3].content | Should -Match 'Evidence for this turn'
+    }
+
+    It 'ignores unapproved runbooks and rejects remote endpoints' {
+        $draft = [pscustomobject]@{ Id = 'rb-x'; Title = 'x'; Approved = $false; AppliesTo = @(); Tags = @(); Body = '' }
+        (New-OmniAssistantConversation -Session $script:Session -Runbook @($draft) -Transport $script:ChatTransport).Runbooks.Count | Should -Be 0
+        { New-OmniAssistantConversation -Session $script:Session -Endpoint 'http://10.0.0.5:11434' } | Should -Throw '*loopback*'
+    }
+}
+

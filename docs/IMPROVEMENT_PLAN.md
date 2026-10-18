@@ -60,7 +60,7 @@ collector accurately declares its supported operating systems.
 
 ## Phase 5 — Evidence-grounded assistance (local foundation implemented in 0.3.0)
 
-- Add natural-language search over the local session and approved runbooks.
+- Add natural-language search over the local session and approved runbooks. **Implemented in 0.4.0 (`Search-OmniEvidence`, multi-turn `-AiChat`).**
 - Generate incident summaries that cite finding IDs and never invent missing facts. **Implemented through optional local Ollama analysis.**
 - Recommend the next diagnostic step based on unresolved uncertainty. **Implemented through structured advisory output.**
 - Require explicit approval for every mutation with audit, rollback, and verification data. **The assistant has no mutation path; broader repair audit remains planned.**

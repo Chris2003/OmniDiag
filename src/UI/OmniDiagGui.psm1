@@ -924,7 +924,7 @@ function Invoke-OmniWindow {
             try {
                 Import-Module $Manifest -Force -DisableNameChecking
                 $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-                $logPath = Join-Path ([System.IO.Path]::GetTempPath()) "OmniDiag/omnidiag-repair-$stamp.jsonl"
+                $logPath = Get-OmniDataPath -Kind Logs -ChildPath "omnidiag-repair-$stamp.jsonl"
                 $log = New-OmniLogger -Path $logPath -MinimumLevel Info -Console:$false
                 # Re-discover in THIS runspace: registration PSModuleInfo objects are
                 # runspace-affine, so we pass repair Names across the boundary, not objects.
@@ -970,7 +970,7 @@ function Invoke-OmniWindow {
         $formats = Show-OmniExportDialog -Owner $ui.Window -Theme $ui.Theme
         if (-not $formats) { return }
         try {
-            $outDir = Join-Path (Get-Location) 'reports'
+            $outDir = Get-OmniDataPath -Kind Reports
             $set = Export-OmniReport -Session $ui.Session -OutputDirectory $outDir -Format $formats
             $ui.Controls.TxtStatus.Text = "Reports written to $($set.OutputDirectory)"
             $dialog = "Exported: $($formats -join ', ')`n`nReports written to:`n$($set.OutputDirectory)"

@@ -37,7 +37,7 @@ function Export-OmniReportPackage {
         [string] $BrandColor
     )
 
-    $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("OmniDiag-pkg-" + [System.IO.Path]::GetRandomFileName())
+    $staging = Join-Path (Get-OmniDataPath -Kind Temp) ("pkg-" + [System.IO.Path]::GetRandomFileName())
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
     try {
         Export-OmniHtmlReport -Session $Session -Path (Join-Path $staging 'report.html') -BrandName $BrandName -BrandLogo $BrandLogo -BrandColor $BrandColor | Out-Null

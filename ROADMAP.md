@@ -10,6 +10,10 @@ gated on review before the next begins.
 - [x] **M4** Reporting engine: HTML, JSON, CSV, ZIP package
 - [x] **M5** WPF GUI: dashboard, left navigation, dark/light, progress, cancel
 
+## Portable, zero-footprint operation (complete, 0.4.0)
+- [x] Run from the download folder or a USB stick; logs, reports, sessions, backups, and
+      scratch files stay in `OmniDiagData` next to the tool (see `PORTABLE.md`)
+
 ## Version 2 — Repair & richer output (complete)
 - [x] **M6** Repair Center (flush DNS, reset Winsock, IP release/renew, restart
       services, Print Spooler, clear temp, SFC, DISM, Windows Update reset, restart
@@ -50,16 +54,22 @@ If added later, it will be a separate opt-in connector rather than part of a loc
 
 See `docs/IMPROVEMENT_PLAN.md` for the detailed phased product and engineering plan.
 
-## Version 4 — Cross-platform
+## Version 4 — Cross-platform (deferred)
+Paused while the Windows enterprise and local-assistance experience matures; see
+`docs/IMPROVEMENT_PLAN.md` Phase 4.
 - [ ] Linux support
 - [ ] macOS support
 
-## Version 5 — AI-assisted troubleshooting
+## Version 5 — AI-assisted troubleshooting (complete)
 - [x] Optional local Ollama analysis with configurable Gemma models
 - [x] Structured priorities, cross-module hypotheses, next steps, and finding-ID citations
 - [x] Loopback-only, no cloud tags, minimized evidence, and no repair execution path
-- [ ] Multi-turn natural-language search over saved findings and approved runbooks
-- [ ] Before/after comparison and organization-owned runbook retrieval
+- [x] Multi-turn natural-language search over saved findings and approved runbooks
+      (`Search-OmniEvidence`, `-Search`, and the `-AiChat` / `Invoke-OmniAssistantTurn`
+      conversation with validated finding/runbook citations)
+- [x] Before/after comparison (`Compare-OmniSession`, `-CompareWith Last`) and
+      organization-owned runbook retrieval (`Get-OmniRunbook` / `Find-OmniRunbook`,
+      approved-only, from `runbooks/`, `-RunbookPath`, or `OMNIDIAG_RUNBOOK_PATH`)
 
 ## Diagnostic scanners
 Expanded from the original consolidated modules to **49 scanners** across 13

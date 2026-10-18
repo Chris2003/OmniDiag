@@ -122,4 +122,144 @@ function Invoke-OmniOllamaAnalysis {
     }
 }
 
-Export-ModuleMember -Function @('Test-OmniOllama','Invoke-OmniOllamaAnalysis')
+function New-OmniAssistantConversation {
+    <#
+    .SYNOPSIS
+        Starts a multi-turn, evidence-grounded conversation about a session.
+
+    .DESCRIPTION
+        Each turn retrieves the findings and approved runbooks most relevant to the
+        question (Search-OmniEvidence), sends them with the prior turns to a local
+        Ollama model, and validates every cited finding/runbook ID against the
+        evidence that was actually supplied. Advisory only: no tool or repair path.
+
+    .PARAMETER Session
+        A live session or one loaded with Import-OmniSession.
+
+    .PARAMETER Runbook
+        Approved runbooks the assistant may cite. Defaults to Get-OmniRunbook.
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][pscustomobject] $Session,
+        [object[]] $Runbook,
+        [string] $Model = 'gemma4:e2b',
+        [string] $Endpoint = 'http://127.0.0.1:11434',
+        [ValidateRange(1, 40)][int] $EvidencePerTurn = 12,
+        [ValidateRange(1, 20)][int] $MaxHistoryTurns = 6,
+        [scriptblock] $Transport
+    )
+    $base = Assert-OmniLocalOllamaEndpoint -Endpoint $Endpoint
+    if ($Model -match '(^|[:-])cloud($|[:-])') { throw 'Cloud-tag Ollama models are disabled; choose a locally installed model.' }
+    if (-not $PSBoundParameters.ContainsKey('Runbook')) { $Runbook = @(Get-OmniRunbook) }
+    return [pscustomobject]@{
+        PSTypeName      = 'OmniDiag.AssistantConversation'
+        Session         = $Session
+        Runbooks        = @($Runbook | Where-Object { $_ -and $_.Approved })
+        Model           = $Model
+        Endpoint        = $base
+        EvidencePerTurn = $EvidencePerTurn
+        MaxHistoryTurns = $MaxHistoryTurns
+        Transport       = $Transport
+        Turns           = [System.Collections.Generic.List[object]]::new()
+        SeenFindingIds  = [System.Collections.Generic.HashSet[string]]::new()
+        SeenRunbookIds  = [System.Collections.Generic.HashSet[string]]::new()
+    }
+}
+
+function Invoke-OmniAssistantTurn {
+    <#
+    .SYNOPSIS
+        Asks one question in an assistant conversation and returns the cited answer.
+
+    .OUTPUTS
+        OmniDiag.AssistantTurn: Answer, FindingIds, RunbookIds, SuggestedQuestions,
+        Limitations, RequiresApproval, UnverifiedCitations (IDs the model cited that
+        were never supplied - shown to the technician, never trusted).
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][pscustomobject] $Conversation,
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $Question
+    )
+    $c = $Conversation
+    $status = Test-OmniOllama -Endpoint $c.Endpoint -Model $c.Model -Transport $c.Transport
+    if (-not $status.Available) { throw "Ollama is not available at $($status.Endpoint): $($status.Error)" }
+    if (-not $status.ModelPresent) { throw "Model '$($c.Model)' is not installed locally. Run: ollama pull $($c.Model)" }
+
+    # Follow-ups ("what about the second one?") lean on the previous question for retrieval.
+    $retrievalQuery = $Question
+    if ($c.Turns.Count -gt 0) { $retrievalQuery = "$Question $($c.Turns[$c.Turns.Count - 1].Question)" }
+    $hits = @(Search-OmniEvidence -Query $retrievalQuery -Session $c.Session -Runbook $c.Runbooks -Top $c.EvidencePerTurn)
+    if (@($hits | Where-Object Type -eq 'Finding').Count -eq 0) {
+        # Nothing matched by keyword: fall back to the most severe findings so the model still has grounding.
+        $hits += @(Get-OmniSessionFinding -Session $c.Session | Sort-Object @{ Expression = { Get-OmniSeverityRank $_.Severity }; Descending = $true } |
+            Select-Object -First ([math]::Min(6, $c.EvidencePerTurn)) | ForEach-Object { [pscustomobject]@{ Type = 'Finding'; Id = $_.Id; Item = $_ } })
+    }
+
+    $evidence = [ordered]@{
+        healthScore = if ($c.Session.PSObject.Properties['Summary'] -and $c.Session.Summary) { $c.Session.Summary.Score } else { $null }
+        findings = @(foreach ($h in $hits | Where-Object Type -eq 'Finding') {
+            [void]$c.SeenFindingIds.Add($h.Id)
+            [ordered]@{ id = $h.Id; severity = $h.Item.Severity; component = $h.Item.Component; title = $h.Item.Title; likelyCause = $h.Item.LikelyCause; recommendation = $h.Item.Recommendation }
+        })
+        runbooks = @(foreach ($h in $hits | Where-Object Type -eq 'Runbook') {
+            [void]$c.SeenRunbookIds.Add($h.Id)
+            $body = [string]$h.Item.Body
+            [ordered]@{ id = $h.Id; title = $h.Item.Title; owner = $h.Item.Owner; steps = $(if ($body.Length -gt 1500) { $body.Substring(0, 1500) + '...' } else { $body }) }
+        })
+    }
+
+    $system = 'You are an evidence-grounded IT troubleshooting assistant in a multi-turn conversation with a technician. Use only OmniDiag evidence and organization-approved runbooks supplied in this conversation. Cite the finding IDs and runbook IDs you rely on. Prefer the approved runbook procedure when one applies. If the evidence does not answer the question, say so. Never claim a repair ran, never invent facts, never request secrets, never recommend bypassing security controls. Set requiresApproval=true when the answer suggests any change to the device.'
+    $messages = [System.Collections.Generic.List[object]]::new()
+    $messages.Add([ordered]@{ role = 'system'; content = $system })
+    $history = @($c.Turns | Select-Object -Last $c.MaxHistoryTurns)
+    foreach ($t in $history) {
+        $messages.Add([ordered]@{ role = 'user'; content = $t.Question })
+        $messages.Add([ordered]@{ role = 'assistant'; content = ([ordered]@{ answer = $t.Answer; findingIds = @($t.FindingIds); runbookIds = @($t.RunbookIds) } | ConvertTo-Json -Depth 4 -Compress) })
+    }
+    $messages.Add([ordered]@{ role = 'user'; content = "Technician question:`n$Question`n`nEvidence for this turn (JSON):`n$($evidence | ConvertTo-Json -Depth 8 -Compress)" })
+
+    $schema = [ordered]@{
+        type = 'object'
+        properties = [ordered]@{
+            answer = @{ type = 'string' }
+            findingIds = @{ type = 'array'; items = @{ type = 'string' } }
+            runbookIds = @{ type = 'array'; items = @{ type = 'string' } }
+            requiresApproval = @{ type = 'boolean' }
+            suggestedQuestions = @{ type = 'array'; items = @{ type = 'string' } }
+            limitations = @{ type = 'array'; items = @{ type = 'string' } }
+        }
+        required = @('answer', 'findingIds', 'runbookIds', 'requiresApproval', 'suggestedQuestions', 'limitations')
+    }
+    $body = [ordered]@{ model = $c.Model; messages = @($messages); stream = $false; think = $false; format = $schema; keep_alive = '5m'; options = @{ temperature = 0.1; num_predict = 700 } }
+    $response = Invoke-OmniOllamaRequest -Method POST -Uri "$($c.Endpoint)/api/chat" -Body $body -Transport $c.Transport
+    $content = if ($response.PSObject.Properties['message'] -and $response.message) { [string]$response.message.content } else { $null }
+    if (-not $content) { throw 'Ollama returned no answer content.' }
+    try { $reply = $content | ConvertFrom-Json -ErrorAction Stop } catch { throw "Ollama returned invalid structured JSON: $($_.Exception.Message)" }
+    if (-not $reply.PSObject.Properties['answer']) { throw "Ollama response is missing required property 'answer'." }
+
+    $prop = { param($name) if ($reply.PSObject.Properties[$name]) { @($reply.$name | Where-Object { $_ } | ForEach-Object { [string]$_ }) } else { @() } }
+    $citedFindings = & $prop 'findingIds'
+    $citedRunbooks = & $prop 'runbookIds'
+    $turn = [pscustomobject]@{
+        PSTypeName          = 'OmniDiag.AssistantTurn'
+        Number              = $c.Turns.Count + 1
+        Question            = $Question
+        Answer              = [string]$reply.answer
+        FindingIds          = @($citedFindings | Where-Object { $c.SeenFindingIds.Contains($_) } | Select-Object -Unique)
+        RunbookIds          = @($citedRunbooks | Where-Object { $c.SeenRunbookIds.Contains($_) } | Select-Object -Unique)
+        UnverifiedCitations = @(@($citedFindings | Where-Object { -not $c.SeenFindingIds.Contains($_) }) + @($citedRunbooks | Where-Object { -not $c.SeenRunbookIds.Contains($_) }) | Select-Object -Unique)
+        RequiresApproval    = [bool]$(if ($reply.PSObject.Properties['requiresApproval']) { $reply.requiresApproval } else { $true })
+        SuggestedQuestions  = & $prop 'suggestedQuestions'
+        Limitations         = & $prop 'limitations'
+        EvidenceIds         = @($hits | ForEach-Object { $_.Id } | Select-Object -Unique)
+        GeneratedAt         = Get-Date
+    }
+    $c.Turns.Add($turn)
+    return $turn
+}
+
+Export-ModuleMember -Function @('Test-OmniOllama','Invoke-OmniOllamaAnalysis','New-OmniAssistantConversation','Invoke-OmniAssistantTurn')

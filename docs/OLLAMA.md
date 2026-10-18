@@ -61,6 +61,36 @@ $analysis.Correlations
 $analysis.NextSteps
 ```
 
+### Multi-turn conversation over saved findings and runbooks
+
+Ask follow-up questions about a scan, including a saved one, with your
+organization's approved runbooks in scope:
+
+```powershell
+.\OmniDiag.ps1 -FromSession Last -AiChat
+.\OmniDiag.ps1 -Workflow NetworkConnectivity -AiChat -RunbookPath \\server\share\runbooks
+```
+
+```powershell
+$session = Import-OmniSession -Path .\OmniDiagData\sessions\session-20261018-101500.json
+$chat = New-OmniAssistantConversation -Session $session -Model gemma4:e2b
+$turn = Invoke-OmniAssistantTurn -Conversation $chat -Question 'Why does the VPN connect but shares fail?'
+$turn.Answer; $turn.FindingIds; $turn.RunbookIds
+$turn = Invoke-OmniAssistantTurn -Conversation $chat -Question 'Which of those should I check first?'
+```
+
+Each turn:
+
+1. Retrieves the most relevant findings and approved runbooks for the question with
+   the same offline ranking as `Search-OmniEvidence` (follow-ups also use the previous
+   question, so "which of those…" stays on topic).
+2. Sends that evidence plus a bounded history (default: last 6 turns) to Ollama's
+   `/api/chat` with a strict JSON schema.
+3. Checks every cited finding and runbook ID against the evidence actually supplied.
+   IDs the model made up are moved to `UnverifiedCitations` and flagged in the console.
+
+Only runbooks with `status: approved` are ever sent. Drafts are ignored.
+
 Check readiness without generating anything:
 
 ```powershell
@@ -75,7 +105,9 @@ Test-OmniOllama -Model gemma4:e2b
 - Pass findings, raw report files, logs, host identity, and scanner metrics are not
   sent. The prompt contains only the health score, plan name, and a bounded list of
   non-pass finding IDs, titles, components, likely causes, and recommendations.
-- Output must cite finding IDs and distinguish uncertainty.
+- Output must cite finding IDs and distinguish uncertainty. In conversations, cited
+  IDs are verified against the supplied evidence; anything else is flagged, never trusted.
+- Runbook text is sent only from approved runbooks and is truncated per runbook.
 - The assistant has no tool or repair execution path. Any mutating suggestion is
   labeled as requiring approval and must be validated against organizational policy.
 

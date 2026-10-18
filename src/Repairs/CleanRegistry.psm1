@@ -52,7 +52,7 @@ function Invoke-OmniRepairAction {
     }
 
     $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-    $backup = Join-Path ([System.IO.Path]::GetTempPath()) "OmniDiag\RegBackup-$stamp.reg"
+    $backup = Get-OmniDataPath -Kind Backups -ChildPath "RegBackup-$stamp.reg"
     $byCat = (@($entries | Group-Object Category | Sort-Object Count -Descending | ForEach-Object { "$($_.Count) $($_.Name)" }) -join ', ')
 
     # 1) Backup first (skipped in dry-run; the action captures $entries/$backup from this scope).

@@ -3,7 +3,7 @@
     # OmniDiag module manifest
     # ---------------------------------------------------------------------
     RootModule        = 'OmniDiag.psm1'
-    ModuleVersion     = '0.3.2'
+    ModuleVersion     = '0.4.0'
     GUID              = 'b6e9d0c2-7a4d-4f3e-9c1a-0d2f5a8e10b4'
     Author            = 'OmniDiag Contributors'
     CompanyName       = 'OmniDiag'
@@ -16,8 +16,11 @@
     # exported functions are re-exported per FunctionsToExport below.
     NestedModules = @(
         'Core/Models.psm1',
+        'Core/Paths.psm1',
         'Core/Logging.psm1',
         'Core/Workflows.psm1',
+        'Core/Runbooks.psm1',
+        'Core/Evidence.psm1',
         'Core/Ollama.psm1',
         'Core/Registry.psm1',
         'Core/HealthScore.psm1',
@@ -42,6 +45,12 @@
         'Invoke-OmniDiag', 'Get-OmniVersion', 'Invoke-OmniRepairCenter',
         'Get-OmniRoleProfile', 'Get-OmniTaskWorkflow',
         'Test-OmniOllama', 'Invoke-OmniOllamaAnalysis',
+        'New-OmniAssistantConversation', 'Invoke-OmniAssistantTurn',
+        # Portable data locations (everything OmniDiag writes stays next to the tool)
+        'Get-OmniToolRoot', 'Get-OmniDataRoot', 'Get-OmniDataPath', 'Clear-OmniTempData',
+        # Runbooks, saved-session search, and before/after comparison
+        'Get-OmniRunbook', 'Find-OmniRunbook', 'Get-OmniDefaultRunbookPath',
+        'Get-OmniSessionFinding', 'Import-OmniSession', 'Search-OmniEvidence', 'Compare-OmniSession',
         # Models
         'New-OmniFinding', 'New-OmniResult', 'Add-OmniFinding', 'Set-OmniResultMetric',
         'Complete-OmniResult', 'Get-OmniTimeRange', 'Get-OmniSeverityRank', 'Get-OmniSeverityNames',
@@ -65,6 +74,7 @@
         'Invoke-OmniRepairConsole', 'Write-OmniRepairSummary',
         # Console
         'Get-OmniStatusColor', 'New-OmniConsoleProgressCallback', 'Write-OmniConsoleDashboard',
+        'Write-OmniSessionComparison',
         # Reporting
         'Export-OmniReport', 'Export-OmniHtmlReport', 'Export-OmniJsonReport',
         'Export-OmniCsvReport', 'Export-OmniEventCsvReport', 'Export-OmniReportPackage',
@@ -86,7 +96,7 @@
             Tags         = @('Windows', 'Diagnostics', 'IT', 'Sysadmin', 'Troubleshooting', 'EventLog')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/Chris2003/OmniDiag'
-            ReleaseNotes = 'Adds a responsive Local AI GUI for Ollama readiness checks and evidence-grounded scan analysis.'
+            ReleaseNotes = 'Fully portable (zero-footprint) operation, multi-turn local AI over saved findings and approved runbooks, local evidence search, and before/after session comparison.'
         }
     }
 }

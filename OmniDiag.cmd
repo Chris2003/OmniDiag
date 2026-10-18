@@ -22,6 +22,26 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
+rem --- Portable / zero-footprint environment (this process only) -------------
+rem Everything OmniDiag writes stays in OmniDiagData next to this launcher, so a
+rem copy on a USB stick leaves no OmniDiag files on the host. PowerShell's own
+rem module-analysis cache, update check, and telemetry are redirected/disabled,
+rem and TEMP points at the tool folder (the real one is kept for the temp-clean repair).
+set "OMNIDIAG_DATA=%HERE%OmniDiagData"
+if not exist "%OMNIDIAG_DATA%\temp" mkdir "%OMNIDIAG_DATA%\temp" >nul 2>nul
+if exist "%OMNIDIAG_DATA%\temp" (
+    set "OMNIDIAG_HOST_TEMP=%TEMP%"
+    set "TEMP=%OMNIDIAG_DATA%\temp"
+    set "TMP=%OMNIDIAG_DATA%\temp"
+    set "PSModuleAnalysisCachePath=%OMNIDIAG_DATA%\cache\ModuleAnalysisCache"
+) else (
+    rem Read-only media: let OmniDiag pick its fallback location.
+    set "OMNIDIAG_DATA="
+)
+set "POWERSHELL_TELEMETRY_OPTOUT=1"
+set "POWERSHELL_UPDATECHECK=Off"
+set "POWERSHELL_CLI_TELEMETRY_OPTOUT=1"
+
 rem Prefer PowerShell 7+ (pwsh) when present; fall back to Windows PowerShell 5.1,
 rem which ships on every Windows 10/11 host.
 set "PSEXE=powershell.exe"

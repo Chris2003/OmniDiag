@@ -25,7 +25,7 @@ function Export-OmniReport {
         The OmniDiag.Session to report on.
 
     .PARAMETER OutputDirectory
-        Folder to write into. Created if missing. Default: a 'reports' folder.
+        Folder to write into. Created if missing. Default: OmniDiagData\reports next to the tool (see Get-OmniDataRoot).
 
     .PARAMETER Format
         Any of Html, Json, Csv, Zip. Default: Html, Json, Csv.
@@ -49,7 +49,7 @@ function Export-OmniReport {
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)] [pscustomobject] $Session,
-        [string] $OutputDirectory = (Join-Path (Get-Location) 'reports'),
+        [string] $OutputDirectory = (Get-OmniDataPath -Kind Reports),
         [ValidateSet('Html', 'Json', 'Csv', 'Pdf', 'Zip')]
         [string[]] $Format = @('Html', 'Json', 'Csv'),
         [string] $BaseName,

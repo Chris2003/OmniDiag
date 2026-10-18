@@ -64,6 +64,7 @@ $include = @(
     'install.ps1',
     'src',
     'docs',
+    'runbooks',
     'README.md',
     'PORTABLE.md',
     'ROADMAP.md',

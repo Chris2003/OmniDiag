@@ -64,7 +64,7 @@ function Invoke-OmniRepairConsole {
 
     if (-not $LogPath) {
         $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-        $LogPath = Join-Path ([System.IO.Path]::GetTempPath()) "OmniDiag/omnidiag-repair-$stamp.jsonl"
+        $LogPath = Get-OmniDataPath -Kind Logs -ChildPath "omnidiag-repair-$stamp.jsonl"
     }
     $logger = New-OmniLogger -Path $LogPath -MinimumLevel Info -Console:$false
 

@@ -100,6 +100,31 @@ function Write-OmniConsoleDashboard {
     Write-Host ''
 }
 
+function Write-OmniSessionComparison {
+    <#
+    .SYNOPSIS
+        Renders a Compare-OmniSession result (before/after) to the console.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [pscustomobject] $Comparison)
+
+    $c = $Comparison
+    $verdictColor = switch ($c.Verdict) { 'Improved' { 'Green' } 'Regressed' { 'Red' } 'Mixed' { 'Yellow' } default { 'Gray' } }
+    Write-Host ''
+    Write-Host '  BEFORE / AFTER COMPARISON' -ForegroundColor Cyan
+    if ($null -ne $c.ScoreDelta) {
+        Write-Host ("  Health score: {0} -> {1}  ({2:+0;-0;0})" -f $c.BeforeScore, $c.AfterScore, $c.ScoreDelta) -ForegroundColor $verdictColor
+    }
+    Write-Host ("  Verdict     : {0}   Resolved {1} | New {2} | Persisting {3}" -f $c.Verdict, @($c.Resolved).Count, @($c.New).Count, @($c.Persisting).Count) -ForegroundColor $verdictColor
+    foreach ($f in @($c.Resolved)) { Write-Host ("    [resolved]   [{0}] {1}" -f $f.Severity, $f.Title) -ForegroundColor Green }
+    foreach ($f in @($c.New)) { Write-Host ("    [new]        [{0}] {1}" -f $f.Severity, $f.Title) -ForegroundColor (Get-OmniStatusColor $f.Severity) }
+    foreach ($f in @($c.Persisting | Where-Object Change -ne 'Unchanged')) {
+        Write-Host ("    [{0,-10}] {1}: {2} -> {3}" -f $f.Change.ToLowerInvariant(), $f.Title, $f.BeforeSeverity, $f.AfterSeverity) -ForegroundColor $(if ($f.Change -eq 'Improved') { 'Green' } else { 'Red' })
+    }
+    foreach ($m in @($c.ModuleChanges)) { Write-Host ("    module {0}: {1} -> {2}" -f $m.ModuleName, $m.BeforeStatus, $m.AfterStatus) -ForegroundColor DarkGray }
+    Write-Host ''
+}
+
 Export-ModuleMember -Function @(
-    'Get-OmniStatusColor', 'New-OmniConsoleProgressCallback', 'Write-OmniConsoleDashboard'
+    'Get-OmniStatusColor', 'New-OmniConsoleProgressCallback', 'Write-OmniConsoleDashboard', 'Write-OmniSessionComparison'
 )

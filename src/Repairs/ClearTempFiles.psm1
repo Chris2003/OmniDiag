@@ -32,7 +32,9 @@ function Invoke-OmniRepairAction {
     $r = New-OmniRepairResult -Name 'Clear Temporary Files' -Category 'Storage'
 
     $targets = [System.Collections.Generic.List[string]]::new()
-    $targets.Add([string]$env:TEMP)
+    # Portable launchers point TEMP at the tool folder; clean the user's real temp folder.
+    $userTemp = if ($env:OMNIDIAG_HOST_TEMP) { $env:OMNIDIAG_HOST_TEMP } else { $env:TEMP }
+    $targets.Add([string]$userTemp)
     if ($Context.IsAdmin) { $targets.Add((Join-Path $env:WINDIR 'Temp')) }
 
     foreach ($path in $targets) {

@@ -6,8 +6,11 @@
     Entry point for OmniDiag. Validates the host, imports the OmniDiag module, runs
     a diagnostic session, and renders the dashboard to the console.
 
-    Milestone 1 ships the console experience; the WPF GUI (-Gui) arrives in a later
-    milestone and currently falls back to the console with a notice.
+    PORTABLE: OmniDiag runs from the folder it was extracted to (Downloads, a share,
+    or a USB stick). Logs, reports, saved sessions, and backups are written to an
+    OmniDiagData folder next to this script, never to the user profile or %TEMP%,
+    so deleting the folder (or removing the USB stick) leaves no OmniDiag files on
+    the host. See PORTABLE.md.
 
     PRIVACY: All collection and analysis happen locally. OmniDiag never uploads
     anything. Collected data and logs may contain usernames, device names, file
@@ -46,6 +49,28 @@
     Locally installed Ollama model. Defaults to the smallest Gemma 4 tag,
     gemma4:e2b. Use gemma3:1b on low-memory devices.
 
+.PARAMETER AiChat
+    After the scan, open a multi-turn conversation with the local Ollama model about
+    the findings and the organization's approved runbooks. Every answer cites the
+    finding/runbook IDs it used; citations the model invents are flagged.
+
+.PARAMETER Search
+    Plain-language search over the session's findings and approved runbooks (no AI
+    required), e.g. -Search 'vpn dns slow'.
+
+.PARAMETER FromSession
+    Skip scanning and load a saved session instead: a JSON report, a report .zip,
+    or 'Last' for the newest session saved in OmniDiagData\sessions.
+
+.PARAMETER CompareWith
+    Before/after comparison against an earlier session: a JSON report, a report
+    .zip, or 'Last' for the previous saved session (e.g. scan, repair, re-scan).
+
+.PARAMETER RunbookPath
+    Folder(s) of organization-owned Markdown runbooks. Defaults to
+    $env:OMNIDIAG_RUNBOOK_PATH, then the bundled runbooks folder. Only runbooks
+    marked 'status: approved' are used.
+
 .PARAMETER Gui
     Launch the WPF graphical interface (dashboard, dark/light, live progress, cancel,
     one-click report export) instead of the console experience. Windows only.
@@ -75,6 +100,12 @@
     .\OmniDiag.ps1 -Range Last24Hours -IncludeCategory System
 
 .EXAMPLE
+    .\OmniDiag.ps1 -Workflow NetworkConnectivity -CompareWith Last
+
+.EXAMPLE
+    .\OmniDiag.ps1 -FromSession Last -AiChat
+
+.EXAMPLE
     .\OmniDiag.ps1 -Gui
 #>
 [CmdletBinding()]
@@ -97,6 +128,13 @@ param(
     [string] $AiModel = 'gemma4:e2b',
     [string] $AiQuestion = 'What are the most likely root causes and safest next diagnostic steps?',
     [string] $OllamaEndpoint = 'http://127.0.0.1:11434',
+    [switch] $AiChat,
+
+    # Saved sessions, search, and runbooks
+    [string] $Search,
+    [string] $FromSession,
+    [string] $CompareWith,
+    [string[]] $RunbookPath,
 
     # Reporting
     [switch] $Report,
@@ -136,6 +174,21 @@ if (-not (Test-Path -LiteralPath $manifest)) {
 }
 Import-Module $manifest -Force -DisableNameChecking
 
+# --- Portable data location --------------------------------------------------
+$dataRoot = Get-OmniDataRoot
+if (-not $dataRoot.IsPortable) {
+    Write-Warning "The OmniDiag folder is not writable; data is being written to $($dataRoot.Path). Copy OmniDiag to writable media (e.g. a USB stick) to keep everything with the tool."
+}
+
+function Resolve-OmniSavedSessionPath {
+    param([string] $Value, [string] $Exclude)
+    if ($Value -ne 'Last') { return $Value }
+    $saved = @(Get-ChildItem -LiteralPath (Get-OmniDataPath -Kind Sessions) -Filter '*.json' -File |
+        Where-Object { $_.FullName -ne $Exclude } | Sort-Object LastWriteTime -Descending)
+    if ($saved.Count -eq 0) { throw "No saved sessions in $(Get-OmniDataPath -Kind Sessions). Run a scan first." }
+    return $saved[0].FullName
+}
+
 if ($ListPlans) {
     Write-Host ''
     Write-Host 'Role profiles' -ForegroundColor Cyan
@@ -158,17 +211,66 @@ if ($Gui) {
     }
     Write-Host 'Launching OmniDiag GUI...' -ForegroundColor Cyan
     Show-OmniDiagWindow
+    Clear-OmniTempData
     return
 }
 
-# --- Run (console) ---------------------------------------------------------
-$progress = New-OmniConsoleProgressCallback
-$session = Invoke-OmniDiag -Range $Range -IncludeCategory $IncludeCategory -ExcludeCategory $ExcludeCategory `
-    -IncludeModule $IncludeModule -Profile $Profile -Workflow $Workflow `
-    -ProgressCallback $progress -Quiet:$Quiet
+# --- Run (console) or load a saved session ------------------------------------
+$savedPath = $null
+if ($FromSession) {
+    $session = Import-OmniSession -Path (Resolve-OmniSavedSessionPath -Value $FromSession)
+    $savedPath = $session.SourcePath
+    Write-OmniConsoleDashboard -Session $session
+    Write-Host ("Loaded saved session: {0}" -f $savedPath) -ForegroundColor DarkGray
+} else {
+    $progress = New-OmniConsoleProgressCallback
+    # Pass only the selections that were given: an unset -Profile/-Workflow is '' and fails ValidateSet.
+    $scan = @{ Range = $Range; ProgressCallback = $progress; Quiet = $Quiet }
+    if ($IncludeCategory) { $scan.IncludeCategory = $IncludeCategory }
+    if ($ExcludeCategory) { $scan.ExcludeCategory = $ExcludeCategory }
+    if ($IncludeModule)   { $scan.IncludeModule = $IncludeModule }
+    if ($Profile)         { $scan.Profile = $Profile }
+    if ($Workflow)        { $scan.Workflow = $Workflow }
+    $session = Invoke-OmniDiag @scan
 
-Write-OmniConsoleDashboard -Session $session
-Write-Host ("Structured log written to: {0}" -f $session.LogPath) -ForegroundColor DarkGray
+    Write-OmniConsoleDashboard -Session $session
+    Write-Host ("Structured log written to: {0}" -f $session.LogPath) -ForegroundColor DarkGray
+
+    # Keep a snapshot with the tool so later runs can compare (-CompareWith Last) or chat (-FromSession Last).
+    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+    $savedPath = Export-OmniJsonReport -Session $session -Path (Get-OmniDataPath -Kind Sessions -ChildPath "session-$stamp.json")
+    Write-Host ("Session saved to: {0}" -f $savedPath) -ForegroundColor DarkGray
+}
+
+$runbooks = if ($RunbookPath) { @(Get-OmniRunbook -Path $RunbookPath) } else { @(Get-OmniRunbook) }
+
+# --- Before / after comparison ------------------------------------------------
+if ($CompareWith) {
+    $beforePath = Resolve-OmniSavedSessionPath -Value $CompareWith -Exclude $savedPath
+    $comparison = Compare-OmniSession -Before $beforePath -After $session
+    Write-Host ("Compared with: {0}" -f $beforePath) -ForegroundColor DarkGray
+    Write-OmniSessionComparison -Comparison $comparison
+}
+
+# --- Relevant approved runbooks -----------------------------------------------
+$runbookMatches = @(Find-OmniRunbook -Session $session -Runbook $runbooks)
+if ($runbookMatches.Count -gt 0) {
+    Write-Host '  Approved runbooks for these findings:' -ForegroundColor Cyan
+    foreach ($m in $runbookMatches) { Write-Host ("    {0}  {1}  (findings: {2})" -f $m.Id, $m.Title, ($m.FindingIds -join ', ')) }
+    Write-Host ''
+}
+
+# --- Evidence search ------------------------------------------------------------
+if ($Search) {
+    $hits = @(Search-OmniEvidence -Query $Search -Session $session -Runbook $runbooks)
+    Write-Host ("  Search: '{0}' - {1} result(s)" -f $Search, $hits.Count) -ForegroundColor Cyan
+    foreach ($h in $hits) {
+        $label = if ($h.Type -eq 'Finding') { "[$($h.Severity)]" } else { '[Runbook]' }
+        Write-Host ("    {0,-13} {1}  ({2})" -f $label, $h.Title, $h.Id)
+        if ($h.Snippet) { Write-Host ("                  {0}" -f $h.Snippet) -ForegroundColor Gray }
+    }
+    Write-Host ''
+}
 
 # --- Optional local Ollama analysis ---------------------------------------
 if ($AiAnalysis) {
@@ -188,6 +290,29 @@ if ($AiAnalysis) {
         }
     }
     Write-Host '  Advisory only: validate guidance against the cited findings and organizational runbooks.' -ForegroundColor Yellow
+}
+
+# --- Multi-turn local AI conversation ------------------------------------------
+if ($AiChat) {
+    $conversation = New-OmniAssistantConversation -Session $session -Runbook $runbooks -Model $AiModel -Endpoint $OllamaEndpoint
+    Write-Host ''
+    Write-Host "Local AI conversation ($AiModel) - ask about the findings; press Enter on an empty line to finish." -ForegroundColor Cyan
+    while ($true) {
+        $question = Read-Host 'You'
+        if ([string]::IsNullOrWhiteSpace($question) -or $question -match '^(exit|quit|q)$') { break }
+        try {
+            $turn = Invoke-OmniAssistantTurn -Conversation $conversation -Question $question
+        } catch {
+            Write-Host "  ! $($_.Exception.Message)" -ForegroundColor Red
+            continue
+        }
+        Write-Host "AI : $($turn.Answer)"
+        $cites = @($turn.FindingIds) + @($turn.RunbookIds)
+        if ($cites.Count -gt 0) { Write-Host ("     evidence: {0}" -f ($cites -join ', ')) -ForegroundColor DarkGray }
+        if ($turn.RequiresApproval) { Write-Host '     [approval required before changing the device]' -ForegroundColor Yellow }
+        if ($turn.UnverifiedCitations.Count -gt 0) { Write-Host ("     ! unverified citations ignored: {0}" -f ($turn.UnverifiedCitations -join ', ')) -ForegroundColor Yellow }
+        foreach ($q in @($turn.SuggestedQuestions | Select-Object -First 3)) { Write-Host "     try: $q" -ForegroundColor DarkCyan }
+    }
 }
 
 # --- Reporting (with privacy warning) --------------------------------------
@@ -224,6 +349,9 @@ if ($Report) {
 if ($Repair -or $RepairDryRun) {
     Invoke-OmniRepairConsole -Session $session -DryRun:$RepairDryRun | Out-Null
 }
+
+# Remove OmniDiag's scratch files; logs, reports, and saved sessions stay in OmniDiagData.
+Clear-OmniTempData
 
 # Make the session available to the caller for scripting/automation.
 $session

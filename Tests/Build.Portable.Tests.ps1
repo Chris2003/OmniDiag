@@ -47,8 +47,12 @@ Describe 'Portable package contents' {
         Join-Path $script:StageDir 'src/Repairs' | Should -Exist
     }
 
+    It 'bundles the approved organization runbooks' {
+        Join-Path $script:StageDir 'runbooks/dns-resolution.md' | Should -Exist
+    }
+
     It 'excludes developer-only content' {
-        foreach ($rel in @('Tests', '.github', '.claude', 'dist', 'build')) {
+        foreach ($rel in @('Tests', '.github', '.claude', 'dist', 'build', 'OmniDiagData')) {
             Join-Path $script:StageDir $rel | Should -Not -Exist -Because "$rel is repo-only and must not ship"
         }
     }

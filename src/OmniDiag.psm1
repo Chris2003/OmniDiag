@@ -97,7 +97,7 @@ function Invoke-OmniDiag {
 
     if (-not $LogPath) {
         $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-        $LogPath = Join-Path ([System.IO.Path]::GetTempPath()) "OmniDiag/omnidiag-$stamp.jsonl"
+        $LogPath = Get-OmniDataPath -Kind Logs -ChildPath "omnidiag-$stamp.jsonl"
     }
 
     $logger = New-OmniLogger -Path $LogPath -MinimumLevel Info -Console:(-not $Quiet)
@@ -158,7 +158,7 @@ function Invoke-OmniRepairCenter {
 
     if (-not $Logger) {
         $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-        $logFile = Join-Path ([System.IO.Path]::GetTempPath()) "OmniDiag/omnidiag-repair-$stamp.jsonl"
+        $logFile = Get-OmniDataPath -Kind Logs -ChildPath "omnidiag-repair-$stamp.jsonl"
         $Logger = New-OmniLogger -Path $logFile -MinimumLevel Info -Console:$false
     }
 

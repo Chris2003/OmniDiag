@@ -74,7 +74,7 @@ interface**, interprets the results, and tells you the **likely cause** and the
 
 ## Status
 
-OmniDiag is being built in milestones. **Current: 0.3.2 — Local AI in the GUI, one-command GUI install, and Version 3 enterprise posture.**
+OmniDiag is being built in milestones. **Current: 0.4.0 — fully portable (zero-footprint) operation, multi-turn local AI over saved findings and approved runbooks, and before/after scan comparison.**
 
 | Capability | State |
 |---|---|
@@ -92,6 +92,10 @@ OmniDiag is being built in milestones. **Current: 0.3.2 — Local AI in the GUI,
 | WPF GUI (dashboard, light/dark toggle, cancel) | ✅ Milestone 5 |
 | Repair Center — console + GUI tab (11 repairs incl. CCleaner-style registry cleanup, dry-run, confirmation, restore points) | ✅ |
 | Portable / standalone distribution (fully local, no remoting) | ✅ Version 2 |
+| Zero-footprint portable mode — run from Downloads or a USB stick; everything stays in `OmniDiagData` next to the tool | ✅ 0.4.0 |
+| Plain-language search over saved findings and approved organization runbooks | ✅ 0.4.0 |
+| Multi-turn local AI conversation with validated finding/runbook citations | ✅ 0.4.0 |
+| Before/after session comparison (resolved / new / worsened findings, score delta) | ✅ 0.4.0 |
 
 See [ROADMAP.md](ROADMAP.md) for the full version plan.
 
@@ -141,6 +145,13 @@ machine-wide change), so an extracted-from-zip copy runs on locked-down hosts wh
 script execution is otherwise blocked. Deploy across a fleet with the tooling you
 already have (Intune / ConfigMgr / GPO / RMM) and collect the reports — see
 [PORTABLE.md](PORTABLE.md).
+
+**Zero footprint.** Run OmniDiag from the folder you downloaded it to or straight from a
+USB stick: logs, reports, saved sessions, and backups go to an `OmniDiagData` folder
+**next to the tool** — never to `%TEMP%`, `%APPDATA%`, or `%LOCALAPPDATA%`. The `.cmd`
+launchers also point PowerShell's own caches and `TEMP` at that folder, so removing the
+OmniDiag folder (or unplugging the USB stick) leaves no OmniDiag files on the host. See
+[PORTABLE.md](PORTABLE.md#zero-footprint--usb-use) for exactly what is and isn't covered.
 
 ## Quick start
 
@@ -209,9 +220,31 @@ $session = Invoke-OmniDiag -Range Last7Days
 $session.Summary.Score          # 0-100 overall health score
 $session.Results                # per-module results & findings
 
-# Generate reports from a session
-Export-OmniReport -Session $session -OutputDirectory .\reports -Format Html,Json,Csv,Zip
+# Generate reports from a session (defaults to OmniDiagData\reports next to the tool)
+Export-OmniReport -Session $session -Format Html,Json,Csv,Zip
 ```
+
+### Saved sessions, runbooks, search, and before/after comparison
+
+Every console scan is saved to `OmniDiagData\sessions`, so you can come back to it:
+
+```powershell
+# Scan, fix something, then re-scan and compare with the previous scan
+.\OmniDiag.ps1 -Workflow NetworkConnectivity
+.\OmniDiag.ps1 -Workflow NetworkConnectivity -CompareWith Last
+
+# Plain-language search over the findings and your approved runbooks (no AI needed)
+.\OmniDiag.ps1 -FromSession Last -Search 'vpn connects but dns fails'
+
+# Multi-turn conversation with a local Ollama model about a saved scan
+.\OmniDiag.ps1 -FromSession Last -AiChat -RunbookPath \\server\share\runbooks
+```
+
+Organization-owned runbooks are Markdown files with a small front-matter header; only
+ones marked `status: approved` are used. See [runbooks/README.md](runbooks/README.md).
+Automation uses `Import-OmniSession`, `Compare-OmniSession`, `Search-OmniEvidence`,
+`Get-OmniRunbook` / `Find-OmniRunbook`, and `New-OmniAssistantConversation` /
+`Invoke-OmniAssistantTurn`.
 
 See the [Technician Guide](docs/TECHNICIAN_GUIDE.md) for role and daily-task
 workflows. The [Improvement Plan](docs/IMPROVEMENT_PLAN.md) explains the phased path
@@ -255,7 +288,8 @@ OmniDiag/
 ├── src/
 │   ├── OmniDiag.psd1       # module manifest
 │   ├── OmniDiag.psm1       # public entry points
-│   ├── Core/               # models, logging, registry, engine, scoring
+│   ├── Core/               # models, paths, logging, registry, engine, scoring,
+│   │                       #   runbooks, evidence search/compare, local AI
 │   ├── EventLog/           # event-log knowledge base + analysis pipeline
 │   ├── Modules/            # diagnostic plugins (one .psm1 each)
 │   ├── Repair/             # repair core: models, registry, engine
@@ -263,8 +297,10 @@ OmniDiag/
 │   ├── Reporting/          # HTML/JSON/CSV/ZIP exporters
 │   ├── UI/                 # WPF GUI (runtime XAML + runspace threading)
 │   └── Cli/                # console presentation (scan + repair)
+├── runbooks/               # organization-owned runbooks (approved ones are used)
 ├── Tests/                  # Pester tests
-├── docs/  assets/  reports/  tools/
+├── docs/  build/
+├── OmniDiagData/           # created at run time: logs, reports, sessions (git-ignored)
 └── .github/workflows/      # CI
 ```
 
@@ -310,6 +346,14 @@ Get-ChildItem -Recurse .\ | Unblock-File
 **"running without administrator rights."** This is informational, not an error — some
 checks are skipped without elevation. Re-run from an elevated prompt for a full scan
 (see Quick start).
+
+## Authorship & AI disclosure
+
+OmniDiag was built roughly **50% with AI assistance** and **50% by me (Chris B,
+[@Chris2003](https://github.com/Chris2003)) and other collaborators who worked off
+platform** (outside GitHub, so they don't show in the commit history). Design decisions,
+testing on real Windows hosts, and review were done by people; AI tools helped write
+code, tests, and documentation. See [CREDITS.md](CREDITS.md) for details.
 
 ## Contributing
 

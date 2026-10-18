@@ -101,7 +101,7 @@ function Export-OmniEventCsvReport {
         [Parameter(Mandatory)] [pscustomobject] $Session,
         [Parameter(Mandatory)] [string] $Path
     )
-    $rows = ConvertTo-OmniEventTable -Session $Session
+    $rows = @(ConvertTo-OmniEventTable -Session $Session)
     if ($rows.Count -eq 0) { return $null }
 
     $dir = Split-Path -Path $Path -Parent
