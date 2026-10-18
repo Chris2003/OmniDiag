@@ -3,8 +3,10 @@
 # NetworkAccess must match the manifest. Add a new scanner here (and only here).
 @{
     Scanners = @{
-        'Registry Health' = @{ NetworkAccess = 'None' }
-        'Scheduled Tasks' = @{ NetworkAccess = 'None' }
-        'Startup'         = @{ NetworkAccess = 'None' }
+        'Registry Health'     = @{ NetworkAccess = 'None' }
+        'Scheduled Tasks'     = @{ NetworkAccess = 'None' }
+        'Service Persistence' = @{ NetworkAccess = 'None' }
+        'Startup'             = @{ NetworkAccess = 'None' }
+        'Startup Folders'     = @{ NetworkAccess = 'None' }
     }
 }
