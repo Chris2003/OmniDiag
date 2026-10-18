@@ -180,3 +180,128 @@ contract are intentionally shaped so a runspace-pool parallel executor can be
 substituted later — cutting scan time — without changing any module or caller. GUI
 responsiveness is already handled separately: the whole session runs in a background
 STA runspace while a DispatcherTimer polls progress on the UI thread.
+
+## v1.0 target
+
+The sections above describe OmniDiag as it is (0.4.1). This section is the agreed direction for
+v1.0; the delivery plan is [ROADMAP.md](ROADMAP.md) and the starting point is
+[STATUS.md](STATUS.md). Items marked *(decision)* follow the owner decisions approved on 2026-10-18 (listed in the roadmap).
+
+### Stack decision
+
+Keep PowerShell (Windows PowerShell 5.1 + PowerShell 7) and WPF. How the v1.0 requirements fit:
+
+| Requirement | Approach in this stack |
+|---|---|
+| `omnidiag` command with subcommands | `omnidiag.cmd` shim → `src/Cli/Router.psm1` (GNU-style arguments). Optional tiny signed `omnidiag.exe` stub (.NET Framework 4.8) only if winget aliases or a signed executable entry point require it *(decision)* |
+| ARM64 | Windows PowerShell 5.1 + WPF run natively on Windows 11 ARM64 (.NET Framework 4.8.1); PowerShell 7 ships win-arm64. Scanners report unavailable data as "not available" |
+| Full report < 60 s | Runspace-pool executor in the engine (the plugin contract already allows it), per-module timeouts, bounded event queries |
+| GUI startup < 2 s | Manifest-only plugin discovery, deferred tab construction, no CIM calls before first paint |
+| Signed code | Authenticode signatures + file catalog via a build hook that does nothing without a certificate. Unsigned scripts run in Constrained Language mode under WDAC/AppLocker, which breaks WPF and .NET calls *(decision: certificate route)* |
+| Installer | Per-user WiX MSI (adds `omnidiag` to PATH, no admin) + winget manifest pointing to it; portable zip stays the xcopy option *(decision)* |
+| Versioned JSON | JSON Schema 2020-12 file per major version, `schemaVersion` in every document, golden-file tests |
+
+### Layers
+
+```text
+omnidiag.cmd / OmniDiag-GUI.cmd ─┐
+OmniDiag.ps1 (compat front end) ─┼─► CLI router ─► public cmdlets (Get-OmniDiag*, Invoke-OmniDiag*)
+WPF GUI ─────────────────────────┘                     │
+                                                       ▼
+        Core: engine (runspace pool, timeouts) · plugin registry · models v1 · redaction · logging · paths
+                         │                                   │
+                 Scanners (src/Modules)              Repairs (src/Repairs, --apply only)
+                         │
+        Reporting: JSON v1 · HTML · CSV · Markdown · PDF · bundle (optionally redacted)
+```
+
+### Module contract v1
+
+`Get-OmniModuleManifest` keeps its current fields and adds:
+
+| Field | Meaning |
+|---|---|
+| `Id` | Stable, unique, kebab/dotted id (e.g. `network.listening-ports`) |
+| `Group` | One of the ten v1.0 groups (or `extras`) *(decision)* |
+| `RequiresElevation` | Alias of `RequiresAdmin` |
+| `NetworkAccess` | `None` · `LocalNetwork` · `Internet`; anything other than `None` doesn't run by default *(decision)* |
+| `TimeoutSec` | Per-module budget for the engine |
+| `SupportedArchitectures` | `x64`, `arm64` |
+
+Manifests without these fields still load with derived defaults. `Invoke-OmniModuleScan($Context)`
+is unchanged; it is the spec's `Run(ctx)`.
+
+### Report schema v1
+
+A projection of the session at the export boundary; the in-memory session is not changed.
+
+```text
+{ schemaVersion: "1.0.0", tool: {name, version}, generatedAt, host (redactable), options,
+  summary: {healthScore, grade, counts},
+  modules: [ {id, name, group, status, skippedReason, startedAt, durationMs,
+              findings: [ {id, moduleId, title, severity, severityNative, passed, component,
+                           evidence, likelyCause, recommendation, confidence,
+                           requiresElevation} ] } ] }
+```
+
+Severity mapping *(decision)*: Pass and Information → `Info` (Pass also sets `passed: true`);
+Warning → `Warning`; Error and Critical → `Critical`. `severityNative` keeps the original
+value, so the health score and GUI don't change. Versioning follows SemVer: additive changes
+bump the minor version; breaking changes bump the major version and add a new schema file.
+
+### CLI
+
+```text
+omnidiag list [modules|groups|repairs|plans]
+omnidiag scan [--group <g>…] [--module <id>…] [--profile <p> | --workflow <w>] [--network-probes]
+omnidiag <group>                       # shorthand for scan --group <group>
+omnidiag report [--from-session <path>|last] [--redact]
+omnidiag repair list | run <id>… (--what-if | --apply [--yes])
+omnidiag compare <before> <after>
+omnidiag gui | version
+global: --format json|csv|md|html|pdf  --output <path>  --redact  --elevated-only
+        --verbose  --quiet  --no-color
+```
+
+Data goes to stdout only when `--format` is given without `--output`; status and progress go to
+stderr.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success, no warnings or critical findings |
+| 1 | Warnings present |
+| 2 | Critical findings present |
+| 3 | Partial: one or more modules failed or timed out |
+| 4 | Requested module(s) need elevation and the process isn't elevated |
+| 5 | Cancelled |
+| 10 | Usage or argument error |
+| 11 | Repair failed |
+| 12 | Repair succeeded; reboot required |
+| 20 | Internal error |
+
+### Redaction
+
+`ConvertTo-OmniRedacted` runs at the export boundary and never changes the session. It collects
+identifiers from the context (computer, user, domain, FQDN, profile path, user SIDs) and matches
+IPv4, IPv6, and MAC addresses. It replaces each with a stable pseudonym per bundle (`HOST-1`,
+`USER-1`, `IP-1`), so findings still correlate. It walks every string in the object graph and in
+file names. An optional mapping file stays local.
+
+### No-network enforcement
+
+1. **Static:** a Pester test walks the AST of every script for network APIs (`Invoke-WebRequest`,
+   `Invoke-RestMethod`, `Net.WebClient`, `HttpClient`, sockets, `Ping`, `Dns`, `Resolve-DnsName`,
+   `Test-Connection`, `Test-NetConnection`, `Test-ComputerSecureChannel`, `Start-BitsTransfer`)
+   and fails on any use outside an allowlist tied to the plugin's `NetworkAccess`.
+2. **Runtime (Windows runner):** an outbound firewall block on the PowerShell executables, then a
+   default scan; assert no outbound connection or DNS query from the test process.
+3. **Mocks:** per-module Pester mocks for network cmdlets.
+
+### CI pipeline
+
+lint (PSScriptAnalyzer + contract/help tests) → tests (Windows pwsh 7, Windows PowerShell 5.1,
+Ubuntu for pure logic, `windows-11-arm`; coverage gate on Core) → standard-user leg →
+no-network runtime test → performance (soft gate) → package (reproducible zip, signing hook,
+`SHA256SUMS`, SBOM) → release on tag.
