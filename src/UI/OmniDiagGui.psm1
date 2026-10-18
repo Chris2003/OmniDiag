@@ -623,7 +623,8 @@ function Get-OmniGroupSummaryRow {
     $rows = foreach ($g in $Group) {
         $id = [string](Get-OmniUiValue $g 'Id' '')
         $name = [string](Get-OmniUiValue $g 'Name' $id)
-        $results = if ($byGroup.ContainsKey($id)) { @($byGroup[$id]) } else { @() }
+        # @(...) around the whole if: an if expression unrolls an empty or one-item array.
+        $results = @(if ($byGroup.ContainsKey($id)) { $byGroup[$id] })
         $counts = @{ Critical = 0; Error = 0; Warning = 0; Information = 0; Pass = 0 }
         foreach ($r in $results) {
             foreach ($f in @(Get-OmniUiValue $r 'Findings' @())) {
