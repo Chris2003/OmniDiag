@@ -23,7 +23,7 @@
     },
     "generatedAt": { "$ref": "#/$defs/timestamp" },
     "host": {
-      "description": "The scanned device. Contains identifying information; review before sharing.",
+      "description": "The scanned device. Contains identifying information unless options.redacted is true; review before sharing.",
       "type": "object",
       "required": ["computerName", "userName", "isAdmin", "psVersion"],
       "additionalProperties": false,
@@ -36,7 +36,13 @@
     },
     "options": {
       "description": "Free-form run options recorded by the caller (keys sorted), e.g. command, range, groups, modules, formats.",
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "redacted": {
+          "description": "Since 1.1.0. true when identifiers (host, user, domain, SIDs, profile paths, IP/MAC addresses) were replaced with stable pseudonyms (HOST-1, USER-1, IP-1, ...); see docs/REDACTION.md. Absent otherwise.",
+          "type": "boolean"
+        }
+      }
     },
     "scan": {
       "type": "object",

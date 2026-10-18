@@ -28,7 +28,7 @@
 
 Set-StrictMode -Version Latest
 
-$script:OmniReportSchemaVersion = '1.0.0'
+$script:OmniReportSchemaVersion = '1.1.0'
 $script:OmniToolVersionCache = $null
 $script:OmniPlainDataMaxDepth = 12
 
@@ -45,7 +45,7 @@ $script:OmniNumericTypes = [System.Collections.Generic.HashSet[string]]::new([st
 # ---------------------------------------------------------------------------
 
 function Get-OmniReportSchemaVersion {
-    <# .SYNOPSIS Returns the report schema version this OmniDiag writes ('1.0.0'). #>
+    <# .SYNOPSIS Returns the report schema version this OmniDiag writes ('1.1.0'). #>
     [OutputType([string])]
     param()
     return $script:OmniReportSchemaVersion
@@ -383,7 +383,9 @@ function ConvertTo-OmniReportV1 {
 
     .PARAMETER Option
         Free-form run options recorded verbatim under 'options' (keys sorted), e.g.
-        @{ command = 'scan'; groups = @('network') }.
+        @{ command = 'scan'; groups = @('network') }. When the session is a redacted
+        copy (it carries Redacted = $true, see Export-OmniReport -Redact), the options
+        also get redacted = true (schema 1.1.0).
 
     .PARAMETER GeneratedAt
         Override the generation time (tests use a fixed value). Default: now.
@@ -402,11 +404,12 @@ function ConvertTo-OmniReportV1 {
     $sessionHost = Get-OmniV1Value $Session 'Host' $null
     $isAdmin = [bool](Get-OmniV1Value $Session 'IsAdmin' $false)
 
+    $optionSource = @{}
+    if ($Option) { foreach ($k in @($Option.Keys)) { $optionSource[$k] = $Option[$k] } }
+    if ([bool](Get-OmniV1Value $Session 'Redacted' $false)) { $optionSource['redacted'] = $true }
     $options = [ordered]@{}
-    if ($Option) {
-        foreach ($k in @(Get-OmniSortedKey -Key @($Option.Keys))) {
-            $options[[string]$k] = ConvertTo-OmniPlainData -InputObject $Option[$k]
-        }
+    foreach ($k in @(Get-OmniSortedKey -Key @($optionSource.Keys))) {
+        $options[[string]$k] = ConvertTo-OmniPlainData -InputObject $optionSource[$k]
     }
 
     $timeRange = Get-OmniV1Value $Session 'TimeRange' $null
@@ -659,6 +662,9 @@ function ConvertFrom-OmniReportV1 {
             Results       = $results.ToArray()
             Summary       = $summary
             SchemaVersion = $version
+        }
+        if ([bool](Get-OmniV1Value (Get-OmniV1Value $doc 'options' $null) 'redacted' $false)) {
+            Add-Member -InputObject $session -MemberType NoteProperty -Name Redacted -Value $true
         }
         $plan = Get-OmniV1Value $scan 'plan' $null
         if ($plan) {

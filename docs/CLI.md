@@ -94,7 +94,7 @@ directory.
 ### `version`
 
 Prints `OmniDiag <version>`. With `--format json`:
-`{ "schemaVersion": "1.0.0", "kind": "version", "tool": {...}, "reportSchemaVersion": "1.0.0", "powershell": {...} }`.
+`{ "schemaVersion": "1.0.0", "kind": "version", "tool": {...}, "reportSchemaVersion": "1.1.0", "powershell": {...} }`.
 
 ### `help [command|group]`
 
