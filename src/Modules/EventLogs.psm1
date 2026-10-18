@@ -18,7 +18,9 @@
         EventLevels          int[]  Windows level numbers to collect. Default 1,2,3.
         IncludeInformation   bool   Also collect Information (level 4). Default $false.
         EventId              int[]  Restrict to specific Event IDs.
-        MaxEventsPerChannel  int    Per-channel cap. Default 5000.
+        MaxEventsPerChannel  int    Per-channel cap. Default 2000.
+        MaxEventsTotal       int    Cap across all channels; collection stops once it is
+                                    reached (metric EventsTruncated). Default 20000.
         RecurringThreshold   int    Min count for a Warning group to surface. Default 5.
 
     Contract:
@@ -51,6 +53,9 @@ function Get-OmniModuleManifest {
         RequiresAdmin = $false   # per-channel; Security/Defender skipped when not elevated
         Order         = 20
         Enabled       = $true
+        # Bounded collection (MaxEventsPerChannel / MaxEventsTotal) can still take a while
+        # on a busy 30-day range; give it more than the default 60 s budget.
+        TimeoutSec    = 120
     }
 }
 
@@ -92,7 +97,10 @@ function Invoke-OmniModuleScan {
         $levels += 4
     }
     $eventId   = if ($cfg.ContainsKey('EventId')) { [int[]]$cfg['EventId'] } else { $null }
-    $maxPer    = if ($cfg.ContainsKey('MaxEventsPerChannel')) { [int]$cfg['MaxEventsPerChannel'] } else { 5000 }
+    $maxPer    = if ($cfg.ContainsKey('MaxEventsPerChannel')) { [int]$cfg['MaxEventsPerChannel'] } else { 2000 }
+    $maxTotal  = if ($cfg.ContainsKey('MaxEventsTotal')) { [int]$cfg['MaxEventsTotal'] } else { 20000 }
+    if ($maxPer -lt 1) { $maxPer = 1 }
+    if ($maxTotal -lt 1) { $maxTotal = 1 }
     $threshold = if ($cfg.ContainsKey('RecurringThreshold')) { [int]$cfg['RecurringThreshold'] } else { 5 }
 
     $start = $Context.TimeRange.Start
@@ -101,7 +109,7 @@ function Invoke-OmniModuleScan {
     # --- Collect across channels -----------------------------------------
     $allRecords = [System.Collections.Generic.List[object]]::new()
     $channels = Get-OmniEventChannelDefinition
-    $collected = 0; $skippedAdmin = 0; $cancelledEarly = $false
+    $collected = 0; $skippedAdmin = 0; $cancelledEarly = $false; $truncated = $false
     $perChannel = [ordered]@{}
 
     foreach ($ch in $channels) {
@@ -117,7 +125,14 @@ function Invoke-OmniModuleScan {
             continue
         }
 
-        $records = @(Get-OmniEventRecord -Channel $ch -Start $start -End $end -Level $levels -Id $eventId -MaxEvents $maxPer -Logger $log)
+        # Session-wide bound: never ask a channel for more than what is left of MaxEventsTotal.
+        $left = $maxTotal - $allRecords.Count
+        if ($left -le 0) {
+            $log.Info("Event cap reached ($maxTotal); not reading channel '$($ch.Name)' and later ones.", 'Event Logs')
+            $truncated = $true
+            break
+        }
+        $records = @(Get-OmniEventRecord -Channel $ch -Start $start -End $end -Level $levels -Id $eventId -MaxEvents ([Math]::Min($maxPer, $left)) -Logger $log)
         $perChannel[$ch.Name] = $records.Count
         if ($records.Count -gt 0) {
             $allRecords.AddRange([object[]]$records)
@@ -127,6 +142,7 @@ function Invoke-OmniModuleScan {
 
     $records = $allRecords.ToArray()
     $log.Info("Collected $($records.Count) event(s) across $collected channel(s).", 'Event Logs')
+    Set-OmniResultMetric -Result $result -Name 'EventsTruncated' -Value $truncated
 
     # --- Analyze ----------------------------------------------------------
     $groups   = Group-OmniEventRecord -Record $records

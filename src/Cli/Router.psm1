@@ -22,9 +22,14 @@
     Both writers are parameters so tests (and hosts) can capture them; by default
     they are the process's standard output and standard error.
 
-    Network policy: scanners whose manifest declares NetworkAccess other than 'None'
-    never run unless named explicitly with --module (decision 1; --network-probes
-    arrives in Phase 2). 'report' runs only NetworkAccess 'None' scanners.
+    Group shorthand: 'omnidiag <group-id> [options]' is 'omnidiag scan --group <group-id>
+    [options]' (e.g. 'omnidiag network --network-probes --format json').
+
+    Network policy (decision 1): every scanner runs by default, but connectivity probes
+    (pinging the gateway / a public address, resolving a public name, the domain
+    secure-channel check) run only with --network-probes. Without it, scanners that
+    declare NetworkAccess other than 'None' do their local work and add an Information
+    finding saying how to run the probe.
 #>
 
 Set-StrictMode -Version Latest
@@ -44,6 +49,7 @@ $script:OmniCliOptions = @{
     'profile'  = @('value', 'Profile')
     'workflow' = @('value', 'Workflow')
     'range'    = @('value', 'Range')
+    'network-probes' = @('flag', 'NetworkProbes')
     'verbose'  = @('flag', 'Verbose')
     'quiet'    = @('flag', 'Quiet')
     'no-color' = @('flag', 'NoColor')
@@ -56,8 +62,8 @@ $script:OmniCliShortOptions = @{ 'h' = 'help'; '?' = 'help'; 'q' = 'quiet'; 'o' 
 $script:OmniCliGlobalOptions = @('format', 'output', 'verbose', 'quiet', 'no-color', 'help', 'version')
 $script:OmniCliCommandOptions = @{
     list    = @()
-    scan    = @('group', 'module', 'profile', 'workflow', 'range')
-    report  = @('range')
+    scan    = @('group', 'module', 'profile', 'workflow', 'range', 'network-probes')
+    report  = @('range', 'network-probes')
     version = @()
     help    = @()
 }
@@ -86,7 +92,11 @@ function Get-OmniCliUsage {
         Returns the omnidiag CLI usage text (optionally for one command).
 
     .PARAMETER Command
-        list, scan, report, version, or help. Omit for the overview.
+        list, scan, report, version, help, or a group id (the 'omnidiag <group>'
+        shorthand). Omit for the overview.
+
+    .EXAMPLE
+        Get-OmniCliUsage -Command scan
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -94,6 +104,16 @@ function Get-OmniCliUsage {
 
     $groups = (Get-OmniGroupNames) -join ', '
     $nl = [Environment]::NewLine
+    if ($Command -and $Command -in (Get-OmniGroupNames)) {
+        $display = [string](@(Get-OmniGroup | Where-Object { $_.Id -eq $Command })[0].DisplayName)
+        return (@(
+            "Usage: omnidiag $Command [--module <id>]... [--network-probes] [--range <preset>] [--format <fmt>] [--output <path>]",
+            '',
+            "Runs the '$display' group: the same as 'omnidiag scan --group $Command'. Every scanner",
+            'runs locally; --network-probes also runs the connectivity probes (it contacts the network).',
+            "List the group's scanners with 'omnidiag list modules'."
+        ) -join $nl)
+    }
     switch ($Command) {
         'list' {
             return (@(
@@ -106,12 +126,15 @@ function Get-OmniCliUsage {
         'scan' {
             return (@(
                 'Usage: omnidiag scan [--group <id>]... [--module <id>]... [--profile <name> | --workflow <name>]',
-                '                     [--range Last24Hours|Last7Days|Last30Days] [--format <fmt>] [--output <path>]',
+                '                     [--network-probes] [--range Last24Hours|Last7Days|Last30Days]',
+                '                     [--format <fmt>] [--output <path>]',
+                '       omnidiag <group> [options]     (same as scan --group <group>)',
                 '',
-                'Runs scanners and summarizes the findings. With no selection every scanner that',
-                'needs no network access runs. --group and --module may be repeated or given as a',
-                'comma list and are combined. Scanners that need network access (NetworkAccess',
-                'LocalNetwork or Internet) run only when named with --module.',
+                'Runs scanners and summarizes the findings. With no selection every scanner runs.',
+                '--group and --module may be repeated or given as a comma list and are combined.',
+                'Connectivity probes (ping the gateway and 1.1.1.1, resolve www.microsoft.com, the',
+                'domain secure-channel check) run only with --network-probes; without it those',
+                'scanners do their local checks and say how to run the probe.',
                 '',
                 "Groups: $groups",
                 'Profiles: ' + ((Get-OmniRoleProfile).Name -join ', '),
@@ -120,11 +143,11 @@ function Get-OmniCliUsage {
         }
         'report' {
             return (@(
-                'Usage: omnidiag report [--output <directory>] [--format <fmt>] [--range <preset>]',
+                'Usage: omnidiag report [--output <directory>] [--format <fmt>] [--range <preset>] [--network-probes]',
                 '',
-                'Runs every scanner that needs no network access and writes an HTML report plus a',
-                'JSON report (schema v1) to --output, or to OmniDiagData\reports next to the tool.',
-                '--format replaces the default html,json set (json, csv, md, html, pdf).'
+                'Runs every scanner (connectivity probes only with --network-probes) and writes an',
+                'HTML report plus a JSON report (schema v1) to --output, or to OmniDiagData\reports',
+                'next to the tool. --format replaces the default html,json set (json, csv, md, html, pdf).'
             ) -join $nl)
         }
         'version' { return 'Usage: omnidiag version [--format json]' }
@@ -137,9 +160,10 @@ function Get-OmniCliUsage {
         'Commands:',
         '  list [modules|groups|repairs|plans]  List scanners (default), groups, repairs, or plans',
         '  scan [selection]                     Run scanners and summarize the findings',
-        '  report                               Run every local-only scanner; write HTML + JSON',
+        '  <group> [options]                    Run one group (same as scan --group <group>)',
+        '  report                               Run every scanner; write HTML + JSON',
         '  version                              Show the OmniDiag version',
-        '  help [command]                       Show help for a command',
+        '  help [command|group]                 Show help for a command',
         '',
         'Scan selection:',
         '  -g, --group <id>       Run a module group (repeatable or comma list)',
@@ -147,6 +171,7 @@ function Get-OmniCliUsage {
         '      --profile <name>   Run a role profile (e.g. HelpDesk)',
         '      --workflow <name>  Run a task workflow (e.g. QuickTriage)',
         '      --range <preset>   Event time range: Last24Hours, Last7Days (default), Last30Days',
+        '      --network-probes   Also run connectivity probes (contacts the network; off by default)',
         '',
         'Global options:',
         '  -f, --format <fmt>     json, csv, md, html, pdf (repeatable or comma list)',
@@ -179,6 +204,7 @@ function ConvertFrom-OmniCliArgument {
         Module = [System.Collections.Generic.List[string]]::new()
         Output = $null; Profile = $null; Workflow = $null; Range = $null
         Verbose = $false; Quiet = $false; NoColor = $false; Help = $false; Version = $false
+        NetworkProbes = $false
     }
     $given = [System.Collections.Generic.List[string]]::new()
     $positionals = [System.Collections.Generic.List[string]]::new()
@@ -541,7 +567,7 @@ function Resolve-OmniCliRange {
 
 function Invoke-OmniCliSession {
     <# .SYNOPSIS Internal: run registrations with stderr progress; returns the session. #>
-    param($Io, [object[]] $Registration, [string] $Range, $Logger, $Plan)
+    param($Io, [object[]] $Registration, [string] $Range, $Logger, $Plan, [bool] $NetworkProbes)
 
     $total = @($Registration).Count
     $err = $Io.Err
@@ -552,12 +578,14 @@ function Invoke-OmniCliSession {
         if ($p.Phase -eq 'Done' -and $p.Result) {
             $err.WriteLine(('[{0,3}/{1}] {2,-28} {3}' -f $p.Index, $p.Total, $p.Name, $p.Result.Status))
         } elseif ($p.Phase -eq 'Skipped') {
-            $err.WriteLine(('[{0,3}/{1}] {2,-28} {3}' -f $p.Index, $p.Total, $p.Name, 'Skipped (requires elevation)'))
+            $why = if ($p.Result -and $p.Result.PSObject.Properties['SkippedReason'] -and $p.Result.SkippedReason) { [string]$p.Result.SkippedReason } else { 'RequiresElevation' }
+            $err.WriteLine(('[{0,3}/{1}] {2,-28} {3}' -f $p.Index, $p.Total, $p.Name, "Skipped ($why)"))
         }
     }.GetNewClosure()
 
-    Write-OmniCliStatus $Io ("Running {0} scanner(s)..." -f $total)
-    $context = New-OmniContext -Logger $Logger -TimeRange (Get-OmniTimeRange -Preset $Range)
+    $probeNote = if ($NetworkProbes) { ' with connectivity probes' } else { '' }
+    Write-OmniCliStatus $Io ("Running {0} scanner(s){1}..." -f $total, $probeNote)
+    $context = New-OmniContext -Logger $Logger -TimeRange (Get-OmniTimeRange -Preset $Range) -NetworkProbes:$NetworkProbes
     $session = Invoke-OmniSession -Registration $Registration -Context $context -ProgressCallback $progress
     Add-Member -InputObject $session -MemberType NoteProperty -Name LogPath -Value $Logger.Path -Force
     if ($Plan) { Add-Member -InputObject $session -MemberType NoteProperty -Name ScanPlan -Value $Plan -Force }
@@ -694,7 +722,7 @@ function Invoke-OmniCliScan {
         if ($hit.Count -eq 0) { throw (New-OmniCliUsageError "unknown module '$m'; run 'omnidiag list modules' for ids") }
         foreach ($h in $hit) { $explicitIds[$h.Id] = $true }
     }
-    $groups = @($o.Group | ForEach-Object { $_.ToLowerInvariant() })
+    $groups = @($o.Group | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique)
     if ($groups.Count -gt 0 -or $explicitIds.Count -gt 0) {
         $selected = @($regs | Where-Object { $_.Group -in $groups -or $explicitIds.ContainsKey($_.Id) })
     } elseif ($plan -and @($plan.Modules).Count -gt 0) {
@@ -703,15 +731,18 @@ function Invoke-OmniCliScan {
         $selected = $regs
     }
 
-    # Network policy: only explicitly named scanners may use the network.
-    $excluded = @($selected | Where-Object { $_.NetworkAccess -ne 'None' -and -not $explicitIds.ContainsKey($_.Id) })
-    $selected = @($selected | Where-Object { $_.NetworkAccess -eq 'None' -or $explicitIds.ContainsKey($_.Id) })
-    if ($excluded.Count -gt 0) {
-        Write-OmniCliStatus $Io ("Not running {0} scanner(s) that need network access: {1}. Name one with --module to run it." -f $excluded.Count, (($excluded | ForEach-Object { $_.Id }) -join ', '))
+    # Network policy (decision 1): every selected scanner runs; connectivity probes only
+    # with --network-probes (the scanners themselves check Context.NetworkProbes).
+    $probes = [bool]$o.NetworkProbes
+    if (-not $probes) {
+        $probeCapable = @($selected | Where-Object { $_.NetworkAccess -ne 'None' })
+        if ($probeCapable.Count -gt 0) {
+            Write-OmniCliStatus $Io ("Connectivity probes are off ({0}); add --network-probes to run them." -f (($probeCapable | ForEach-Object { $_.Id }) -join ', '))
+        }
     }
     if ($selected.Count -eq 0) { throw (New-OmniCliUsageError 'no scanners match the selection') }
 
-    $session = Invoke-OmniCliSession -Io $Io -Registration $selected -Range $range -Logger $logger -Plan $planInfo
+    $session = Invoke-OmniCliSession -Io $Io -Registration $selected -Range $range -Logger $logger -Plan $planInfo -NetworkProbes $probes
 
     try {
         $saved = Save-OmniSession -Session $session
@@ -722,6 +753,7 @@ function Invoke-OmniCliScan {
     if ($groups.Count -gt 0) { $option.groups = $groups }
     if ($explicitIds.Count -gt 0) { $option.modules = @($explicitIds.Keys | Sort-Object) }
     if ($planInfo) { $option.plan = $planInfo.Name }
+    if ($probes) { $option.networkProbes = $true }
     if (@($formats).Count -gt 0) { $option.formats = $formats }
 
     if ($Report) {
@@ -746,7 +778,8 @@ function Invoke-OmniDiagCli {
         Runs one omnidiag CLI command from GNU-style arguments and returns the exit code.
 
     .DESCRIPTION
-        Commands: list [modules|groups|repairs|plans], scan, report, version, help.
+        Commands: list [modules|groups|repairs|plans], scan, report, version, help, and
+        '<group-id>' as shorthand for 'scan --group <group-id>'.
         Global options: --format json|csv|md|html|pdf, --output <path>, --verbose,
         --quiet, --no-color, --help. See docs/CLI.md and Get-OmniCliUsage.
 
@@ -776,6 +809,9 @@ function Invoke-OmniDiagCli {
 
     .EXAMPLE
         $code = Invoke-OmniDiagCli -Arguments @('list', 'modules', '--format', 'json')
+
+    .EXAMPLE
+        $code = Invoke-OmniDiagCli -Arguments @('network', '--network-probes', '--format', 'json')
     #>
     [CmdletBinding()]
     [OutputType([int])]
@@ -798,6 +834,14 @@ function Invoke-OmniDiagCli {
             elseif ($parsed.Options.Version) { $command = 'version' }
             else { throw (New-OmniCliUsageError 'no command given') }
         }
+        # Group shorthand: 'omnidiag network ...' == 'omnidiag scan --group network ...'.
+        $groupShorthand = $null
+        if ($command -notin $script:OmniCliCommands -and $command -in (Get-OmniGroupNames)) {
+            $groupShorthand = $command
+            $command = 'scan'
+            $parsed.Command = 'scan'
+            $parsed.Options.Group.Insert(0, $groupShorthand)
+        }
         if ($command -notin $script:OmniCliCommands) { throw (New-OmniCliUsageError "unknown command '$command'") }
 
         foreach ($name in $parsed.Given) {
@@ -812,9 +856,9 @@ function Invoke-OmniDiagCli {
                 if (@($parsed.Positionals).Count -gt 1) { throw (New-OmniCliUsageError "unexpected argument '$($parsed.Positionals[1])'") }
                 if (@($parsed.Positionals).Count -eq 1) {
                     $topic = $parsed.Positionals[0].ToLowerInvariant()
-                    if ($topic -notin $script:OmniCliCommands) { throw (New-OmniCliUsageError "unknown command '$topic'") }
+                    if ($topic -notin $script:OmniCliCommands -and $topic -notin (Get-OmniGroupNames)) { throw (New-OmniCliUsageError "unknown command '$topic'") }
                 }
-            } else { $topic = $command }
+            } elseif ($groupShorthand) { $topic = $groupShorthand } else { $topic = $command }
             $Out.WriteLine((Get-OmniCliUsage -Command $topic))
             return 0
         }

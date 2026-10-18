@@ -43,11 +43,11 @@ BeforeAll {
     # --- Allowlist (data) ----------------------------------------------------------
     # File: repo-relative path with '/'. Api: as reported by the detector (wildcards ok).
     $script:NetworkAllowlist = @(
-        @{ File = 'src/Modules/Network.psm1';         Api = 'System.Net.NetworkInformation.Ping'; Reason = 'connectivity probe - opt-in in Phase 2' }
-        @{ File = 'src/Modules/Network.psm1';         Api = 'System.Net.Dns';                     Reason = 'connectivity probe - opt-in in Phase 2' }
-        @{ File = 'src/Modules/DnsResolver.psm1';     Api = 'Resolve-DnsName';                    Reason = 'DNS resolution probe - opt-in in Phase 2' }
-        @{ File = 'src/Modules/DnsResolver.psm1';     Api = 'System.Net.Dns';                     Reason = 'DNS resolution probe (fallback when Resolve-DnsName is missing) - opt-in in Phase 2' }
-        @{ File = 'src/Modules/ActiveDirectory.psm1'; Api = 'Test-ComputerSecureChannel';         Reason = 'domain secure-channel check contacts a domain controller (LocalNetwork), domain-joined only' }
+        @{ File = 'src/Modules/Network.psm1';         Api = 'System.Net.NetworkInformation.Ping'; Reason = 'opt-in connectivity probe (--network-probes): gateway and public-address ping' }
+        @{ File = 'src/Modules/Network.psm1';         Api = 'System.Net.Dns';                     Reason = 'opt-in connectivity probe (--network-probes): public-name resolution' }
+        @{ File = 'src/Modules/DnsResolver.psm1';     Api = 'Resolve-DnsName';                    Reason = 'opt-in connectivity probe (--network-probes): DNS resolution test' }
+        @{ File = 'src/Modules/DnsResolver.psm1';     Api = 'System.Net.Dns';                     Reason = 'opt-in connectivity probe (--network-probes): DNS resolution fallback when Resolve-DnsName is missing' }
+        @{ File = 'src/Modules/ActiveDirectory.psm1'; Api = 'Test-ComputerSecureChannel';         Reason = 'opt-in connectivity probe (--network-probes): domain secure-channel check against a domain controller (LocalNetwork), domain-joined only' }
         @{ File = 'src/Core/Ollama.psm1';             Api = 'Invoke-RestMethod';                  Reason = 'local AI assistant: loopback-only Ollama endpoint, opt-in' }
     )
 

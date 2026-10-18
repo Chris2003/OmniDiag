@@ -33,7 +33,7 @@ internal format (`Save-OmniSession`). `Import-OmniSession` reads both: a file wi
   modules: [ {
       id, name, group, category,
       status: Healthy|Warning|Critical|Unknown|Skipped|Failed,
-      skippedReason: string | null,          // e.g. "RequiresElevation"
+      skippedReason: string | null,          // RequiresElevation | NotSupported | Cancelled
       requiresElevation, startedAt, durationMs,
       error: string | null,
       metrics: { ...module-specific... },
@@ -55,6 +55,13 @@ Notes:
   e.g. `network.dns-resolver`). Sessions saved before 0.5.0 have no id; the projection
   derives one from the built-in scanner table (or `extras.<kebab-name>`). `findings[].id` is
   the finding's stable id within its module; `moduleId` + `id` is a global key.
+* **Skips and timeouts.** A module the engine did not run has `status` `Skipped` and a
+  `skippedReason`: `RequiresElevation` (needs administrator rights), `NotSupported` (its
+  supported platforms or architectures exclude this host), or `Cancelled` (the scan was
+  cancelled while it ran). `skippedReason` is `null` for every other status. A module that
+  ran past its time budget is not a skip: `status` `Failed`, `error` `Timed out after N s`
+  (exit code 3, partial). The schema keeps `skippedReason` a free string so later reasons
+  stay a minor-version change.
 * **Timestamps** are ISO-8601 UTC with milliseconds (`2026-06-01T08:00:00.000Z`).
 * **Counts** are disjoint: `passed` counts passing checks; `info` counts the other Info
   findings.

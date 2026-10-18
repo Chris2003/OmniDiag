@@ -3,9 +3,12 @@
     OmniDiag diagnostic module: DNS Resolver.
 
 .DESCRIPTION
-    Reports configured DNS servers per active adapter and performs a live
-    resolution test. Warns when an active adapter has no DNS servers configured or
-    when name resolution fails.
+    Reports configured DNS servers per active adapter (local) and, only when
+    $Context.NetworkProbes is set (decision 1: probes are opt-in), performs a live
+    resolution test of Get-OmniProbeTarget's DnsName (default www.microsoft.com).
+    Warns when an active adapter has no DNS servers configured or when name
+    resolution fails; without probes it adds an Information finding saying how to
+    run the resolution test.
 
     Contract:
         Get-OmniModuleManifest -> module metadata
@@ -28,10 +31,36 @@ function Get-OmniModuleManifest {
         Group         = 'network'
         NetworkAccess = 'Internet'
         Category      = 'Network'
-        Description   = 'Configured DNS servers per adapter and resolution test.'
+        Description   = 'Configured DNS servers per adapter and an opt-in resolution test.'
         RequiresAdmin = $false
         Order         = 420
         Enabled       = $true
+    }
+}
+
+function Test-OmniDnsResolverProbe {
+    <#
+    .SYNOPSIS
+        Internal (connectivity probe): resolves a host name through the configured
+        resolvers; $true when an address comes back. Only called when probes are enabled.
+    #>
+    param([string] $Name, $Logger)
+    try {
+        if (Get-Command -Name 'Resolve-DnsName' -ErrorAction SilentlyContinue) {
+            $r = Resolve-DnsName -Name $Name -Type A -ErrorAction Stop
+            return (@($r | Where-Object { $_.PSObject.Properties['IPAddress'] -and $_.IPAddress }).Count -gt 0)
+        }
+        $entry = [System.Net.Dns]::GetHostEntry($Name)
+        return ($null -ne $entry -and @($entry.AddressList).Count -gt 0)
+    } catch {
+        # Fall back to the .NET resolver before concluding failure.
+        try {
+            $entry = [System.Net.Dns]::GetHostEntry($Name)
+            return ($null -ne $entry -and @($entry.AddressList).Count -gt 0)
+        } catch {
+            if ($Logger) { $Logger.Debug("DNS resolution failed: $($_.Exception.Message)", 'DNS Resolver') }
+            return $false
+        }
     }
 }
 
@@ -89,43 +118,33 @@ function Invoke-OmniModuleScan {
 
     Set-OmniResultMetric -Result $result -Name 'ConfiguredDnsServers' -Value (($allServers | Select-Object -Unique) -join ', ')
 
-    # --- Resolution test ---------------------------------------------------
-    $resolved = $false
-    try {
-        if (Get-Command -Name 'Resolve-DnsName' -ErrorAction SilentlyContinue) {
-            $r = Resolve-DnsName -Name 'www.microsoft.com' -Type A -ErrorAction Stop
-            $resolved = (@($r | Where-Object { $_.IPAddress }).Count -gt 0)
-        } else {
-            $entry = [System.Net.Dns]::GetHostEntry('www.microsoft.com')
-            $resolved = ($null -ne $entry -and @($entry.AddressList).Count -gt 0)
-        }
-    } catch {
-        # Fall back to .NET resolver before concluding failure.
-        try {
-            $entry = [System.Net.Dns]::GetHostEntry('www.microsoft.com')
-            $resolved = ($null -ne $entry -and @($entry.AddressList).Count -gt 0)
-        } catch {
-            $resolved = $false
-            $log.Debug("DNS resolution failed: $($_.Exception.Message)", 'DNS Resolver')
-        }
-    }
+    # --- Resolution test (opt-in connectivity probe) -----------------------
+    $probes = Test-OmniNetworkProbeEnabled -Context $Context
+    $dnsName = (Get-OmniProbeTarget -Context $Context).DnsName
+    Set-OmniResultMetric -Result $result -Name 'ConnectivityProbesRun' -Value $probes
 
-    Set-OmniResultMetric -Result $result -Name 'DnsResolutionOk' -Value $resolved
+    if ($probes) {
+        $resolved = Test-OmniDnsResolverProbe -Name $dnsName -Logger $log
+        Set-OmniResultMetric -Result $result -Name 'DnsResolutionOk' -Value $resolved
 
-    if (-not $resolved) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
-            -Title 'DNS resolution failed' -Severity 'Warning' `
-            -Component 'Network/DNS' `
-            -Detail 'Resolving www.microsoft.com did not return any address.' `
-            -LikelyCause 'DNS server unreachable/misconfigured, or no network connectivity.' `
-            -Confidence 70 `
-            -Recommendation 'Verify DNS server settings and connectivity; try flushing the DNS cache (ipconfig /flushdns).')
+        if (-not $resolved) {
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+                -Title 'DNS resolution failed' -Severity 'Warning' `
+                -Component 'Network/DNS' `
+                -Detail "Resolving $dnsName did not return any address." `
+                -LikelyCause 'DNS server unreachable/misconfigured, or no network connectivity.' `
+                -Confidence 70 `
+                -Recommendation 'Verify DNS server settings and connectivity; try flushing the DNS cache (ipconfig /flushdns).')
+        }
+    } else {
+        Add-OmniFinding -Result $result -Finding (New-OmniProbeSkippedFinding -Component 'Network/DNS' -Probe "resolve $dnsName")
     }
 
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+        $healthy = if ($probes) { 'DNS servers are configured and name resolution succeeded.' } else { 'No active adapter is missing its DNS servers (resolution not probed).' }
         Add-OmniFinding -Result $result -Finding (New-OmniFinding `
             -Title 'DNS resolver healthy' -Severity 'Pass' -Component 'Network/DNS' `
-            -Detail 'DNS servers are configured and name resolution succeeded.')
+            -Detail $healthy)
     }
 
     return (Complete-OmniResult -Result $result)

@@ -34,6 +34,9 @@ function Get-OmniModuleManifest {
         RequiresAdmin = $false
         Order         = 240
         Enabled       = $true
+        # Measures CPU and disk speed: run alone on the caller's thread after the
+        # parallel pool so other scanners don't skew the numbers.
+        Parallel      = $false
     }
 }
 

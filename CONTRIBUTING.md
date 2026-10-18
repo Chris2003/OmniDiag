@@ -91,8 +91,13 @@ To add a network-capable API, you need all of these:
 1. An allowlist entry at the top of `Tests/NoNetwork.Tests.ps1`: the file's repo-relative path,
    the API as the detector reports it, and a reason.
 2. The plugin's manifest declares the matching `NetworkAccess` (`LocalNetwork` or `Internet`).
-3. The pull request has the **NetworkAccess** label.
-4. A project owner approves it.
+3. The network call runs only when `Test-OmniNetworkProbeEnabled -Context $Context` is true
+   (connectivity probes are opt-in: `--network-probes`); otherwise the scanner does its local
+   work and adds `New-OmniProbeSkippedFinding`. Put the call in a small private function so
+   tests can mock it (see `Tests/Modules.NetworkProbes.Tests.ps1`), and take targets from
+   `Get-OmniProbeTarget`.
+4. The pull request has the **NetworkAccess** label.
+5. A project owner approves it.
 
 The test also fails on stale allowlist entries, so remove the entry when the usage goes away.
 
@@ -106,7 +111,10 @@ The test also fails on stale allowlist entries, so remove the entry when the usa
    automatically, so a new scanner is covered on discovery/contract/clean-execution with no
    extra work. Add a dedicated `Tests/Modules.<Name>.Tests.ps1` only for scanner-specific
    behavior worth asserting.
-4. That's it — the engine discovers it automatically. **Do not modify the core** to
+4. List it in its group's `Tests/data/scanner-groups/<group>.psd1` (the contract test fails
+   until every scanner is listed in exactly one file) and in its group's page under
+   [docs/modules](docs/modules/README.md).
+5. That's it — the engine discovers it automatically. **Do not modify the core** to
    add a scanner.
 
 ### Module guidelines
@@ -120,6 +128,12 @@ The test also fails on stale allowlist entries, so remove the entry when the usa
 - **Honor cancellation.** For long loops, check `$Context.CancellationToken.IsCancellationRequested`.
 - **Declare admin needs.** Set `RequiresAdmin = $true` if you read an elevated-only
   source; the engine will skip gracefully when not elevated.
+- **Be runspace-safe.** Scanners run in parallel worker runspaces: keep state inside
+  `Invoke-OmniModuleScan`, treat `$Context` as read-only data, and log through
+  `$Context.Logger`. Stay within `TimeoutSec` (default 60 s; raise it in the manifest if the
+  scanner is legitimately slower). Set `Parallel = $false` only if the scanner must not run
+  next to others (Benchmark measures the machine), and `SupportedPlatforms` /
+  `SupportedArchitectures` if it can't run on some hosts (skipped as `NotSupported`).
 
 ## Style
 

@@ -14,21 +14,24 @@ BeforeAll {
     $script:Scanners = @(Get-OmniModule -Path (Join-Path $root 'src/Modules') -Logger $script:Logger)
     $script:Repairs = @(Get-OmniRepair -Path (Join-Path $root 'src/Repairs') -Logger $script:Logger)
 
-    # The conventions table (binding for 0.5.0): scanner name -> group; anything else is 'extras'.
-    $script:ExpectedGroup = @{
-        'System Information' = 'system'; 'System' = 'system'
-        'Performance' = 'performance'; 'CPU' = 'performance'; 'Memory' = 'performance'; 'Processes' = 'performance'; 'Startup Performance' = 'performance'
-        'Services' = 'services'; 'Drivers' = 'services'
-        'Startup' = 'startup'; 'Scheduled Tasks' = 'startup'; 'Registry Health' = 'startup'
-        'Event Logs' = 'events'; 'Error Summary' = 'events'
-        'Reliability' = 'reliability'
-        'Storage' = 'storage'; 'Disk' = 'storage'; 'Disk Usage' = 'storage'
-        'Network' = 'network'; 'IP Configuration' = 'network'; 'DNS Resolver' = 'network'; 'Hosts File' = 'network'
-        'Network Shares' = 'network'; 'WiFi Networks' = 'network'; 'Proxy Configuration' = 'network'; 'VPN' = 'network'
-        'Windows Health' = 'updates'; 'Windows Update' = 'updates'; 'System Health' = 'updates'; 'Update Rings' = 'updates'
-        'Security' = 'security'; 'Firewall Rules' = 'security'; 'Certificates' = 'security'; 'BitLocker' = 'security'; 'Defender Onboarding' = 'security'
+    # The conventions table, one data file per group: Tests/data/scanner-groups/<group>.psd1
+    # = @{ Scanners = @{ '<manifest Name>' = @{ NetworkAccess = '...' } } }. Each group's
+    # owner adds new scanners to that group's file only.
+    $script:GroupDataDir = Join-Path $PSScriptRoot 'data/scanner-groups'
+    $script:GroupData = [ordered]@{}
+    foreach ($file in @(Get-ChildItem -LiteralPath $script:GroupDataDir -Filter '*.psd1' -File | Sort-Object Name)) {
+        $script:GroupData[$file.BaseName] = Import-PowerShellDataFile -LiteralPath $file.FullName
     }
-    $script:ExpectedNetwork = @{ 'Network' = 'Internet'; 'DNS Resolver' = 'Internet'; 'Active Directory' = 'LocalNetwork'; 'Repair Component Store (DISM)' = 'Internet'; 'Release / Renew IP Address' = 'LocalNetwork' }
+    # Scanner name -> list of { Group; NetworkAccess } entries (more than one = listed twice).
+    $script:ExpectedScanner = @{}
+    foreach ($g in $script:GroupData.Keys) {
+        foreach ($name in @($script:GroupData[$g].Scanners.Keys)) {
+            if (-not $script:ExpectedScanner.ContainsKey($name)) { $script:ExpectedScanner[$name] = [System.Collections.Generic.List[object]]::new() }
+            $script:ExpectedScanner[$name].Add([pscustomobject]@{ Group = [string]$g; NetworkAccess = [string]$script:GroupData[$g].Scanners[$name].NetworkAccess })
+        }
+    }
+    # Repairs have no group; their network labels stay here.
+    $script:ExpectedNetwork = @{ 'Repair Component Store (DISM)' = 'Internet'; 'Release / Renew IP Address' = 'LocalNetwork' }
     $script:IdPattern = '^[a-z0-9]+(?:[.-][a-z0-9]+)*$'
 
     function ConvertTo-TestKebab([string] $Name) { ($Name.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-') }
@@ -66,9 +69,39 @@ Export-ModuleMember -Function 'Get-OmniRepairManifest', 'Invoke-OmniRepairAction
     }
 }
 
+Describe 'Scanner group data files (Tests/data/scanner-groups)' {
+    It 'has exactly one data file per group id' {
+        @($script:GroupData.Keys | Sort-Object) | Should -Be @(Get-OmniGroupNames | Sort-Object)
+    }
+
+    It 'gives every data file a Scanners table with a valid NetworkAccess per scanner' {
+        foreach ($g in $script:GroupData.Keys) {
+            $script:GroupData[$g].ContainsKey('Scanners') | Should -BeTrue -Because "$g.psd1 needs a Scanners table"
+            foreach ($name in @($script:GroupData[$g].Scanners.Keys)) {
+                $script:GroupData[$g].Scanners[$name].NetworkAccess | Should -BeIn @('None', 'LocalNetwork', 'Internet') -Because "$g.psd1: '$name'"
+            }
+        }
+    }
+
+    It 'lists every discovered scanner in exactly one group file' {
+        foreach ($r in $script:Scanners) {
+            $script:ExpectedScanner.ContainsKey($r.Name) | Should -BeTrue -Because "scanner '$($r.Name)' ($($r.SourceFile)) must be listed in Tests/data/scanner-groups/$($r.Group).psd1"
+            @($script:ExpectedScanner[$r.Name]).Count | Should -Be 1 -Because "'$($r.Name)' is listed in: $((@($script:ExpectedScanner[$r.Name]) | ForEach-Object { $_.Group }) -join ', ')"
+        }
+    }
+
+    It 'lists only scanners that exist' {
+        $names = @($script:Scanners.Name)
+        foreach ($name in $script:ExpectedScanner.Keys) {
+            $names | Should -Contain $name -Because "'$name' is listed in Tests/data/scanner-groups but no scanner has that manifest Name"
+        }
+    }
+}
+
 Describe 'Scanner registrations (contract v1)' {
-    It 'discovers all 49 built-in scanners' {
-        $script:Scanners.Count | Should -Be 49
+    It 'discovers every scanner listed in the group data files' {
+        $script:Scanners.Count | Should -Be $script:ExpectedScanner.Count
+        $script:Scanners.Count | Should -BeGreaterOrEqual 49
     }
 
     It 'gives every scanner a unique, well-formed Id' {
@@ -87,14 +120,23 @@ Describe 'Scanner registrations (contract v1)' {
         }
     }
 
-    It 'matches the conventions table (group, id, network access)' {
+    It 'matches the group data files (group, id, network access)' {
         foreach ($r in $script:Scanners) {
-            $group = if ($script:ExpectedGroup.ContainsKey($r.Name)) { $script:ExpectedGroup[$r.Name] } else { 'extras' }
-            $net = if ($script:ExpectedNetwork.ContainsKey($r.Name)) { $script:ExpectedNetwork[$r.Name] } else { 'None' }
-            $r.Group | Should -Be $group -Because "$($r.Name) belongs to '$group'"
-            $r.Id | Should -Be ("{0}.{1}" -f $group, (ConvertTo-TestKebab $r.Name))
-            $r.NetworkAccess | Should -Be $net -Because "$($r.Name) network access"
+            if (-not $script:ExpectedScanner.ContainsKey($r.Name)) { continue }   # reported by the data-file tests
+            $expected = @($script:ExpectedScanner[$r.Name])[0]
+            $r.Group | Should -Be $expected.Group -Because "$($r.Name) is listed in $($expected.Group).psd1"
+            $r.Id | Should -Be ("{0}.{1}" -f $expected.Group, (ConvertTo-TestKebab $r.Name))
+            $r.NetworkAccess | Should -Be $expected.NetworkAccess -Because "$($r.Name) network access"
         }
+    }
+
+    It 'gives every scanner SupportedPlatforms and a Parallel flag (Benchmark opts out of the pool)' {
+        foreach ($r in $script:Scanners) {
+            @($r.SupportedPlatforms) | Should -Not -BeNullOrEmpty
+            foreach ($p in $r.SupportedPlatforms) { $p | Should -BeIn @('Windows', 'Linux', 'macOS') }
+            $r.Parallel | Should -BeOfType [bool]
+        }
+        ($script:Scanners | Where-Object Id -eq 'extras.benchmark').Parallel | Should -BeFalse
     }
 
     It 'declares Id, Group, and NetworkAccess explicitly in every manifest (no derived defaults)' {
@@ -154,7 +196,17 @@ Describe 'Derived defaults for manifests without contract v1 fields' {
         $reg[0].NetworkAccess | Should -Be 'None'
         $reg[0].TimeoutSec | Should -Be 60
         $reg[0].SupportedArchitectures | Should -Be @('x64', 'arm64')
+        $reg[0].SupportedPlatforms | Should -Be @('Windows', 'Linux', 'macOS')
+        $reg[0].Parallel | Should -BeTrue
         $reg[0].RequiresElevation | Should -BeFalse
+    }
+
+    It 'reads SupportedPlatforms case-insensitively and Parallel = $false' {
+        $dir = New-PluginFolder
+        New-ScannerPlugin -Folder $dir -File 'WinOnly.psm1' -ManifestBody "Name = 'Win Only'; Category = 'Custom'; SupportedPlatforms = @('windows'); Parallel = `$false"
+        $reg = @(Get-OmniModule -Path $dir -Logger (New-OmniLogger -MinimumLevel Error))
+        @($reg[0].SupportedPlatforms) | Should -Be @('Windows')
+        $reg[0].Parallel | Should -BeFalse
     }
 
     It 'derives the Id from a declared Group and honors RequiresElevation as an alias' {
@@ -209,6 +261,7 @@ Describe 'Contract violations are logged and skipped' {
         @{ Field = 'Id'; Body = "Id = 'Not A Valid Id'" }
         @{ Field = 'TimeoutSec'; Body = 'TimeoutSec = 0' }
         @{ Field = 'SupportedArchitectures'; Body = "SupportedArchitectures = @('mips')" }
+        @{ Field = 'SupportedPlatforms'; Body = "SupportedPlatforms = @('Amiga')" }
     ) {
         $dir = New-PluginFolder
         New-ScannerPlugin -Folder $dir -File 'Bad.psm1' -ManifestBody "Name = 'Bad Plugin'; Category = 'Custom'; $Body"

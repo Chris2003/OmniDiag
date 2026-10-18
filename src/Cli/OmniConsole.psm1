@@ -42,7 +42,11 @@ function New-OmniConsoleProgressCallback {
                 $p.PercentComplete, $p.Name, $p.Result.Status, $p.Result.Findings.Count, $p.Result.DurationMs
             Write-Host $line -ForegroundColor $color
         } elseif ($p.Phase -eq 'Skipped') {
-            Write-Host ("  [{0,3}%] {1,-26} {2}" -f $p.PercentComplete, $p.Name, 'Skipped (admin required)') -ForegroundColor DarkGray
+            $why = 'admin required'
+            if ($p.Result -and $p.Result.PSObject.Properties['SkippedReason'] -and $p.Result.SkippedReason -and $p.Result.SkippedReason -ne 'RequiresElevation') {
+                $why = [string]$p.Result.SkippedReason
+            }
+            Write-Host ("  [{0,3}%] {1,-26} {2}" -f $p.PercentComplete, $p.Name, "Skipped ($why)") -ForegroundColor DarkGray
         }
     }
 }
