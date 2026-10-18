@@ -29,6 +29,16 @@ Describe 'GUI XAML structure' {
             $raw | Should -Match ('x:Name="' + $n + '"')
         }
     }
+    It 'offers an unchecked, named "Run connectivity probes" option (probes are opt-in)' {
+        [xml]$doc = Get-Content -LiteralPath $script:XamlPath -Raw
+        $box = @($doc.SelectNodes('//*') | Where-Object { $_.LocalName -eq 'CheckBox' -and $_.GetAttribute('Name', 'http://schemas.microsoft.com/winfx/2006/xaml') -eq 'ChkNetworkProbes' })
+        $box.Count | Should -Be 1
+        $box[0].GetAttribute('IsChecked') | Should -Be 'False'
+        $box[0].GetAttribute('AutomationProperties.Name') | Should -Be 'Run connectivity probes (contacts the network)'
+        $box[0].GetAttribute('Content') | Should -Be 'Run connectivity probes (contacts the network)'
+        (Get-Content -LiteralPath (Join-Path (Split-Path $script:XamlPath -Parent) 'OmniDiagGui.psm1') -Raw) | Should -Match 'NetworkProbes = \$probes'
+    }
+
     It 'adds a Diagnostics entry to the navigation' {
         (Get-Content -LiteralPath $script:XamlPath -Raw) | Should -Match 'Content="Diagnostics"'
     }

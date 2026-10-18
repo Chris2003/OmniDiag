@@ -78,6 +78,10 @@
                     <TextBlock Text="One Tool. Complete Diagnostics." Foreground="{DynamicResource BrushMuted}" Margin="12,0,0,0" VerticalAlignment="Bottom"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <CheckBox x:Name="ChkNetworkProbes" Content="Run connectivity probes (contacts the network)" IsChecked="False"
+                              VerticalAlignment="Center" Margin="0,0,12,0"
+                              AutomationProperties.Name="Run connectivity probes (contacts the network)"
+                              ToolTip="Off by default. When on, the Network, DNS Resolver, and Active Directory scanners ping the default gateway and 1.1.1.1, resolve www.microsoft.com, and check the domain secure channel."/>
                     <ComboBox x:Name="CmbRange" Width="130" Margin="0,0,8,0" VerticalContentAlignment="Center">
                         <ComboBoxItem Content="Last 24 Hours"/>
                         <ComboBoxItem Content="Last 7 Days" IsSelected="True"/>

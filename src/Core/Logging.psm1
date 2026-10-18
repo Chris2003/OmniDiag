@@ -79,6 +79,23 @@ function New-OmniLogger {
             Message   = $Message
             Data      = $Data
         }
+        $this.AddRecord($record)
+    }
+
+    # AddRecord: emit one finished record (buffer, file, console). Log() uses it, and the
+    # parallel engine uses it to merge the records of a worker's in-memory logger with
+    # their original timestamps. Only the calling thread writes the log file, so
+    # concurrent workers can never interleave or corrupt lines.
+    $addRecord = {
+        param([object] $Record)
+
+        if ($null -eq $Record) { return }
+        $levels = $script:OmniLogLevels
+        $Level = [string]$Record.Level
+        if (-not $levels.Contains($Level)) { $Level = 'Info' }
+        if ($levels[$Level] -lt $levels[$this.MinimumLevel]) { return }
+        $Component = [string]$Record.Component
+        $Message = [string]$Record.Message
 
         # In-memory ring buffer.
         $this.Buffer.Add($record)
@@ -109,6 +126,7 @@ function New-OmniLogger {
         }
     }
 
+    Add-Member -InputObject $logger -MemberType ScriptMethod -Name AddRecord -Value $addRecord
     Add-Member -InputObject $logger -MemberType ScriptMethod -Name Log -Value $writer
     Add-Member -InputObject $logger -MemberType ScriptMethod -Name Debug -Value {
         param([string] $Message, [string] $Component = '', [object] $Data = $null)

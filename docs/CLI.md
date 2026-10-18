@@ -1,6 +1,6 @@
 # omnidiag command line
 
-`omnidiag` is OmniDiag's scriptable command line (0.5.0). It takes GNU-style arguments,
+`omnidiag` is OmniDiag's scriptable command line (0.6.0). It takes GNU-style arguments,
 writes data to stdout and progress to stderr, and reports its outcome as a documented exit
 code. The classic `OmniDiag.ps1` switches keep working and use the same exit codes.
 
@@ -14,8 +14,9 @@ code. The classic `OmniDiag.ps1` switches keep working and use the same exit cod
 | `Invoke-OmniDiagCli -Arguments @('scan', '--group', 'network')` | From PowerShell after `Import-Module .\src\OmniDiag.psd1`. Returns the exit code; `-Out` / `-Err` take `TextWriter`s if you want to capture output. |
 
 The launcher sends the first argument to the router when it is a subcommand (`list`, `scan`,
-`report`, `version`, `help`, or anything else that doesn't start with `-`) or a `--long`
-option. A first argument starting with a single `-` goes to `OmniDiag.ps1`.
+`report`, `version`, `help`, a group id such as `network`, or anything else that doesn't start
+with `-`) or a `--long` option. A first argument starting with a single `-` goes to
+`OmniDiag.ps1`.
 
 ## Commands
 
@@ -46,33 +47,59 @@ Runs scanners and summarizes the findings.
 | `--profile <name>` | Run a role profile (`HelpDesk`, `DesktopSupport`, `SystemsAdmin`, `NetworkAdmin`, `SecurityAdmin`, `CloudAdmin`, `Full`). |
 | `--workflow <name>` | Run a task workflow (`QuickTriage`, `SlowComputer`, `NetworkConnectivity`, `Printing`, `WindowsUpdate`, `LoginAndIdentity`, `StorageCleanup`, `SecurityPosture`, `CloudReadiness`, `FullScan`). |
 | `--range <preset>` | Event time range: `Last24Hours`, `Last7Days` (default), `Last30Days` (or `24h`, `7d`, `30d`). |
+| `--network-probes` | Also run the connectivity probes (see below). Off by default. |
 
-With no selection, every scanner that needs no network access runs. `--profile`/`--workflow`
-can't be combined with each other or with `--group`/`--module`.
+With no selection, every scanner runs. `--profile`/`--workflow` can't be combined with each
+other or with `--group`/`--module`.
 
-**Network access.** Scanners whose manifest declares `NetworkAccess` other than `None`
-(`network.network`, `network.dns-resolver`, `extras.active-directory`) never run from a
-group, a plan, or the default selection; the router says which ones it left out. Name one
-with `--module` to run it. (Phase 2 adds `--network-probes`.)
+**Network access (connectivity probes are opt-in).** A default scan contacts no other
+machine. Three scanners can probe connectivity: `network.network` (ping the default gateway
+and `1.1.1.1`, resolve `www.microsoft.com`), `network.dns-resolver` (resolve
+`www.microsoft.com` through the configured resolvers), and `extras.active-directory` (the
+domain secure-channel check against a domain controller). They run in every scan, group, and
+plan, but without `--network-probes` they do only their local checks (adapters, IP and DNS
+configuration, domain membership) and add an Information finding, "Connectivity probe not
+run", whose recommendation says how to run it. The router also prints which scanners have
+probes turned off. With `--network-probes` the probes run and the report's `options` records
+`networkProbes: true`. Probe targets can be changed from PowerShell with
+`-Config @{ ProbeTargets = @{ PublicAddress = '9.9.9.9'; DnsName = 'intranet.example';
+PingGateway = $false; TimeoutMs = 1000 } }` (`Invoke-OmniDiag`, `Invoke-OmniDiagScan`).
 
 Every scan is also saved in OmniDiag's native format to `OmniDiagData\sessions`, so
 `OmniDiag.ps1 -FromSession Last` / `-CompareWith Last` see it.
 
+**Execution.** Scanners run in parallel (a runspace pool with up to one worker per logical
+processor, at most 8); results always come back in the scanners' registration order. A
+scanner that runs past its `TimeoutSec` budget (default 60 s; `list modules` shows it) is
+stopped and reported as `Failed` with the error `Timed out after N s` (exit code 3). Skipped
+scanners carry a `skippedReason` in the JSON report: `RequiresElevation`, `NotSupported` (the
+scanner doesn't support this platform or processor architecture), or `Cancelled`.
+
+### `<group>`
+
+`omnidiag <group-id> [options]` is shorthand for `omnidiag scan --group <group-id> [options]`,
+for example `omnidiag network --network-probes --format json` or `omnidiag storage -o out\`.
+Group ids: `system`, `performance`, `services`, `startup`, `events`, `reliability`, `storage`,
+`network`, `updates`, `security`, `extras` (`omnidiag list groups`). `--module` adds scanners
+from other groups; `omnidiag help <group>` prints the group's usage.
+
 ### `report`
 
-Runs every scanner that needs no network access and writes an HTML report and a JSON report
-(schema v1) to `--output <directory>`, or to `OmniDiagData\reports` next to the tool. The
-written paths are printed on stdout, one per line. `--format` replaces the default
-`html,json` set (`json`, `csv`, `md`, `html`, `pdf`); `--output` must be a directory.
+Runs every scanner (connectivity probes only with `--network-probes`) and writes an HTML
+report and a JSON report (schema v1) to `--output <directory>`, or to `OmniDiagData\reports`
+next to the tool. The written paths are printed on stdout, one per line. `--format` replaces
+the default `html,json` set (`json`, `csv`, `md`, `html`, `pdf`); `--output` must be a
+directory.
 
 ### `version`
 
 Prints `OmniDiag <version>`. With `--format json`:
 `{ "schemaVersion": "1.0.0", "kind": "version", "tool": {...}, "reportSchemaVersion": "1.0.0", "powershell": {...} }`.
 
-### `help [command]`
+### `help [command|group]`
 
-Prints the usage overview or one command's usage. `--help` / `-h` work on every command.
+Prints the usage overview, one command's usage, or a group's usage. `--help` / `-h` work on
+every command.
 
 ## Global options
 
@@ -135,24 +162,40 @@ scan selections, `-Gui` on a non-Windows host) exit with 10.
 omnidiag list
 omnidiag list modules --format csv > modules.csv
 
-:: Triage a user's network problem and keep the evidence
-omnidiag scan --group network --module network.dns-resolver --output C:\Cases\1234\
+:: Triage a user's network problem (with connectivity probes) and keep the evidence
+omnidiag network --network-probes --output C:\Cases\1234\
 
 :: Feed another tool
 omnidiag scan --group storage,performance --format json --quiet > scan.json
 if errorlevel 2 echo Critical findings present
 
-:: A full local-only report for the ticket
+:: A full report for the ticket (no connectivity probes)
 omnidiag report --output C:\Cases\1234
 ```
 
 ```powershell
-# From PowerShell
+# From PowerShell: the CLI router
 $code = Invoke-OmniDiagCli -Arguments @('scan', '--profile', 'HelpDesk', '--format', 'md', '--output', '.\triage.md')
+
+# ... or the cmdlets, which write report-v1-shaped finding objects to the pipeline
+Get-OmniDiagGroup | Format-Table Id, ScannerCount, Name
+Get-OmniDiagModule -Group network | Format-Table Id, NetworkAccess, RequiresElevation
+Get-OmniDiagStorage | Where-Object severity -ne 'Info'
+Get-OmniDiagNetwork -NetworkProbes -IncludePassed | Format-Table severity, moduleId, title
+$s = Invoke-OmniDiagScan -Group security, updates -AsSession; Export-OmniReport -Session $s -Format Html
 ```
+
+`Invoke-OmniDiagScan [-Group <id[]>] [-Module <id[]>] [-NetworkProbes] [-MaxParallel <n>]
+[-Range <preset>] [-IncludePassed] [-AsSession] [-Config <hashtable>]` and one cmdlet per group
+(`Get-OmniDiagSystem`, `-Performance`, `-Services`, `-Startup`, `-Events`, `-Reliability`,
+`-Storage`, `-Network`, `-Updates`, `-Security`, `-Extras`) write `OmniDiag.V1.Finding` objects:
+the report schema v1 finding (`id`, `moduleId`, `title`, `severity`, `severityNative`, `passed`,
+`component`, `evidence`, `likelyCause`, `recommendation`, `confidence`) plus `moduleName`,
+`group`, `moduleStatus`, and `skippedReason`. Passing checks are left out unless
+`-IncludePassed`; `-AsSession` returns the native session instead. `-NetworkProbes` exists on
+`Invoke-OmniDiagScan`, `Get-OmniDiagNetwork`, and `Get-OmniDiagExtras`.
 
 ## Not yet available
 
-`repair`, `compare`, `gui`, `omnidiag <group>` shorthand, `--redact`, `--elevated-only`, and
-`--network-probes` are planned for later phases (see [ROADMAP.md](ROADMAP.md)). Until then use
-`OmniDiag.ps1 -Repair`, `-CompareWith`, and `-Gui`.
+`repair`, `compare`, `gui`, `--redact`, and `--elevated-only` are planned for later phases (see
+[ROADMAP.md](ROADMAP.md)). Until then use `OmniDiag.ps1 -Repair`, `-CompareWith`, and `-Gui`.

@@ -31,7 +31,7 @@ BeforeAll {
         @{ File = 'FakeCrit.psm1';  Manifest = "Name = 'Fake Crit'; Category = 'Test'; Group = 'security'; Order = 3"; Body = "Add-OmniFinding -Result `$r -Finding (New-OmniFinding -Title 'firewall off' -Severity 'Error')" }
         @{ File = 'FakeThrow.psm1'; Manifest = "Name = 'Fake Throw'; Category = 'Test'; Group = 'extras'; Order = 4";  Body = "throw 'intentional failure'" }
         @{ File = 'FakeAdmin.psm1'; Manifest = "Name = 'Fake Admin'; Category = 'Test'; Group = 'extras'; RequiresAdmin = `$true; Order = 5"; Body = "Add-OmniFinding -Result `$r -Finding (New-OmniFinding -Title 'admin ok' -Severity 'Pass')" }
-        @{ File = 'FakeNet.psm1';   Manifest = "Name = 'Fake Net'; Category = 'Test'; Group = 'network'; NetworkAccess = 'Internet'; Order = 6"; Body = "Add-OmniFinding -Result `$r -Finding (New-OmniFinding -Title 'reachable' -Severity 'Pass')" }
+        @{ File = 'FakeNet.psm1';   Manifest = "Name = 'Fake Net'; Category = 'Test'; Group = 'network'; NetworkAccess = 'Internet'; Order = 6"; Body = "if (Test-OmniNetworkProbeEnabled -Context `$Context) { Add-OmniFinding -Result `$r -Finding (New-OmniFinding -Title 'reachable' -Severity 'Pass') } else { Add-OmniFinding -Result `$r -Finding (New-OmniProbeSkippedFinding -Component 'Network/Test' -Probe 'ping the test target') }" }
     )
     foreach ($f in $fakes) {
         $text = @"
@@ -129,7 +129,16 @@ Describe 'omnidiag help / version' {
         $r = Invoke-Cli -Arguments @('help', 'scan')
         $r.Code | Should -Be 0
         $r.Out | Should -Match 'Usage: omnidiag scan'
+        $r.Out | Should -Match '--network-probes'
         (Invoke-Cli -Arguments @('report', '--help')).Out | Should -Match 'Usage: omnidiag report'
+    }
+
+    It 'prints group help for help <group> and <group> --help' {
+        (Invoke-Cli -Arguments @('help', 'network')).Out | Should -Match 'Usage: omnidiag network'
+        $r = Invoke-Cli -Arguments @('storage', '--help')
+        $r.Code | Should -Be 0
+        $r.Out | Should -Match 'Usage: omnidiag storage'
+        $r.Out | Should -Match 'scan --group storage'
     }
 
     It 'prints the version, as text or JSON' {
@@ -255,20 +264,56 @@ Describe 'omnidiag scan' {
         @($doc.modules.id) | Should -Be @('system.fake-pass', 'storage.fake-warn')
     }
 
-    It 'leaves network scanners out unless named with --module' {
+    It 'runs network-capable scanners by default with connectivity probes off' {
         $r = Invoke-Cli -Arguments @('scan', '--format', 'json')
         $doc = $r.Out | ConvertFrom-Json
-        @($doc.modules.id) | Should -Not -Contain 'network.fake-net'
-        @($doc.modules).Count | Should -Be 5
-        $r.Err | Should -Match 'need network access: network\.fake-net'
+        @($doc.modules.id) | Should -Contain 'network.fake-net'
+        @($doc.modules).Count | Should -Be 6
+        $net = $doc.modules | Where-Object id -eq 'network.fake-net'
+        @($net.findings.title) | Should -Be @('Connectivity probe not run')
+        $net.findings[0].severity | Should -Be 'Info'
+        $net.findings[0].recommendation | Should -Match '--network-probes'
+        $r.Err | Should -Match 'Connectivity probes are off \(network\.fake-net\)'
+        $doc.options.PSObject.Properties.Name | Should -Not -Contain 'networkProbes'
         $r.Code | Should -Be 3
 
-        $grp = Invoke-Cli -Arguments @('scan', '--group', 'network')
-        $grp.Code | Should -Be 10
-        $grp.Err | Should -Match 'no scanners match'
+        $grp = Invoke-Cli -Arguments @('scan', '--group', 'network', '-f', 'json', '-q')
+        $grp.Code | Should -Be 0
+        @(($grp.Out | ConvertFrom-Json).modules.id) | Should -Be @('network.fake-net')
+    }
 
-        $named = (Invoke-Cli -Arguments @('scan', '--module', 'network.fake-net', '-f', 'json', '-q')).Out | ConvertFrom-Json
-        $named.modules[0].id | Should -Be 'network.fake-net'
+    It 'runs connectivity probes with --network-probes and records the option' {
+        $r = Invoke-Cli -Arguments @('scan', '--group', 'network', '--network-probes', '-f', 'json')
+        $r.Code | Should -Be 0
+        $doc = $r.Out | ConvertFrom-Json
+        @($doc.modules[0].findings.title) | Should -Be @('reachable')
+        $doc.options.networkProbes | Should -BeTrue
+        $r.Err | Should -Match 'with connectivity probes'
+        $r.Err | Should -Not -Match 'Connectivity probes are off'
+    }
+
+    It 'treats omnidiag <group> as scan --group <group>' {
+        $r = Invoke-Cli -Arguments @('storage', '--format', 'json', '-q')
+        $r.Code | Should -Be 1
+        $doc = $r.Out | ConvertFrom-Json
+        @($doc.modules.id) | Should -Be @('storage.fake-warn')
+        @($doc.options.groups) | Should -Be @('storage')
+        $doc.options.command | Should -Be 'scan'
+
+        $net = Invoke-Cli -Arguments @('network', '--network-probes', '--format', 'json', '-q')
+        $net.Code | Should -Be 0
+        $ndoc = $net.Out | ConvertFrom-Json
+        @($ndoc.modules[0].findings.title) | Should -Be @('reachable')
+        $ndoc.options.networkProbes | Should -BeTrue
+
+        $both = (Invoke-Cli -Arguments @('system', '--module', 'storage.fake-warn', '-f', 'json', '-q')).Out | ConvertFrom-Json
+        @($both.modules.id) | Should -Be @('system.fake-pass', 'storage.fake-warn')
+    }
+
+    It 'rejects --network-probes where it does not apply' {
+        $r = Invoke-Cli -Arguments @('list', '--network-probes')
+        $r.Code | Should -Be 10
+        $r.Err | Should -Match "does not apply to 'list'"
     }
 
     It 'prints a human summary on stdout without --format' {
@@ -320,7 +365,7 @@ Describe 'omnidiag scan' {
 }
 
 Describe 'omnidiag report' {
-    It 'writes HTML + JSON v1 for every local-only scanner' {
+    It 'writes HTML + JSON v1 for every scanner (probes off)' {
         $dir = Join-Path $TestDrive 'report'
         $r = Invoke-Cli -Arguments @('report', '--output', $dir)
         $r.Code | Should -Be 3
@@ -331,7 +376,8 @@ Describe 'omnidiag report' {
         $r.Out | Should -Match ([regex]::Escape($json[0].FullName))
         $doc = Get-Content -LiteralPath $json[0].FullName -Raw | ConvertFrom-Json
         $doc.options.command | Should -Be 'report'
-        @($doc.modules.id) | Should -Not -Contain 'network.fake-net'
+        @($doc.modules.id) | Should -Contain 'network.fake-net'
+        @(($doc.modules | Where-Object id -eq 'network.fake-net').findings.title) | Should -Be @('Connectivity probe not run')
         if ($script:CanValidate) { Test-Json -Json (Get-Content -LiteralPath $json[0].FullName -Raw) -SchemaFile $script:ReportSchema | Should -BeTrue }
     }
 
