@@ -241,6 +241,41 @@ Describe 'GUI code-behind matches the XAML (cross-platform)' {
         $factory | Should -Not -Match 'Get-OmniSystemInfo|Get-OmniModule|Invoke-OmniRepairCenter|Get-CimInstance'
     }
 
+    It 'declares the Light palette in the XAML, so startup does not apply the Light theme twice' {
+        $light = Get-OmniThemePalette -Name Light
+        foreach ($k in $light.Keys) {
+            $m = [regex]::Match($script:XamlRaw, 'x:Key="' + $k + '"\s+Color="(#[0-9A-Fa-f]{6})"')
+            $m.Success | Should -BeTrue -Because "$k must be a SolidColorBrush with a #RRGGBB color"
+            $m.Groups[1].Value.ToUpperInvariant() | Should -Be $light[$k].ToUpperInvariant() -Because $k
+        }
+        $script:GuiSource | Should -Match 'Sync-OmniEffectiveTheme -Initial'
+    }
+
+    It 'records startup phase checkpoints and turns off the legacy accessibility switches before WPF loads' {
+        foreach ($phase in 'Entry', 'StaRunspaceReady', 'WpfPreloaded', 'ModuleImported', 'InitializeStart', 'WpfAssembliesLoaded',
+            'XamlParsed', 'WindowConstructed', 'ShowCalled', 'ContentRendered') {
+            $script:GuiSource | Should -Match ("Add-OmniStartupMark -Name '" + $phase + "'")
+        }
+        foreach ($sw in 'Switch.UseLegacyAccessibilityFeatures', 'Switch.UseLegacyAccessibilityFeatures.2', 'Switch.UseLegacyAccessibilityFeatures.3') {
+            $script:GuiSource | Should -Match ([regex]::Escape("'$sw'"))
+        }
+        $factory = [regex]::Match($script:GuiSource, '(?s)function Initialize-OmniMainWindow \{.*?\n\}\r?\n').Value
+        $factory.IndexOf('Disable-OmniLegacyAccessibility') | Should -BeLessThan $factory.IndexOf('Add-Type -AssemblyName PresentationFramework')
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $line = & $script:Gui {
+            param($c)
+            $saved = $script:OmniStartupMarks
+            try {
+                $script:OmniStartupMarks = $null
+                Add-OmniStartupMark -Name 'Entry' -Clock $c
+                Add-OmniStartupMark -Name 'XamlParsed' -Clock $c
+                Add-OmniStartupMark -Name 'Entry' -Clock $c
+                Format-OmniStartupTiming
+            } finally { $script:OmniStartupMarks = $saved }
+        } $clock
+        $line | Should -Match '^Entry=\d+ ms, XamlParsed=\d+ ms$'
+    }
+
     It 'exports reports in a background runspace, with the redaction option gated on -Redact' {
         $export = [regex]::Match($script:GuiSource, '(?s)function Invoke-OmniExportRequest \{.*?\n\}\r?\n').Value
         $export | Should -Match 'Invoke-OmniUiTask'
@@ -390,7 +425,7 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
         # client calls must not come from the window's own thread, so they run here.
         $sync = [hashtable]::Synchronized(@{
             Stage = 'starting'; Ready = $false; Error = $null; Hwnd = [IntPtr]::Zero
-            StartupMs = $null; Mode = ''; Visited = @(); Unreached = @(); Stop = $false; Closed = $false
+            StartupMs = $null; StartupTimings = ''; Mode = ''; Visited = @(); Unreached = @(); Stop = $false; Closed = $false
         })
         $rs = [runspacefactory]::CreateRunspace()
         $rs.ApartmentState = 'STA'
@@ -415,6 +450,7 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
                 $Sync.Stage = 'show'
                 $pump = { $window.Dispatcher.Invoke([Action] { }, [System.Windows.Threading.DispatcherPriority]::ContextIdle) }
                 $window.ShowActivated = $true
+                & $gui { param($c) Add-OmniStartupMark -Name 'ShowCalled' -Clock $c } $clock
                 $window.Show()
                 $deadline = [DateTime]::UtcNow.AddSeconds(20)
                 while ($null -eq (& $gui { $script:OmniUi.StartupMs }) -and [DateTime]::UtcNow -lt $deadline) {
@@ -422,6 +458,7 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
                     Start-Sleep -Milliseconds 10
                 }
                 $Sync.StartupMs = & $gui { $script:OmniUi.StartupMs }
+                $Sync.StartupTimings = [string](& $gui { Format-OmniStartupTiming -Marks $script:OmniUi.StartupTimings })
                 if ($null -eq $Sync.StartupMs) { throw 'the window never rendered (no ContentRendered within 20 s)' }
                 $Sync.Hwnd = ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle
 
@@ -535,6 +572,7 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
             ById           = $byId
             WindowStatus   = $root.Current.ItemStatus
             StartupMs      = $sync.StartupMs
+            StartupTimings = $sync.StartupTimings
             Mode           = $sync.Mode
             Visited        = @($sync.Visited)
             Unreached      = @($sync.Unreached)
@@ -592,10 +630,14 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
         $ms = [int]$script:UiaResult.StartupMs
         $ms | Should -BeGreaterThan 0
         $script:UiaResult.WindowStatus | Should -Be "StartupMs=$ms"
+        # Phase breakdown (ms since the clock started, just before Initialize-OmniMainWindow).
+        $phases = [string]$script:UiaResult.StartupTimings
         if ($ms -gt 2000) {
-            Write-Warning "GUI first render took $ms ms (target: under 2000 ms). Soft gate - not failing."
+            Write-Warning "GUI first render took $ms ms (target: under 2000 ms). Soft gate - not failing. Phases: $phases"
         } else {
-            Write-Host "    GUI first render: $ms ms"
+            Write-Host "    GUI first render: $ms ms ($phases)"
         }
+        $phases | Should -Match 'XamlParsed=\d+ ms'
+        $phases | Should -Match 'ContentRendered=\d+ ms'
     }
 }

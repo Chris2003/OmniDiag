@@ -39,6 +39,10 @@ Set-StrictMode -Version Latest
 $script:OmniUiRoot = $PSScriptRoot
 $script:OmniUi = $null
 $script:OmniStartupClock = $null
+# Startup phase checkpoints (phase -> ms on the startup clock), see Add-OmniStartupMark.
+$script:OmniStartupMarks = $null
+# MainWindow.xaml text, read once per module instance (or handed in by the MTA host).
+$script:OmniXamlText = $null
 
 # Every x:Name the code looks up with FindName. Tests check each exists in MainWindow.xaml
 # and that the code never reaches for a control outside this list.
@@ -82,6 +86,70 @@ $script:OmniShortcutHelp = @(
 )
 
 $script:OmniSeverityOrder = @('Critical', 'Error', 'Warning', 'Information', 'Pass')
+
+# ---------------------------------------------------------------------------
+# Startup: phase timings, accessibility switches, XAML text
+# ---------------------------------------------------------------------------
+
+function Add-OmniStartupMark {
+    <#
+    .SYNOPSIS
+        Internal: record a startup checkpoint - milliseconds on the startup clock (from
+        Show-OmniDiagWindow entry) at which a phase finished. The first mark per phase wins.
+
+    .DESCRIPTION
+        Phases, in order: Entry, StaRunspaceReady, WpfPreloaded (MTA host only: loaded on
+        the calling thread while the STA runspace imports OmniDiag), ModuleImported,
+        InitializeStart, WpfAssembliesLoaded, XamlParsed, WindowConstructed, ShowCalled,
+        ContentRendered. Thread-safe: the MTA host marks from two threads.
+    #>
+    param([Parameter(Mandatory)] [string] $Name, [System.Diagnostics.Stopwatch] $Clock = $script:OmniStartupClock)
+    if (-not $Clock) { return }
+    if ($null -eq $script:OmniStartupMarks) { $script:OmniStartupMarks = [System.Collections.Specialized.OrderedDictionary]::new() }
+    $marks = $script:OmniStartupMarks
+    [System.Threading.Monitor]::Enter($marks)
+    try {
+        if (-not $marks.Contains($Name)) { $marks.Add($Name, [int]$Clock.Elapsed.TotalMilliseconds) }
+    } finally {
+        [System.Threading.Monitor]::Exit($marks)
+    }
+}
+
+function Format-OmniStartupTiming {
+    <# .SYNOPSIS Internal: the startup checkpoints as one line ("Entry=0 ms, ..., ContentRendered=1234 ms"), or ''. #>
+    [OutputType([string])]
+    param($Marks = $script:OmniStartupMarks)
+    if ($null -eq $Marks -or $Marks.Count -eq 0) { return '' }
+    $parts = foreach ($k in @($Marks.Keys)) { '{0}={1} ms' -f $k, $Marks[$k] }
+    return ($parts -join ', ')
+}
+
+function Disable-OmniLegacyAccessibility {
+    <#
+    .SYNOPSIS
+        Internal: turn off WPF's legacy accessibility behavior on .NET Framework.
+
+    .DESCRIPTION
+        powershell.exe (Windows PowerShell 5.1) does not target .NET Framework 4.7.1+, so
+        WPF keeps the legacy accessibility switches on and UIA live regions (LiveSetting,
+        LiveRegionChanged) do nothing. Clearing the three switches before WPF reads them
+        (on first use) enables them. No effect on .NET (PowerShell 7), where they are off.
+    #>
+    if ($PSVersionTable.PSEdition -ne 'Desktop') { return }
+    foreach ($name in @('Switch.UseLegacyAccessibilityFeatures', 'Switch.UseLegacyAccessibilityFeatures.2', 'Switch.UseLegacyAccessibilityFeatures.3')) {
+        try { [System.AppContext]::SetSwitch($name, $false) } catch { $null = $_ }
+    }
+}
+
+function Get-OmniMainWindowXaml {
+    <# .SYNOPSIS Internal: the MainWindow.xaml text (read once, then cached). #>
+    [OutputType([string])]
+    param()
+    if (-not $script:OmniXamlText) {
+        $script:OmniXamlText = [System.IO.File]::ReadAllText((Join-Path $script:OmniUiRoot 'MainWindow.xaml'), [System.Text.Encoding]::UTF8)
+    }
+    return $script:OmniXamlText
+}
 
 # ---------------------------------------------------------------------------
 # Themes
@@ -215,7 +283,12 @@ function Sync-OmniEffectiveTheme {
     .SYNOPSIS
         Internal: apply the user's theme, or the high-contrast theme while Windows high
         contrast is on (the dark/light toggle is disabled then).
+
+    .PARAMETER Initial
+        Startup: MainWindow.xaml already holds the Light palette, so the Light theme is not
+        applied a second time (tests check the XAML brushes equal Get-OmniThemePalette Light).
     #>
+    param([switch] $Initial)
     $ui = $script:OmniUi
     if (-not $ui) { return }
     $ui.HighContrast = Test-OmniHighContrast
@@ -229,7 +302,7 @@ function Sync-OmniEffectiveTheme {
         $btn.ToolTip = 'High contrast is on, so OmniDiag uses your Windows high-contrast colors. Turn high contrast off to choose dark or light.'
         [System.Windows.Automation.AutomationProperties]::SetName($btn, "Switch to $target theme (unavailable in high contrast)")
     } else {
-        Set-OmniTheme -Window $ui.Window -Name $ui.Theme
+        if (-not ($Initial -and $ui.Theme -eq 'Light')) { Set-OmniTheme -Window $ui.Window -Name $ui.Theme }
         $btn.IsEnabled = $true
         $btn.ToolTip = 'Toggle dark or light theme (Alt+T)'
         [System.Windows.Automation.AutomationProperties]::SetName($btn, "Switch to $target theme")
@@ -280,6 +353,9 @@ function Invoke-OmniLiveRegion {
     <# .SYNOPSIS Internal: tell screen readers a live region changed (WPF does not do this itself). #>
     param([Parameter(Mandatory)] $Element)
     try {
+        # Before the window is shown no screen reader can hear the event; creating an
+        # automation peer then only costs startup time.
+        if ($Element -is [System.Windows.FrameworkElement] -and -not $Element.IsLoaded) { return }
         $peer = [System.Windows.Automation.Peers.UIElementAutomationPeer]::FromElement($Element)
         if (-not $peer) { $peer = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($Element) }
         if ($peer) {
@@ -1925,12 +2001,15 @@ function Initialize-OmniMainWindow {
         [System.Diagnostics.Stopwatch] $StartupClock
     )
 
+    Add-OmniStartupMark -Name 'InitializeStart' -Clock $StartupClock
+    Disable-OmniLegacyAccessibility
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml -ErrorAction Stop
+    Add-OmniStartupMark -Name 'WpfAssembliesLoaded' -Clock $StartupClock
 
-    $xamlPath = Join-Path $script:OmniUiRoot 'MainWindow.xaml'
-    [xml]$xaml = Get-Content -LiteralPath $xamlPath -Raw
-    $reader = [System.Xml.XmlNodeReader]::new($xaml)
-    $window = [System.Windows.Markup.XamlReader]::Load($reader)
+    # Parse the cached text directly (no XmlDocument round trip; the XAML has no inline
+    # text runs, so whitespace handling is the same).
+    $window = [System.Windows.Markup.XamlReader]::Parse((Get-OmniMainWindowXaml))
+    Add-OmniStartupMark -Name 'XamlParsed' -Clock $StartupClock
 
     $controls = @{}
     foreach ($n in $script:OmniUiControlNames) { $controls[$n] = $window.FindName($n) }
@@ -1953,6 +2032,7 @@ function Initialize-OmniMainWindow {
         Logger         = $logger
         StartupClock   = $StartupClock
         StartupMs      = $null
+        StartupTimings = $null   # phase -> ms (OrderedDictionary), set at first render
         StartupTask    = $null
         Scan           = $null
         Session        = $null
@@ -1978,7 +2058,7 @@ function Initialize-OmniMainWindow {
     }
     $ui = $script:OmniUi
 
-    Sync-OmniEffectiveTheme
+    Sync-OmniEffectiveTheme -Initial
     foreach ($n in $script:OmniLiveRegionControls) { if ($controls[$n]) { [void](Enable-OmniLiveRegion -Element $controls[$n]) } }
     $controls.BtnHelp.ToolTip = Get-OmniShortcutHelpText
     Initialize-OmniGroupCatalog
@@ -2155,13 +2235,19 @@ function Initialize-OmniMainWindow {
         $ui = $script:OmniUi
         if ($null -ne $ui.StartupMs) { return }
         $ms = -1
-        if ($ui.StartupClock) { $ui.StartupClock.Stop(); $ms = [int]$ui.StartupClock.Elapsed.TotalMilliseconds }
+        if ($ui.StartupClock) {
+            Add-OmniStartupMark -Name 'ContentRendered' -Clock $ui.StartupClock
+            $ui.StartupClock.Stop(); $ms = [int]$ui.StartupClock.Elapsed.TotalMilliseconds
+        }
+        $ui.StartupTimings = $script:OmniStartupMarks
         $ui.StartupMs = $ms
         # Hidden diagnostic: readable through UI Automation (ItemStatus) by tests and tools.
         try { [System.Windows.Automation.AutomationProperties]::SetItemStatus($ui.Window, "StartupMs=$ms") } catch { $null = $_ }
         if ($ui.Logger) {
             try {
                 $ui.Logger.Log('Info', "GUI first render in $ms ms (target: under 2000 ms).", 'Gui', @{ StartupMs = $ms; TargetMs = 2000 })
+                $phases = Format-OmniStartupTiming -Marks $ui.StartupTimings
+                if ($phases) { $ui.Logger.Log('Info', "GUI startup phases (ms since entry): $phases", 'Gui', @{ StartupTimings = $ui.StartupTimings }) }
                 if ($ms -gt 2000) { $ui.Logger.Log('Warn', "GUI first render took $ms ms, over the 2000 ms target.", 'Gui', @{ StartupMs = $ms }) }
             } catch { $null = $_ }
         }
@@ -2212,6 +2298,7 @@ function Initialize-OmniMainWindow {
     })
 
     Sync-OmniBusyState
+    Add-OmniStartupMark -Name 'WindowConstructed' -Clock $StartupClock
     return $window
 }
 
@@ -2221,6 +2308,7 @@ function Invoke-OmniWindow {
     $clock = $script:OmniStartupClock
     if (-not $clock) { $clock = [System.Diagnostics.Stopwatch]::StartNew() }
     $window = Initialize-OmniMainWindow -RootManifest $RootManifest -ModulesPath $ModulesPath -RepairsPath $RepairsPath -Theme $Theme -StartupClock $clock
+    Add-OmniStartupMark -Name 'ShowCalled' -Clock $clock
     [void]$window.ShowDialog()
 }
 
@@ -2260,8 +2348,13 @@ function Show-OmniDiagWindow {
     )
     if (Get-Command Write-OmniDeprecationWarning -ErrorAction SilentlyContinue) { Write-OmniDeprecationWarning -Name 'Show-OmniDiagWindow' -Replacement 'Show-OmniDiagGui' }
 
-    # Startup clock: from here to first render. Kept when an outer MTA call handed one in.
-    if (-not $script:OmniStartupClock) { $script:OmniStartupClock = [System.Diagnostics.Stopwatch]::StartNew() }
+    # Startup clock: from here to first render. Kept when an outer MTA call handed one in
+    # (together with the phase marks recorded so far).
+    if (-not $script:OmniStartupClock) {
+        $script:OmniStartupClock = [System.Diagnostics.Stopwatch]::StartNew()
+        $script:OmniStartupMarks = $null
+    }
+    Add-OmniStartupMark -Name 'Entry'
 
     $apartment = [System.Threading.Thread]::CurrentThread.GetApartmentState()
     if ($apartment -eq 'STA') {
@@ -2269,6 +2362,7 @@ function Show-OmniDiagWindow {
             Invoke-OmniWindow -RootManifest $RootManifest -ModulesPath $ModulesPath -RepairsPath $RepairsPath -Theme $Theme
         } finally {
             $script:OmniStartupClock = $null
+            $script:OmniStartupMarks = $null
         }
         return
     }
@@ -2279,23 +2373,46 @@ function Show-OmniDiagWindow {
     $rs.ApartmentState = 'STA'
     $rs.ThreadOptions = 'ReuseThread'
     $rs.Open()
+    Add-OmniStartupMark -Name 'StaRunspaceReady'
+    # Read the XAML here and hand it over, so the STA runspace does not read it again.
+    $xamlText = $null
+    try { $xamlText = Get-OmniMainWindowXaml } catch { $xamlText = $null }
     $ps = [PowerShell]::Create()
     $ps.Runspace = $rs
     [void]$ps.AddScript({
-        param($Manifest, $ModulesPath, $RepairsPath, $Theme, $Clock)
+        param($Manifest, $ModulesPath, $RepairsPath, $Theme, $Clock, $Marks, $XamlText)
         Import-Module $Manifest -Force -DisableNameChecking
-        # Hand the caller's startup clock to the GUI module in this runspace.
+        # Hand the caller's startup clock, phase marks, and XAML text to the GUI module in
+        # this runspace.
         $root = Get-Module -Name OmniDiag | Select-Object -First 1
         $gui = $null
         if ($root) { $gui = @($root.NestedModules | Where-Object { $_.Name -eq 'OmniDiagGui' }) | Select-Object -First 1 }
-        if ($gui -and $Clock) { & $gui { param($c) $script:OmniStartupClock = $c } $Clock }
+        if ($gui -and $Clock) {
+            & $gui {
+                param($c, $m, $x)
+                $script:OmniStartupClock = $c
+                $script:OmniStartupMarks = $m
+                if ($x) { $script:OmniXamlText = $x }
+                Add-OmniStartupMark -Name 'ModuleImported'
+            } $Clock $Marks $XamlText
+        }
         Show-OmniDiagWindow -RootManifest $Manifest -ModulesPath $ModulesPath -RepairsPath $RepairsPath -Theme $Theme
-    }).AddParameters(@{ Manifest = $RootManifest; ModulesPath = $ModulesPath; RepairsPath = $RepairsPath; Theme = $Theme; Clock = $script:OmniStartupClock })
+    }).AddParameters(@{
+        Manifest = $RootManifest; ModulesPath = $ModulesPath; RepairsPath = $RepairsPath; Theme = $Theme
+        Clock = $script:OmniStartupClock; Marks = $script:OmniStartupMarks; XamlText = $xamlText
+    })
     try {
-        $ps.Invoke()   # blocks until the window closes
+        # The STA runspace imports OmniDiag (the slow part) while this thread loads the WPF
+        # assemblies (they are process-wide), so the two overlap instead of adding up.
+        $handle = $ps.BeginInvoke()
+        Disable-OmniLegacyAccessibility
+        try { Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml -ErrorAction Stop } catch { $null = $_ }
+        Add-OmniStartupMark -Name 'WpfPreloaded'
+        [void]$ps.EndInvoke($handle)   # blocks until the window closes; rethrows its errors
     } finally {
         $ps.Dispose(); $rs.Dispose()
         $script:OmniStartupClock = $null
+        $script:OmniStartupMarks = $null
     }
 }
 

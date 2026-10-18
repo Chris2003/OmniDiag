@@ -54,7 +54,10 @@ uploaded.
   for screen readers (for example "Critical: Disk almost full (Disk Space)").
 - The status bar text, the progress bar, and the findings count are polite live
   regions, so Narrator announces scan progress and results (needs .NET Framework 4.7.1+
-  under Windows PowerShell; older frameworks simply don't announce).
+  under Windows PowerShell; older frameworks simply don't announce). Under Windows
+  PowerShell the GUI turns off WPF's legacy accessibility switches
+  (`Switch.UseLegacyAccessibilityFeatures`, `.2`, `.3`) before WPF loads; without that,
+  `powershell.exe` keeps them on and live regions stay silent.
 - Keyboard focus is shown with a dotted rectangle and a thicker button border in every
   theme.
 - Severity is always shown as text (the Severity column, the Worst severity column, the
@@ -76,7 +79,9 @@ these checks need a person on a Windows desktop:
    with Alt+Left, export with Ctrl+E (operate the whole dialog with Tab, Space, Enter,
    Esc), run a dry-run repair, and toggle the theme with Alt+T.
 2. **Narrator** (Ctrl+Win+Enter): every control is announced with a meaningful name;
-   scan progress and "Scan complete ... Score ..." are announced without moving focus;
+   scan progress and "Scan complete ... Score ..." are announced without moving focus
+   (check this under both Windows PowerShell 5.1 and PowerShell 7: on 5.1 it depends on
+   the legacy accessibility switches being off, see above);
    grid rows read as "Severity: title (module)"; the export dialog's checkboxes and the
    disabled redaction option (with its reason) are announced.
 3. **High Contrast** (Left Alt+Left Shift+Print Screen, or Settings > Accessibility >
@@ -93,3 +98,25 @@ Target: first render under 2 s. The time from `Show-OmniDiagWindow` to the windo
 first render is logged at Info to `OmniDiagData\logs\omnidiag-gui-*.jsonl` and exposed
 as the window's UI Automation ItemStatus (`StartupMs=<n>`). System Information,
 the repair and scanner catalogs, and group scanner counts load after first paint.
+
+The same log has a second Info line with the phase breakdown, in milliseconds since
+`Show-OmniDiagWindow` was called (each value is when that phase finished):
+
+| Phase | Meaning |
+|---|---|
+| `Entry` | `Show-OmniDiagWindow` called (0) |
+| `StaRunspaceReady` | PowerShell 7 only: the STA runspace that hosts the window is open |
+| `WpfPreloaded` | PowerShell 7 only: WPF assemblies loaded on the calling thread, in parallel with the module import |
+| `ModuleImported` | PowerShell 7 only: OmniDiag imported in the STA runspace |
+| `InitializeStart` | window construction starts |
+| `WpfAssembliesLoaded` | WPF assemblies loaded (already loaded on PowerShell 7) |
+| `XamlParsed` | `MainWindow.xaml` parsed into the window |
+| `WindowConstructed` | controls looked up, handlers wired, initial state set |
+| `ShowCalled` | the window is shown |
+| `ContentRendered` | first render (= `StartupMs`) |
+
+The UI Automation test (`Tests/UI.Accessibility.Tests.ps1`) prints the breakdown next to
+the first-render time; its clock starts at window construction, after the module import.
+Startup work kept small on purpose: `MainWindow.xaml` is read once and parsed from text,
+the Light theme the XAML already declares is not applied a second time, and live-region
+announcements are skipped until the window is loaded.
