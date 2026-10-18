@@ -7,6 +7,7 @@
         'Certificates'        = @{ NetworkAccess = 'None' }
         'Defender Onboarding' = @{ NetworkAccess = 'None' }
         'Firewall Rules'      = @{ NetworkAccess = 'None' }
+        'Local Admins'        = @{ NetworkAccess = 'LocalNetwork' }  # opt-in: member-name lookups may query a DC on joined devices
         'Security'            = @{ NetworkAccess = 'None' }
     }
 }

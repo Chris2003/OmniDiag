@@ -687,8 +687,14 @@ function Get-OmniDiagSecurity {
         Runs the Security group: Defender, firewall, BitLocker, certificates, posture.
 
     .DESCRIPTION
-        Same as Invoke-OmniDiagScan -Group security. Writes v1 finding objects; passing
-        checks are left out unless -IncludePassed.
+        Same as Invoke-OmniDiagScan -Group security. Runs locally by default; with
+        -NetworkProbes the Local Admins scanner also lists the Administrators group on a
+        domain- or Entra-joined device (resolving member names can query a domain
+        controller). Writes v1 finding objects; passing checks are left out unless
+        -IncludePassed.
+
+    .PARAMETER NetworkProbes
+        Also run the opt-in checks that can contact the network.
 
     .PARAMETER IncludePassed
         Also write passing checks.
@@ -707,10 +713,14 @@ function Get-OmniDiagSecurity {
 
     .EXAMPLE
         Get-OmniDiagSecurity | Where-Object severity -in 'Warning', 'Critical'
+
+    .EXAMPLE
+        Get-OmniDiagSecurity -NetworkProbes -IncludePassed
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
+        [switch] $NetworkProbes,
         [switch] $IncludePassed,
         [ValidateSet('Last24Hours', 'Last7Days', 'Last30Days')] [string] $Range = 'Last7Days',
         [ValidateRange(0, 64)] [int] $MaxParallel = 0,

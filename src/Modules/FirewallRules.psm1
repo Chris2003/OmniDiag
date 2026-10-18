@@ -72,14 +72,14 @@ function Invoke-OmniModuleScan {
         Set-OmniResultMetric -Result $result -Name 'EnabledInboundAllowCount' -Value $inboundAllowCount
 
         if ($inboundAllowCount -gt 0) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'security-firewall-inbound-allow-rules' `
                 -Title ("{0} enabled inbound allow rule(s)" -f $inboundAllowCount) `
                 -Severity 'Information' -Component 'Security/Firewall' `
                 -Detail "There are $inboundAllowCount enabled inbound Allow firewall rules permitting incoming connections.")
         }
 
         if ($inboundAllowCount -gt 150) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'security-firewall-inbound-allow-rules-high' `
                 -Title ("Unusually high number of inbound allow rules ({0})" -f $inboundAllowCount) `
                 -Severity 'Warning' -Component 'Security/Firewall' `
                 -Detail "The system has $inboundAllowCount enabled inbound Allow rules, a large attack surface." `
