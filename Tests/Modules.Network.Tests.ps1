@@ -42,8 +42,11 @@ BeforeAll {
     }
 
     function Get-FindingById {
+        # The unary comma keeps the array: a one-element @() returned from a function is
+        # unrolled to the PSCustomObject, which has no .Count on Windows PowerShell 5.1
+        # ("Expected 1, but got $null").
         param($Result, [string] $Id)
-        @($Result.Findings | Where-Object Id -eq $Id)
+        return , @($Result.Findings | Where-Object Id -eq $Id)
     }
 
     function New-WinHttpBlob {

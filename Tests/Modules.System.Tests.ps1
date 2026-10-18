@@ -37,8 +37,10 @@ BeforeAll {
     }
 
     function Get-Finding {
+        # The unary comma keeps the array: a one-element @() returned from a function is
+        # unrolled to the PSCustomObject, which has no .Count on Windows PowerShell 5.1.
         param($Result, [string] $Id)
-        @($Result.Findings | Where-Object Id -eq $Id)
+        return , @($Result.Findings | Where-Object Id -eq $Id)
     }
 
     function New-FakeInventory {

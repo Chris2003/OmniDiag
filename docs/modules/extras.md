@@ -55,14 +55,18 @@ and MDM); the other scanners are unchanged and their sections are still to be wr
   Warning.
 - Effective configuration: `Type` `NoSync` is a Warning (the clock is never synchronized).
 - Synchronization failures in the scan time range (Time-Service events 36 and 47) are a
-  Warning; the newest success event (35 or 37) is reported as `LastSyncEvent`.
+  Warning only when the newest failure is newer than the newest success event (35 or 37),
+  or no success event exists; when a later synchronization succeeded they are
+  Information. The newest success event is reported as `LastSyncEvent`.
 
 ### Intune and MDM (`extras.intune-and-mdm`)
 
 - Populated enrollment records, the Intune Management Extension service, and error events
   (level 2) in the DeviceManagement Enterprise Diagnostics Admin log. The event query is
   bounded by the scan time range and `MaxEventsPerChannel` (run Config, default 500); when
-  the cap is reached the finding says "at least N".
+  the cap is reached the finding says "at least N". The finding is a Warning only at 10 or
+  more error events in the range (a few errors are routine sync and policy retries);
+  fewer is Information.
 
 ## Data sources
 
@@ -118,7 +122,7 @@ only (no `w32tm /resync`, no `w32tm /stripchart`).
 | `extras.time-synchronization.service-not-running` | Windows Time service is not running | Warning | Stopped, start type not Manual |
 | `extras.time-synchronization.service-on-demand` | Windows Time service is stopped (starts on demand) | Information | Stopped, start type Manual |
 | `extras.time-synchronization.sync-disabled` | Time synchronization is turned off | Warning | `Type` = `NoSync` |
-| `extras.time-synchronization.sync-failures` | Time synchronization failures were logged | Warning | Events 36 / 47 in the time range |
+| `extras.time-synchronization.sync-failures` | Time synchronization failures were logged | Warning / Information | Events 36 / 47 in the time range; Warning when the newest failure is newer than the newest 35 / 37 success (or there is none), else Information |
 | `extras.time-synchronization.windows-only` | Windows time synchronization is unavailable | Information | Non-Windows host |
 
 ### Intune and MDM
@@ -128,7 +132,7 @@ only (no `w32tm /resync`, no `w32tm /stripchart`).
 | `extras.intune-and-mdm.healthy` | Intune and MDM posture healthy | Pass | Enrolled, no warnings |
 | `extras.intune-and-mdm.no-enrollment` | No local MDM enrollment detected | Information | No populated enrollment record |
 | `extras.intune-and-mdm.ime-not-running` | Intune Management Extension is not running | Warning | IME installed, service not running |
-| `extras.intune-and-mdm.recent-mdm-errors` | N (or "at least N") recent MDM enrollment or policy errors | Warning | Error events in the time range |
+| `extras.intune-and-mdm.recent-mdm-errors` | N (or "at least N") recent MDM enrollment or policy errors | Warning / Information | Error events in the time range; Warning at 10 or more, else Information |
 | `extras.intune-and-mdm.windows-only` | Intune and MDM check is Windows-only | Information | Non-Windows host |
 
 ## Platforms

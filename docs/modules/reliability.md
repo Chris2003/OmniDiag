@@ -27,15 +27,21 @@ Get-OmniDiagReliability -Range Last30Days -IncludePassed | Format-Table severity
 
 - **Reliability** - counts application crashes (Application Error 1000), hangs (Application
   Hang 1002), and unexpected shutdowns (Kernel-Power 41) in the selected range. Warning for
-  more than 5 crashes or any unexpected shutdown. Every query is bounded by the range and by
+  more than 5 crashes or any unexpected shutdown. Each Id is filtered by its provider
+  (`Application Error`, `Application Hang`, `Microsoft-Windows-Kernel-Power`), since other
+  providers reuse the same Ids. Every query is bounded by the range and by
   `ReliabilityMaxEvents` (default 1000); a count that reaches the cap is a lower bound
-  (metric `EventCountsCapped`).
+  (metric `EventCountsCapped`). Only "no matching events" counts as zero; any other read
+  error (for example access denied) gives an Information "could not read" finding
+  (`reliability.reliability.unreadable`) instead of the healthy Pass.
 - **Reliability Monitor** - the data behind Reliability Monitor (`perfmon /rel`):
   - the System Stability Index (1 = least stable, 10 = most stable): latest value, minimum,
     average, and trend over the range (`Improving` / `Declining` when the latest sample
     differs from the first by 0.5 or more, else `Stable`; `Unknown` with one sample).
-    Error below `StabilityErrorIndex` (default 3), Warning below `StabilityWarnIndex`
-    (default 5), Pass otherwise;
+    Error below `StabilityErrorIndex` (default 1), Warning below `StabilityWarnIndex`
+    (default 3), Pass otherwise. The defaults are deliberately low: every application
+    crash costs index points that recover only slowly, so a few crashes push a typical,
+    otherwise healthy desktop below 5;
   - reliability records summarized by category, with the 5 most frequent ProductName /
     SourceName per category. Categories are assigned by source and event id (not message
     text): application failures (Application Error 1000, Application Hang 1002), Windows
@@ -89,9 +95,10 @@ None. Every scanner in this group is local-only.
 | Scanner | Finding (Id) | Severity | When |
 |---|---|---|---|
 | Reliability | N application crashes (`reliability.reliability.app-crashes`) | Warning | More than 5 events 1000 |
+| Reliability | Could not read some crash and shutdown events (`reliability.reliability.unreadable`) | Information | A query failed with an error other than "no matching events" (no healthy Pass then) |
 | Reliability | N unexpected shutdown(s) (`reliability.reliability.unexpected-shutdowns`) | Warning | Any Kernel-Power 41 |
 | Reliability | System stability looks healthy (`reliability.reliability.healthy`) | Pass | Otherwise |
-| Reliability Monitor | System stability index is very low / low / healthy (`reliability.reliability-monitor.stability-index`) | Error / Warning / Pass | Latest index < 3 / < 5 / otherwise |
+| Reliability Monitor | System stability index is very low / low / healthy (`reliability.reliability-monitor.stability-index`) | Error / Warning / Pass | Latest index < 1 / < 3 / otherwise |
 | Reliability Monitor | N application failure(s) recorded (`...application-failures`) | Warning / Information | 5+ / 1-4 |
 | Reliability Monitor | N Windows failure(s) recorded (`...windows-failures`) | Warning | Any bug check or unexpected shutdown record |
 | Reliability Monitor | N hardware failure(s) recorded (`...hardware-failures`) | Warning | Any WHEA or LiveKernelEvent record |

@@ -14,13 +14,6 @@ BeforeAll {
     $script:Root = Split-Path $PSScriptRoot -Parent
     Import-Module (Join-Path $script:Root 'src/OmniDiag.psd1') -Force -DisableNameChecking -Global
 
-    # Get-WinEvent does not exist on Linux/macOS; give Mock something to replace.
-    $script:DefinedWinEventStub = $false
-    if (-not (Get-Command -Name 'Get-WinEvent' -ErrorAction SilentlyContinue)) {
-        function global:Get-WinEvent { [CmdletBinding()] param($ListLog, $FilterHashtable, $MaxEvents) }
-        $script:DefinedWinEventStub = $true
-    }
-
     function Import-ExtCopy {
         param([string] $File, [string] $AsName)
         $dir = Join-Path $TestDrive 'extplugins'
@@ -41,8 +34,10 @@ BeforeAll {
     }
 
     function Get-Finding {
+        # The unary comma keeps the array: a one-element @() returned from a function is
+        # unrolled to the PSCustomObject, which has no .Count on Windows PowerShell 5.1.
         param($Result, [string] $Id)
-        @($Result.Findings | Where-Object Id -eq $Id)
+        return , @($Result.Findings | Where-Object Id -eq $Id)
     }
 
     # Layout as documented in "Troubleshoot devices by using the dsregcmd command".
@@ -68,11 +63,17 @@ BeforeAll {
     $script:EntraMod  = Import-ExtCopy -File 'EntraId.psm1' -AsName 'OmniExtTestEntra'
     $script:TimeMod   = Import-ExtCopy -File 'TimeSynchronization.psm1' -AsName 'OmniExtTestTime'
     $script:IntuneMod = Import-ExtCopy -File 'IntuneMdm.psm1' -AsName 'OmniExtTestIntune'
+
+    # ALWAYS (on Windows too) give the plugin copies a simple Get-WinEvent stub in their
+    # module scope: the function shadows the real cmdlet, so Pester mocks the stub, and
+    # nothing leaks globally. The parameters the tests filter on are declared.
+    foreach ($mod in @($script:TimeMod, $script:IntuneMod)) {
+        & $mod { function script:Get-WinEvent { [CmdletBinding()] param($ListLog, [hashtable[]] $FilterHashtable, [int] $MaxEvents) } }
+    }
 }
 
 AfterAll {
     foreach ($n in @('OmniExtTestEntra', 'OmniExtTestTime', 'OmniExtTestIntune')) { Remove-Module -Name $n -Force -ErrorAction SilentlyContinue }
-    if ($script:DefinedWinEventStub) { Remove-Item -Path 'Function:\global:Get-WinEvent' -ErrorAction SilentlyContinue }
 }
 
 Describe 'Entra ID scanner' {
@@ -215,7 +216,7 @@ Describe 'Time Synchronization scanner' {
         Mock -ModuleName OmniExtTestTime Get-OmniTimeService { @{ Status = 'Stopped'; StartType = 'Manual' } }
         $r = Invoke-ExtScan -Module $script:TimeMod -Context (New-ExtContext)
         (Get-Finding $r 'extras.time-synchronization.service-on-demand')[0].Severity | Should -Be 'Information'
-        (Get-Finding $r 'extras.time-synchronization.healthy').Count | Should -Be 1
+        (Get-Finding $r 'extras.time-synchronization.healthy').Count | Should -Be 1 -Because (($r.Findings | ForEach-Object { "$($_.Severity): $($_.Id)" }) -join '; ')
     }
 
     It 'warns when an automatic service is not running' {
@@ -232,13 +233,33 @@ Describe 'Time Synchronization scanner' {
         $f[0].Detail | Should -Match 'Policy'
     }
 
-    It 'warns on synchronization failure events (36 / 47) in the time range' {
+    It 'warns on synchronization failure events (36 / 47) newer than the newest success' {
+        Mock -ModuleName OmniExtTestTime Get-OmniTimeEvent { @([pscustomobject]@{ Id = 37; TimeCreated = (Get-Date).AddDays(-3) }) } -ParameterFilter { $Id -contains 35 }
         Mock -ModuleName OmniExtTestTime Get-OmniTimeEvent { @([pscustomobject]@{ Id = 36; TimeCreated = (Get-Date).AddDays(-1) }, [pscustomobject]@{ Id = 47; TimeCreated = (Get-Date).AddDays(-2) }) } -ParameterFilter { $Id -contains 36 }
         $r = Invoke-ExtScan -Module $script:TimeMod -Context (New-ExtContext)
         $f = Get-Finding $r 'extras.time-synchronization.sync-failures'
+        $f.Count | Should -Be 1 -Because (($r.Findings | ForEach-Object { "$($_.Severity): $($_.Id)" }) -join '; ')
         $f[0].Severity | Should -Be 'Warning'
         $f[0].Detail | Should -Match '36, 47'
         $r.Metrics['SyncFailureEventCount'] | Should -Be 2
+    }
+
+    It 'warns on failures when no successful synchronization event exists' {
+        Mock -ModuleName OmniExtTestTime Get-OmniTimeEvent { @() } -ParameterFilter { $Id -contains 35 }
+        Mock -ModuleName OmniExtTestTime Get-OmniTimeEvent { @([pscustomobject]@{ Id = 47; TimeCreated = (Get-Date).AddDays(-2) }) } -ParameterFilter { $Id -contains 36 }
+        $r = Invoke-ExtScan -Module $script:TimeMod -Context (New-ExtContext)
+        (Get-Finding $r 'extras.time-synchronization.sync-failures')[0].Severity | Should -Be 'Warning'
+    }
+
+    It 'reports failures that a later synchronization resolved as Information' {
+        # BeforeEach: newest success (37) one hour ago.
+        Mock -ModuleName OmniExtTestTime Get-OmniTimeEvent { @([pscustomobject]@{ Id = 36; TimeCreated = (Get-Date).AddDays(-1) }, [pscustomobject]@{ Id = 47; TimeCreated = (Get-Date).AddDays(-2) }) } -ParameterFilter { $Id -contains 36 }
+        $r = Invoke-ExtScan -Module $script:TimeMod -Context (New-ExtContext)
+        $f = Get-Finding $r 'extras.time-synchronization.sync-failures'
+        $f.Count | Should -Be 1 -Because (($r.Findings | ForEach-Object { "$($_.Severity): $($_.Id)" }) -join '; ')
+        $f[0].Severity | Should -Be 'Information'
+        $f[0].Detail | Should -Match 'later synchronization succeeded'
+        (Get-Finding $r 'extras.time-synchronization.healthy').Count | Should -Be 1
     }
 
     It 'never runs w32tm (localized output, and /resync would contact a time server)' {
@@ -276,6 +297,17 @@ Describe 'Intune and MDM scanner: bounded event query' {
         $f[0].Severity | Should -Be 'Warning'
         $f[0].Title | Should -Be 'at least 25 recent MDM enrollment or policy errors'
         $r.Metrics['RecentMdmErrorCountCapped'] | Should -BeTrue
+    }
+
+    It 'reports fewer than 10 errors as Information and 10 or more as a Warning' {
+        Mock -ModuleName OmniExtTestIntune Get-OmniIntuneMdmErrorCount { 9 }
+        $r = Invoke-ExtScan -Module $script:IntuneMod -Context (New-ExtContext)
+        $f = Get-Finding $r 'extras.intune-and-mdm.recent-mdm-errors'
+        $f[0].Severity | Should -Be 'Information'
+        $f[0].Title | Should -Be '9 recent MDM enrollment or policy errors'
+        Mock -ModuleName OmniExtTestIntune Get-OmniIntuneMdmErrorCount { 10 }
+        $r = Invoke-ExtScan -Module $script:IntuneMod -Context (New-ExtContext)
+        (Get-Finding $r 'extras.intune-and-mdm.recent-mdm-errors')[0].Severity | Should -Be 'Warning'
     }
 
     It 'passes MaxEvents, the time range, and the error level to Get-WinEvent' {

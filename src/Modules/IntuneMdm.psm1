@@ -6,7 +6,8 @@
     Read-only local MDM enrollment, Intune Management Extension, related service,
     and recent DeviceManagement event posture. The event query is bounded: errors
     (level 2) in the scan time range only, at most MaxEventsPerChannel events (run
-    Config; default 500).
+    Config; default 500). The errors finding is a Warning at 10 or more error events in
+    the range, Information below that, and says "at least N" when the cap is reached.
 #>
 
 Set-StrictMode -Version Latest
@@ -20,6 +21,7 @@ function Get-OmniModuleManifest {
 }
 
 $script:OmniMdmDefaultMaxEvents = 500
+$script:OmniMdmWarnErrorCount = 10
 
 function Test-OmniIntuneWindowsHost {
     <# .SYNOPSIS Internal: $true on Windows (Windows PowerShell 5.1 is always Windows). #>
@@ -99,8 +101,11 @@ function Invoke-OmniModuleScan {
     Set-OmniResultMetric -Result $result -Name 'RecentMdmErrorCount' -Value $recentErrors
     Set-OmniResultMetric -Result $result -Name 'RecentMdmErrorCountCapped' -Value $capped
     if ($recentErrors -gt 0) {
+        # A few errors are routine on managed devices (transient sync and policy retries);
+        # a Warning needs at least $script:OmniMdmWarnErrorCount error events in the range.
         $countText = if ($capped) { "at least $recentErrors" } else { "$recentErrors" }
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'extras.intune-and-mdm.recent-mdm-errors' -Title "$countText recent MDM enrollment or policy errors" -Severity Warning -Component 'Cloud/Intune/Policy' -Detail "DeviceManagement Enterprise Diagnostics logged $countText error events in the selected time range (query capped at $maxEvents events)." -LikelyCause 'Enrollment, certificate, policy, or sync processing failed.' -Confidence 75 -Recommendation 'Review the DeviceManagement-Enterprise-Diagnostics-Provider Admin log and correlate the newest event IDs with the affected policy.')
+        $sev = if ($recentErrors -ge $script:OmniMdmWarnErrorCount) { 'Warning' } else { 'Information' }
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'extras.intune-and-mdm.recent-mdm-errors' -Title "$countText recent MDM enrollment or policy errors" -Severity $sev -Component 'Cloud/Intune/Policy' -Detail "DeviceManagement Enterprise Diagnostics logged $countText error events in the selected time range (query capped at $maxEvents events). A Warning is raised at $($script:OmniMdmWarnErrorCount) or more." -LikelyCause 'Enrollment, certificate, policy, or sync processing failed.' -Confidence 75 -Recommendation 'Review the DeviceManagement-Enterprise-Diagnostics-Provider Admin log and correlate the newest event IDs with the affected policy.')
     }
 
     if ($enrollmentCount -eq 0) {

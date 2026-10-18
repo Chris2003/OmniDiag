@@ -8,8 +8,8 @@
     helpers are mocked inside a uniquely named copy of the plugin.
 
     Storage / Disk / Disk Usage: volume findings carry stable Ids with no percentages or
-    sizes in them. Storage cmdlets that do not exist on the host (Linux, macOS) get
-    temporary global stubs so they can be mocked; the stubs are removed afterwards.
+    sizes in them. The storage cmdlets always get simple stubs inside each plugin copy's
+    module scope (on Windows too), so Pester mocks the stub and never the real CDXML cmdlet.
 #>
 
 BeforeAll {
@@ -35,20 +35,25 @@ BeforeAll {
         & $Module { param($c) Invoke-OmniModuleScan -Context $c } $Context
     }
 
-    # Global stubs for storage cmdlets missing on this host, so Mock can replace them.
-    $script:Stubbed = [System.Collections.Generic.List[string]]::new()
-    $stubBody = [scriptblock]::Create('[CmdletBinding()] param([Parameter(ValueFromPipeline)] $InputObject, [Parameter(ValueFromRemainingArguments)] $Rest) process { }')
-    foreach ($n in @('Get-PhysicalDisk', 'Get-Disk', 'Get-Volume', 'Get-StorageReliabilityCounter', 'Get-Counter', 'Get-CimInstance')) {
-        if (-not (Get-Command -Name $n -ErrorAction SilentlyContinue)) {
-            Set-Item -Path "function:global:$n" -Value $stubBody
-            $script:Stubbed.Add($n)
-        }
-    }
-
     $script:TrimMod = Import-PluginCopy -File 'Trim.psm1' -AsName 'OmniStorageTestTrim'
     $script:StorageMod = Import-PluginCopy -File 'Storage.psm1' -AsName 'OmniStorageTestStorage'
     $script:DiskMod = Import-PluginCopy -File 'Disk.psm1' -AsName 'OmniStorageTestDisk'
     $script:UsageMod = Import-PluginCopy -File 'DiskUsage.psm1' -AsName 'OmniStorageTestUsage'
+
+    # ALWAYS (on Windows too) define simple stubs for the storage cmdlets inside each
+    # plugin copy's module scope. A function shadows the real cmdlet, so Pester builds its
+    # mock from the stub; mocking the real CDXML cmdlets fails on Windows
+    # (ParseException on [Get-PhysicalDisk.PhysicalDiskUsage]). Nothing is defined globally.
+    foreach ($mod in @($script:StorageMod, $script:DiskMod, $script:UsageMod)) {
+        & $mod {
+            function script:Get-PhysicalDisk { [CmdletBinding()] param([Parameter(ValueFromPipeline)] $InputObject, [Parameter(ValueFromRemainingArguments)] $Rest) process { } }
+            function script:Get-Disk { [CmdletBinding()] param([Parameter(ValueFromPipeline)] $InputObject, [Parameter(ValueFromRemainingArguments)] $Rest) process { } }
+            function script:Get-Volume { [CmdletBinding()] param([Parameter(ValueFromPipeline)] $InputObject, [Parameter(ValueFromRemainingArguments)] $Rest) process { } }
+            function script:Get-StorageReliabilityCounter { [CmdletBinding()] param([Parameter(ValueFromPipeline)] $InputObject, [Parameter(ValueFromRemainingArguments)] $Rest) process { } }
+            function script:Get-Counter { [CmdletBinding()] param([Parameter(ValueFromPipeline)] $InputObject, [Parameter(ValueFromRemainingArguments)] $Rest) process { } }
+            function script:Get-CimInstance { [CmdletBinding()] param([Parameter(ValueFromPipeline)] $InputObject, [Parameter(ValueFromRemainingArguments)] $Rest) process { } }
+        }
+    }
 
     function New-Disk { param([string] $Name, [string] $Media) [pscustomobject]@{ FriendlyName = $Name; MediaType = $Media } }
 }
@@ -57,7 +62,6 @@ AfterAll {
     foreach ($n in @('OmniStorageTestTrim', 'OmniStorageTestStorage', 'OmniStorageTestDisk', 'OmniStorageTestUsage')) {
         Remove-Module -Name $n -Force -ErrorAction SilentlyContinue
     }
-    foreach ($n in $script:Stubbed) { Remove-Item -Path "function:global:$n" -ErrorAction SilentlyContinue }
 }
 
 Describe 'TRIM scanner manifest' {

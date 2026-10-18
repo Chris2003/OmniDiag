@@ -27,8 +27,10 @@
     Per-run options (via $Context.Config):
         ReliabilityMaxRecords   int  Cap on Win32_ReliabilityRecords read. Default 2000.
         MaxStabilitySamples     int  Cap on stability samples read. Default 2000.
-        StabilityWarnIndex      num  Index below which a Warning is raised. Default 5.
-        StabilityErrorIndex     num  Index below which an Error is raised. Default 3.
+        StabilityWarnIndex      num  Index below which a Warning is raised. Default 3.
+        StabilityErrorIndex     num  Index below which an Error is raised. Default 1.
+                                     (A few application crashes push a typical desktop
+                                     below 5, so 5 / 3 was too noisy.)
         AppFailureWarnCount     int  Application failures that raise a Warning. Default 5.
 
     Contract:
@@ -241,8 +243,10 @@ function Invoke-OmniModuleScan {
 
     $maxRecords = [int](Get-OmniRelMonConfigValue -Context $Context -Name 'ReliabilityMaxRecords' -Default 2000)
     $maxSamples = [int](Get-OmniRelMonConfigValue -Context $Context -Name 'MaxStabilitySamples' -Default 2000)
-    $warnIndex  = Get-OmniRelMonConfigValue -Context $Context -Name 'StabilityWarnIndex' -Default 5
-    $errorIndex = Get-OmniRelMonConfigValue -Context $Context -Name 'StabilityErrorIndex' -Default 3
+    # Defaults 3 / 1: each application crash costs the index points that recover slowly,
+    # so a few crashes push a typical, otherwise healthy desktop below 5.
+    $warnIndex  = Get-OmniRelMonConfigValue -Context $Context -Name 'StabilityWarnIndex' -Default 3
+    $errorIndex = Get-OmniRelMonConfigValue -Context $Context -Name 'StabilityErrorIndex' -Default 1
     $appWarn    = [int](Get-OmniRelMonConfigValue -Context $Context -Name 'AppFailureWarnCount' -Default 5)
     if ($maxRecords -lt 1) { $maxRecords = 1 }
     if ($maxSamples -lt 1) { $maxSamples = 1 }

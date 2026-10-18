@@ -54,13 +54,11 @@ BeforeAll {
     $script:MonMod = Import-PluginCopy -File 'ReliabilityMonitor.psm1' -AsName 'OmniRelTestMonitor'
     $script:DumpMod = Import-PluginCopy -File 'CrashDumps.psm1' -AsName 'OmniRelTestDumps'
 
-    # Off Windows, give the plugin copies a stub to mock (Pester mocks only existing commands).
-    if (-not (Get-Command -Name 'Get-WinEvent' -ErrorAction SilentlyContinue)) {
-        & $script:RelMod { function script:Get-WinEvent { [CmdletBinding()] param([hashtable[]] $FilterHashtable, [int] $MaxEvents) throw 'stub' } }
-    }
-    if (-not (Get-Command -Name 'Get-CimInstance' -ErrorAction SilentlyContinue)) {
-        & $script:MonMod { function script:Get-CimInstance { [CmdletBinding()] param([string] $Namespace, [string] $ClassName, [string] $Filter, [string[]] $Property) throw 'stub' } }
-    }
+    # Always (on Windows too) give the plugin copies a simple stub to mock: a function
+    # shadows the real cmdlet, so Pester builds the mock from the stub and never from the
+    # real (CDXML) cmdlet, and nothing is defined globally.
+    & $script:RelMod { function script:Get-WinEvent { [CmdletBinding()] param([hashtable[]] $FilterHashtable, [int] $MaxEvents) throw 'stub' } }
+    & $script:MonMod { function script:Get-CimInstance { [CmdletBinding()] param([string] $Namespace, [string] $ClassName, [string] $Filter, [string[]] $Property) throw 'stub' } }
 }
 
 AfterAll {
@@ -92,9 +90,38 @@ Describe 'Reliability scanner (bounded event counts)' {
         }
     }
 
-    It 'treats a failed query (no events) as zero' {
-        Mock -ModuleName OmniRelTestReliability Get-WinEvent { throw 'No events were found' }
+    It 'treats NoMatchingEventsFound as zero' {
+        Mock -ModuleName OmniRelTestReliability Get-WinEvent {
+            throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('No events were found that match the specified selection criteria.'),
+                'NoMatchingEventsFound,Microsoft.PowerShell.Commands.GetWinEventCommand', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $null)
+        }
         & $script:RelMod { Get-OmniReliabilityEventCount -Filter @{ LogName = 'System' } -MaxEvents 5 } | Should -Be 0
+    }
+
+    It 'rethrows any other read error (for example access denied)' {
+        Mock -ModuleName OmniRelTestReliability Get-WinEvent { throw [System.UnauthorizedAccessException]::new('Attempted to perform an unauthorized operation.') }
+        { & $script:RelMod { Get-OmniReliabilityEventCount -Filter @{ LogName = 'System' } -MaxEvents 5 } } | Should -Throw
+    }
+
+    It 'filters each event Id by its provider' {
+        Mock -ModuleName OmniRelTestReliability Get-OmniReliabilityEventCount { 0 }
+        $null = Invoke-PluginScan -Module $script:RelMod -Context (New-TestContext)
+        Should -Invoke -ModuleName OmniRelTestReliability Get-OmniReliabilityEventCount -Times 1 -Exactly -ParameterFilter { $Filter.Id -eq 1000 -and $Filter.ProviderName -eq 'Application Error' }
+        Should -Invoke -ModuleName OmniRelTestReliability Get-OmniReliabilityEventCount -Times 1 -Exactly -ParameterFilter { $Filter.Id -eq 1002 -and $Filter.ProviderName -eq 'Application Hang' }
+        Should -Invoke -ModuleName OmniRelTestReliability Get-OmniReliabilityEventCount -Times 1 -Exactly -ParameterFilter { $Filter.Id -eq 41 -and $Filter.ProviderName -eq 'Microsoft-Windows-Kernel-Power' }
+    }
+
+    It 'reports "could not read" (Information) instead of a healthy Pass when a log is unreadable' {
+        Mock -ModuleName OmniRelTestReliability Get-OmniReliabilityEventCount { 0 }
+        Mock -ModuleName OmniRelTestReliability Get-OmniReliabilityEventCount -ParameterFilter { $Filter.LogName -eq 'System' } { throw [System.UnauthorizedAccessException]::new('Access denied') }
+        $r = Invoke-PluginScan -Module $script:RelMod -Context (New-TestContext)
+        $u = @($r.Findings | Where-Object Id -eq 'reliability.reliability.unreadable')
+        $u.Count | Should -Be 1
+        $u[0].Severity | Should -Be 'Information'
+        $u[0].Detail | Should -Match 'UnexpectedShutdowns'
+        @($r.Findings | Where-Object Id -eq 'reliability.reliability.healthy').Count | Should -Be 0
+        $r.Metrics.Contains('UnexpectedShutdowns') | Should -BeFalse
+        $r.Metrics['AppCrashes'] | Should -Be 0
     }
 
     It 'bounds every count by the range and the cap, and reports a healthy machine' {
@@ -191,17 +218,26 @@ Describe 'Reliability Monitor scanner' {
         @($r.Findings | Where-Object Id -eq 'reliability.reliability-monitor.no-failures').Count | Should -Be 1
     }
 
-    It 'warns below 5 and reports a declining trend' {
+    It 'passes at 4.2 (a few app crashes on a typical desktop) with a declining trend' {
         $now = Get-Date
         Mock -ModuleName OmniRelTestMonitor Get-OmniRelMonStabilityMetric { @((New-Sample -Index 8 -Time $now.AddDays(-2)), (New-Sample -Index 4.2 -Time $now)) }
+        $r = Invoke-PluginScan -Module $script:MonMod -Context (New-TestContext)
+        $f = @($r.Findings | Where-Object Id -eq 'reliability.reliability-monitor.stability-index')
+        $f[0].Severity | Should -Be 'Pass'
+        $r.Metrics['StabilityTrend'] | Should -Be 'Declining'
+    }
+
+    It 'warns below 3 and reports a declining trend' {
+        $now = Get-Date
+        Mock -ModuleName OmniRelTestMonitor Get-OmniRelMonStabilityMetric { @((New-Sample -Index 8 -Time $now.AddDays(-2)), (New-Sample -Index 2.1 -Time $now)) }
         $r = Invoke-PluginScan -Module $script:MonMod -Context (New-TestContext)
         $f = @($r.Findings | Where-Object Id -eq 'reliability.reliability-monitor.stability-index')
         $f[0].Severity | Should -Be 'Warning'
         $r.Metrics['StabilityTrend'] | Should -Be 'Declining'
     }
 
-    It 'raises an Error below 3' {
-        Mock -ModuleName OmniRelTestMonitor Get-OmniRelMonStabilityMetric { @(New-Sample -Index 2.1 -Time (Get-Date)) }
+    It 'raises an Error below 1' {
+        Mock -ModuleName OmniRelTestMonitor Get-OmniRelMonStabilityMetric { @(New-Sample -Index 0.8 -Time (Get-Date)) }
         $r = Invoke-PluginScan -Module $script:MonMod -Context (New-TestContext)
         $f = @($r.Findings | Where-Object Id -eq 'reliability.reliability-monitor.stability-index')
         $f[0].Severity | Should -Be 'Error'

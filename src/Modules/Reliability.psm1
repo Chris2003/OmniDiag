@@ -68,8 +68,11 @@ function Get-OmniReliabilityEventCount {
     try {
         return @(Get-WinEvent -FilterHashtable $Filter -MaxEvents $MaxEvents -ErrorAction Stop).Count
     } catch {
-        # No matching events raises a non-fatal error; treat as zero.
-        return 0
+        # Only "no matching events" means zero; any other error (access denied, missing
+        # log, RPC failure) is rethrown so the scan does not report a healthy Pass it
+        # could not verify.
+        if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { return 0 }
+        throw
     }
 }
 
@@ -97,18 +100,27 @@ function Invoke-OmniModuleScan {
     if ($Context.Config -and $Context.Config.ContainsKey('ReliabilityMaxEvents')) { $maxEvents = [int]$Context.Config['ReliabilityMaxEvents'] }
     if ($maxEvents -lt 1) { $maxEvents = 1 }
 
+    # ProviderName pins each Id to its source: other providers reuse 1000/1002/41.
     $queries = [ordered]@{
-        AppCrashes          = @{ LogName = 'Application'; Id = 1000; StartTime = $start; EndTime = $end }   # Application Error
-        AppHangs            = @{ LogName = 'Application'; Id = 1002; StartTime = $start; EndTime = $end }   # Application Hang
-        UnexpectedShutdowns = @{ LogName = 'System'; Id = 41; StartTime = $start; EndTime = $end }          # Kernel-Power
+        AppCrashes          = @{ LogName = 'Application'; ProviderName = 'Application Error'; Id = 1000; StartTime = $start; EndTime = $end }
+        AppHangs            = @{ LogName = 'Application'; ProviderName = 'Application Hang'; Id = 1002; StartTime = $start; EndTime = $end }
+        UnexpectedShutdowns = @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $start; EndTime = $end }
     }
     $counts = @{}
     $capped = $false
+    $unreadable = [System.Collections.Generic.List[string]]::new()
     foreach ($name in $queries.Keys) {
         if ($Context.CancellationToken.IsCancellationRequested) {
             return (Complete-OmniResult -Result $result -Status 'Skipped')
         }
-        $n = Get-OmniReliabilityEventCount -Filter $queries[$name] -MaxEvents $maxEvents
+        try {
+            $n = [int](Get-OmniReliabilityEventCount -Filter $queries[$name] -MaxEvents $maxEvents)
+        } catch {
+            $Context.Logger.Debug("Reliability query '$name' failed: $($_.Exception.Message)", 'Reliability')
+            $unreadable.Add(('{0} ({1} log)' -f $name, $queries[$name].LogName))
+            $counts[$name] = 0
+            continue
+        }
         if ($n -ge $maxEvents) { $capped = $true }
         $counts[$name] = $n
         Set-OmniResultMetric -Result $result -Name $name -Value $n
@@ -116,6 +128,14 @@ function Invoke-OmniModuleScan {
     Set-OmniResultMetric -Result $result -Name 'EventCountsCapped' -Value $capped
     $appCrashes = $counts['AppCrashes']
     $unexpectedShutdowns = $counts['UnexpectedShutdowns']
+
+    if ($unreadable.Count -gt 0) {
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'reliability.reliability.unreadable' `
+            -Title 'Could not read some crash and shutdown events' -Severity 'Information' `
+            -Component 'Reliability' `
+            -Detail ('These event queries failed, so their counts are unknown: ' + ($unreadable -join ', ') + '. The event log may be inaccessible (access denied) or unavailable.') `
+            -Recommendation 'Run the scan elevated, or check that the Windows Event Log service is running.')
+    }
 
     $rangeLabel = $Context.TimeRange.Label
     $atLeast = if ($capped) { ' Counts that reached the ' + $maxEvents + '-event cap are lower bounds.' } else { '' }
@@ -140,8 +160,8 @@ function Invoke-OmniModuleScan {
             -Recommendation 'Check for overheating, power issues, and driver stability; review minidumps if present.')
     }
 
-    # Always record at least one positive finding when nothing is wrong.
-    if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+    # Always record at least one positive finding when nothing is wrong and every count was read.
+    if ($unreadable.Count -eq 0 -and @($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'reliability.reliability.healthy' `
             -Title 'System stability looks healthy' -Severity 'Pass' -Component 'Reliability' `
             -Detail "No elevated crash, hang, or unexpected-shutdown activity was found for $rangeLabel.")

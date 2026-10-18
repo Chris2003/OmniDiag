@@ -15,7 +15,9 @@
       - Status from the System event log, provider Microsoft-Windows-Time-Service, by
         event ID (bounded by MaxEvents and the scan time range): 35 / 37 (synchronizing
         with / receiving valid time from a source), 36 (not synchronized for a long
-        period), 47 (no valid response from a manually configured peer).
+        period), 47 (no valid response from a manually configured peer). Failures are a
+        Warning only when the newest failure is newer than the newest success (35/37);
+        otherwise a later sync resolved them and they are Information.
 
     It does not run `w32tm` (its output is localized) and never contacts a time server.
 #>
@@ -140,9 +142,19 @@ function Invoke-OmniModuleScan {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'extras.time-synchronization.sync-disabled' -Title 'Time synchronization is turned off' -Severity Warning -Component 'Identity/Time' -Detail "W32Time Type is NoSync ($($cfg.Source) configuration): the clock is not synchronized with any source." -LikelyCause 'A policy or manual change set the client to NoSync.' -Confidence 85 -Recommendation 'Set Type to NT5DS (domain members) or NTP with an approved NtpServer, through the same policy that set it.')
     }
     if ($failures.Count -gt 0) {
-        $newest = ($failures | Sort-Object TimeCreated -Descending | Select-Object -First 1).TimeCreated
+        $newest = (@($failures | Sort-Object TimeCreated -Descending))[0].TimeCreated
         $ids = (@($failures | ForEach-Object { $_.Id } | Sort-Object -Unique) -join ', ')
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'extras.time-synchronization.sync-failures' -Title 'Time synchronization failures were logged' -Severity Warning -Component 'Identity/Time' -Detail "The Time-Service logged $($failures.Count) synchronization failure event(s) (IDs $ids) in the selected time range; newest $newest." -LikelyCause 'The configured time source is unreachable, or the device has not synchronized for a long period.' -Confidence 75 -Recommendation 'Verify domain connectivity or the approved NTP source and firewall (UDP 123), then resynchronize and confirm events 35/37 follow.' -Data @{ EventIds = $ids; Count = $failures.Count })
+        # Only a failure newer than the newest success (35/37) means the clock is
+        # currently not synchronizing; an older failure that a later sync resolved is
+        # Information.
+        $unresolved = ($null -eq $lastOk) -or ($null -eq $newest) -or ([datetime]$newest -gt [datetime]$lastOk)
+        $data = @{ EventIds = $ids; Count = $failures.Count; NewestFailure = $newest; NewestSuccess = $lastOk }
+        if ($unresolved) {
+            $okText = if ($null -ne $lastOk) { "the newest successful synchronization event is older ($lastOk)" } else { 'no successful synchronization event (35/37) was found' }
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'extras.time-synchronization.sync-failures' -Title 'Time synchronization failures were logged' -Severity Warning -Component 'Identity/Time' -Detail "The Time-Service logged $($failures.Count) synchronization failure event(s) (IDs $ids) in the selected time range; newest $newest, and $okText." -LikelyCause 'The configured time source is unreachable, or the device has not synchronized for a long period.' -Confidence 75 -Recommendation 'Verify domain connectivity or the approved NTP source and firewall (UDP 123), then resynchronize and confirm events 35/37 follow.' -Data $data)
+        } else {
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'extras.time-synchronization.sync-failures' -Title 'Time synchronization failures were logged' -Severity Information -Component 'Identity/Time' -Detail "The Time-Service logged $($failures.Count) synchronization failure event(s) (IDs $ids) in the selected time range; newest $newest. A later synchronization succeeded ($lastOk), so the failures are resolved." -Data $data)
+        }
     }
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank Warning) }).Count -eq 0) {
         $lastText = if ($lastOk) { "last synchronization event $lastOk" } else { 'no synchronization event in the System log' }
