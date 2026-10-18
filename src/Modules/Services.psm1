@@ -4,8 +4,10 @@
 
 .DESCRIPTION
     Inventories Windows services via Win32_Service: counts by state and by start type
-    (Automatic, Automatic (Delayed Start), Manual, Disabled), flags automatic-start
-    services that are stopped, and reads the System log for Service Control Manager
+    (Automatic, Automatic (Delayed Start), Manual, Disabled), reports automatic-start
+    services that are stopped (the single owner of this check: Warning only when the
+    ExitCode is not 0 and not 1077, otherwise Information; trigger-start services with a
+    TriggerInfo registry subkey are skipped), and reads the System log for Service Control Manager
     events over the session time range to report services that crashed (7031, 7034)
     or failed to start (7000, 7009, 7011), grouped per service.
 
@@ -114,6 +116,36 @@ function ConvertTo-OmniServiceKey {
     return $k
 }
 
+function Test-OmniServiceTriggerStart {
+    <#
+    .SYNOPSIS
+        True when a service is trigger-started (HKLM\SYSTEM\CurrentControlSet\Services\<name>\TriggerInfo
+        exists) (private; mocked in tests). Read-only; $false when the registry is unavailable.
+    #>
+    [OutputType([bool])]
+    param([string] $Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    try {
+        return [bool](Test-Path -LiteralPath ("HKLM:\SYSTEM\CurrentControlSet\Services\{0}\TriggerInfo" -f $Name) -ErrorAction Stop)
+    } catch {
+        return $false
+    }
+}
+
+function Test-OmniServiceFailedExitCode {
+    <#
+    .SYNOPSIS
+        True when a stopped service's Win32 ExitCode indicates a failure: not 0 and not
+        1077 (ERROR_SERVICE_NEVER_STARTED) (private).
+    #>
+    [OutputType([bool])]
+    param([object] $Service)
+    $code = Get-OmniServiceValue $Service 'ExitCode'
+    if ($null -eq $code -or "$code" -eq '') { return $false }
+    $c = [int64]$code
+    return ($c -ne 0 -and $c -ne 1077)
+}
+
 function Get-OmniServiceStartType {
     <#
     .SYNOPSIS
@@ -184,25 +216,45 @@ function Invoke-OmniModuleScan {
         -Data $byType)
 
     # --- Automatic-start services that are stopped ------------------------
+    # This scanner is the single owner of this check (Windows Health records a count only).
+    # Trigger-start services (a TriggerInfo subkey) stop by design and are skipped. A stop
+    # is a Warning only when the exit code shows a failure: not 0 (clean) and not 1077
+    # (ERROR_SERVICE_NEVER_STARTED); otherwise it is Information.
     try {
         $autoStopped = @($services | Where-Object {
             $_.StartMode -eq 'Auto' -and $_.State -eq 'Stopped' -and
-            -not (Get-OmniServiceValue $_ 'DelayedAutoStart')
+            -not (Get-OmniServiceValue $_ 'DelayedAutoStart') -and
+            -not (Test-OmniServiceTriggerStart -Name ([string]$_.Name))
         })
+        $failedStop = @($autoStopped | Where-Object { Test-OmniServiceFailedExitCode -Service $_ })
         Set-OmniResultMetric -Result $result -Name 'AutoStoppedServiceCount' -Value $autoStopped.Count
+        Set-OmniResultMetric -Result $result -Name 'AutoStoppedFailedServiceCount' -Value $failedStop.Count
 
         if ($autoStopped.Count -gt 0) {
-            $names = @($autoStopped | Select-Object -First 10 | ForEach-Object {
+            # Failed ones first, so they are always within the first 10 listed.
+            $ordered = @($failedStop) + @($autoStopped | Where-Object { -not (Test-OmniServiceFailedExitCode -Service $_) })
+            $names = @($ordered | Select-Object -First 10 | ForEach-Object {
                 $code = Get-OmniServiceValue $_ 'ExitCode'
                 if ($null -ne $code -and [int64]$code -ne 0) { '{0} (exit code {1})' -f $_.DisplayName, $code } else { [string]$_.DisplayName }
             })
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'services-auto-start-stopped' `
-                -Title ("$($autoStopped.Count) automatic service(s) are stopped") -Severity 'Warning' `
-                -Component 'System/Services' `
-                -Detail ("Automatic-start services currently stopped (first 10): " + ($names -join '; ')) `
-                -LikelyCause 'A service set to start automatically failed to start or was stopped.' `
-                -Confidence 55 `
-                -Recommendation 'Investigate these services; some may indicate a failed dependency or misconfiguration. A non-zero exit code points to a failure.')
+            $params = @{
+                Id        = 'services-auto-start-stopped'
+                Title     = "$($autoStopped.Count) automatic service(s) are stopped"
+                Component = 'System/Services'
+                Detail    = 'Automatic-start services currently stopped (first 10): ' + ($names -join '; ')
+                Data      = @($ordered | ForEach-Object { [pscustomobject]@{ Name = [string]$_.Name; DisplayName = [string]$_.DisplayName; ExitCode = (Get-OmniServiceValue $_ 'ExitCode') } })
+            }
+            if ($failedStop.Count -gt 0) {
+                $params['Severity'] = 'Warning'
+                $params['LikelyCause'] = "$($failedStop.Count) of them stopped with a failure exit code: the service failed to start or crashed."
+                $params['Confidence'] = 60
+                $params['Recommendation'] = 'Investigate the services with an exit code; check the System log for Service Control Manager events, the service dependencies, and the logon account.'
+            } else {
+                $params['Severity'] = 'Information'
+                $params['LikelyCause'] = 'The services stopped cleanly or never needed to start (exit code 0 or 1077); many services stop on their own when idle.'
+                $params['Recommendation'] = 'No action is needed unless a feature that depends on one of these services is not working.'
+            }
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding @params)
         }
     } catch {
         $log.Debug("Auto-stopped service detection failed: $($_.Exception.Message)", 'Services')
@@ -300,7 +352,7 @@ function Invoke-OmniModuleScan {
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'services-healthy' `
             -Title 'Services healthy' -Severity 'Pass' -Component 'System/Services' `
-            -Detail "$running of $total services running; no stopped automatic services and no service crashes or start failures logged.")
+            -Detail "$running of $total services running; no automatic service stopped with a failure exit code and no service crashes or start failures logged.")
     }
 
     return (Complete-OmniResult -Result $result)

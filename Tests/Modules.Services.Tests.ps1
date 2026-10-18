@@ -58,6 +58,8 @@ Describe 'Services scanner' {
             [pscustomobject]@{ Name = 'Off'; DisplayName = 'Disabled Svc'; StartMode = 'Disabled'; State = 'Stopped'; DelayedAutoStart = $false; ExitCode = 0 }
         )
         $script:ScmData = @()
+        $script:TriggerStart = @()
+        Mock -ModuleName OmniSvcTestServices Test-OmniServiceTriggerStart { $script:TriggerStart -contains $Name }
         Mock -ModuleName OmniSvcTestServices Get-OmniServiceInstance {
             if ($script:SvcData -is [string]) { throw $script:SvcData }
             $script:SvcData
@@ -94,7 +96,43 @@ Describe 'Services scanner' {
         $f[0].Detail | Should -Match 'Broken Svc \(exit code 1067\)'
         $f[0].Detail | Should -Not -Match 'Delayed Svc'
         $r.Metrics['AutoStoppedServiceCount'] | Should -Be 1
+        $r.Metrics['AutoStoppedFailedServiceCount'] | Should -Be 1
         (Get-FindingById $r 'services-healthy').Count | Should -Be 0
+    }
+
+    It 'reports a clean stop (exit code 0 or 1077) as Information' {
+        $script:SvcData = @(
+            [pscustomobject]@{ Name = 'Clean'; DisplayName = 'Clean Svc'; StartMode = 'Auto'; State = 'Stopped'; DelayedAutoStart = $false; ExitCode = 0 }
+            [pscustomobject]@{ Name = 'Never'; DisplayName = 'Never Started'; StartMode = 'Auto'; State = 'Stopped'; DelayedAutoStart = $false; ExitCode = 1077 }
+        )
+        $r = Invoke-PluginScan -Module $script:SvcMod -Context (New-TestContext)
+        $f = Get-FindingById $r 'services-auto-start-stopped'
+        $f[0].Severity | Should -Be 'Information'
+        $r.Metrics['AutoStoppedServiceCount'] | Should -Be 2
+        $r.Metrics['AutoStoppedFailedServiceCount'] | Should -Be 0
+        (Get-FindingById $r 'services-healthy').Count | Should -Be 1
+    }
+
+    It 'skips trigger-start services and lists failed ones first' {
+        $script:SvcData = @(
+            [pscustomobject]@{ Name = 'Trig'; DisplayName = 'Trigger Svc'; StartMode = 'Auto'; State = 'Stopped'; DelayedAutoStart = $false; ExitCode = 1067 }
+            [pscustomobject]@{ Name = 'Clean'; DisplayName = 'Clean Svc'; StartMode = 'Auto'; State = 'Stopped'; DelayedAutoStart = $false; ExitCode = 0 }
+            [pscustomobject]@{ Name = 'Broken'; DisplayName = 'Broken Svc'; StartMode = 'Auto'; State = 'Stopped'; DelayedAutoStart = $false; ExitCode = 2 }
+        )
+        $script:TriggerStart = @('Trig')
+        $r = Invoke-PluginScan -Module $script:SvcMod -Context (New-TestContext)
+        $f = Get-FindingById $r 'services-auto-start-stopped'
+        $f[0].Severity | Should -Be 'Warning'
+        $f[0].Detail | Should -Not -Match 'Trigger Svc'
+        $f[0].Detail | Should -Match 'first 10\): Broken Svc \(exit code 2\); Clean Svc'
+        $r.Metrics['AutoStoppedServiceCount'] | Should -Be 2
+    }
+
+    It 'classifies exit codes: only codes other than 0 and 1077 are failures' {
+        & $script:SvcMod { Test-OmniServiceFailedExitCode -Service ([pscustomobject]@{ ExitCode = [uint32]0 }) } | Should -BeFalse
+        & $script:SvcMod { Test-OmniServiceFailedExitCode -Service ([pscustomobject]@{ ExitCode = [uint32]1077 }) } | Should -BeFalse
+        & $script:SvcMod { Test-OmniServiceFailedExitCode -Service ([pscustomobject]@{ ExitCode = [uint32]1067 }) } | Should -BeTrue
+        & $script:SvcMod { Test-OmniServiceFailedExitCode -Service ([pscustomobject]@{ Name = 'NoExitCode' }) } | Should -BeFalse
     }
 
     It 'groups SCM crash and start-failure events per service' {
@@ -155,6 +193,20 @@ Describe 'Services scanner' {
         $script:SvcData = @([pscustomobject]@{ Name = 'Broken'; DisplayName = 'Broken Svc'; StartMode = 'Auto'; State = 'Stopped'; DelayedAutoStart = $false; ExitCode = 1 })
         $r = Invoke-PluginScan -Module $script:SvcMod -Context (New-TestContext)
         foreach ($f in $r.Findings) { $f.Id | Should -Not -Match '\d' }
+    }
+}
+
+Describe 'Services trigger-start seam (Test-Path mocked, helper real)' {
+    It 'looks for the TriggerInfo subkey under the service key' {
+        Mock -ModuleName OmniSvcTestServices Test-Path { $LiteralPath -eq 'HKLM:\SYSTEM\CurrentControlSet\Services\Trig\TriggerInfo' }
+        & $script:SvcMod { Test-OmniServiceTriggerStart -Name 'Trig' } | Should -BeTrue
+        & $script:SvcMod { Test-OmniServiceTriggerStart -Name 'Other' } | Should -BeFalse
+        & $script:SvcMod { Test-OmniServiceTriggerStart -Name '' } | Should -BeFalse
+    }
+
+    It 'returns $false when the registry cannot be read' {
+        Mock -ModuleName OmniSvcTestServices Test-Path { throw 'no registry' }
+        & $script:SvcMod { Test-OmniServiceTriggerStart -Name 'Trig' } | Should -BeFalse
     }
 }
 

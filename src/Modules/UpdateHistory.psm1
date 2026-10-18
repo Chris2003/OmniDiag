@@ -12,7 +12,11 @@
 
     Reports:
       - the last successful installation (Warning when older than 45 days, Error when
-        older than 90 days);
+        older than 90 days), excluding Microsoft Defender definition updates (KB2267602,
+        KB915597, KB4052623, "Security Intelligence Update", "Definition Update", or the
+        Definition Updates category E0789628-CE08-4437-BE74-2495B842F43B when
+        IUpdateHistoryEntry2.Categories is available); the last definition update is a
+        separate metric (LastDefinitionUpdate);
       - failed or aborted installations (OperationResultCode 4 / 5) inside the scan
         time range, grouped by update with the most recent failure and its HRESULT;
       - a summary of what was read.
@@ -41,6 +45,10 @@ if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
 $script:OmniUpdateHistoryMax = 200
 $script:OmniUpdateWarnDays = 45
 $script:OmniUpdateErrorDays = 90
+
+# Defender / antimalware definition updates (excluded from the last-install grade).
+$script:OmniDefinitionTitlePattern = '(?i)(KB2267602|KB915597|KB4052623|Security Intelligence Update|Definition Update)'
+$script:OmniDefinitionCategoryId = 'E0789628-CE08-4437-BE74-2495B842F43B'
 
 function Get-OmniModuleManifest {
     <#
@@ -76,31 +84,106 @@ function Get-OmniUpdateHistoryEntry {
 
     $session = New-Object -ComObject 'Microsoft.Update.Session'
     $searcher = $null
+    $history = $null
     try {
         $searcher = $session.CreateUpdateSearcher()
         $total = [int]$searcher.GetTotalHistoryCount()
         $entries = [System.Collections.Generic.List[object]]::new()
         if ($total -gt 0) {
             $count = [math]::Min($total, $MaxEntries)
-            foreach ($e in @($searcher.QueryHistory(0, $count))) {
-                $updateId = ''
-                try { $updateId = "$($e.UpdateIdentity.UpdateID)" } catch { $updateId = '' }
-                $entries.Add([pscustomobject]@{
-                    Date       = $e.Date
-                    Title      = "$($e.Title)"
-                    Operation  = [int]$e.Operation
-                    ResultCode = [int]$e.ResultCode
-                    HResult    = $e.HResult
-                    UpdateId   = $updateId
-                })
+            # IUpdateHistoryEntryCollection: walk it with Count/Item(i) and release each entry.
+            $history = $searcher.QueryHistory(0, $count)
+            $n = [int]$history.Count
+            for ($i = 0; $i -lt $n; $i++) {
+                $e = $null
+                try {
+                    $e = $history.Item($i)
+                    if ($null -eq $e) { continue }
+                    $updateId = ''
+                    try { $updateId = "$($e.UpdateIdentity.UpdateID)" } catch { $updateId = '' }
+                    $entries.Add([pscustomobject]@{
+                        Date        = $e.Date
+                        Title       = "$($e.Title)"
+                        Operation   = [int]$e.Operation
+                        ResultCode  = [int]$e.ResultCode
+                        HResult     = $e.HResult
+                        UpdateId    = $updateId
+                        CategoryIds = [string[]]@(Get-OmniUpdateHistoryCategoryId -Entry $e)
+                    })
+                } finally {
+                    Remove-OmniUpdateComObject -InputObject $e
+                }
             }
         }
         return [pscustomobject]@{ TotalCount = $total; Entries = $entries.ToArray() }
     } finally {
-        foreach ($o in @($searcher, $session)) {
-            if ($null -ne $o) { try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($o) } catch { $null = $_ } }
-        }
+        foreach ($o in @($history, $searcher, $session)) { Remove-OmniUpdateComObject -InputObject $o }
     }
+}
+
+function Remove-OmniUpdateComObject {
+    <#
+    .SYNOPSIS
+        Releases a COM object, ignoring $null and objects that are not COM objects (private).
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Releases an in-process COM reference only.')]
+    param([object] $InputObject)
+    if ($null -eq $InputObject) { return }
+    try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($InputObject) } catch { $null = $_ }
+}
+
+function Get-OmniUpdateHistoryCategoryId {
+    <#
+    .SYNOPSIS
+        Returns the CategoryID values of a history entry (IUpdateHistoryEntry2.Categories),
+        or an empty array when the interface is not available (private).
+    #>
+    [OutputType([string[]])]
+    param([object] $Entry)
+    $ids = [System.Collections.Generic.List[string]]::new()
+    $cats = $null
+    try {
+        $cats = $Entry.Categories
+        if ($null -ne $cats) {
+            $n = [int]$cats.Count
+            for ($j = 0; $j -lt $n; $j++) {
+                $c = $null
+                try {
+                    $c = $cats.Item($j)
+                    if ($null -ne $c) { $ids.Add("$($c.CategoryID)") }
+                } finally {
+                    Remove-OmniUpdateComObject -InputObject $c
+                }
+            }
+        }
+    } catch {
+        $null = $_   # IUpdateHistoryEntry2 is not available on this agent version.
+    } finally {
+        Remove-OmniUpdateComObject -InputObject $cats
+    }
+    return [string[]]@($ids)
+}
+
+function Test-OmniUpdateDefinitionEntry {
+    <#
+    .SYNOPSIS
+        True when a history entry is a Microsoft Defender / antimalware definition update (private).
+    .DESCRIPTION
+        Definition updates install several times a day, so they would hide a stale
+        Windows patch level if they counted as "the last successful install".
+    #>
+    [OutputType([bool])]
+    param([object] $Entry)
+    if ($null -eq $Entry) { return $false }
+    $title = ''
+    $p = $Entry.PSObject.Properties['Title']
+    if ($p) { $title = "$($p.Value)" }
+    if ($title -match $script:OmniDefinitionTitlePattern) { return $true }
+    $c = $Entry.PSObject.Properties['CategoryIds']
+    if ($c -and $null -ne $c.Value) {
+        foreach ($id in @($c.Value)) { if ("$id" -eq $script:OmniDefinitionCategoryId) { return $true } }
+    }
+    return $false
 }
 
 function Get-OmniUpdateHistoryHotFixDate {
@@ -133,15 +216,16 @@ function Get-OmniUpdateGroupKey {
     <#
     .SYNOPSIS
         Groups history entries by update: the KB number when the title has one, else
-        the title without a trailing version parenthesis.
+        the UpdateIdentity.UpdateID GUID (so version strings in titles never reach the
+        finding Id), else the title without a trailing version parenthesis.
     #>
     [OutputType([string])]
     param([string] $Title, [string] $UpdateId)
     $m = [regex]::Match("$Title", 'KB\d{6,8}', 'IgnoreCase')
     if ($m.Success) { return $m.Value.ToUpperInvariant() }
+    if (-not [string]::IsNullOrWhiteSpace($UpdateId)) { return "$UpdateId".Trim().ToLowerInvariant() }
     $t = ("$Title" -replace '\s*\([^()]*\d+\.\d+[^()]*\)\s*$', '').Trim()
-    if ($t) { return $t }
-    return "$UpdateId"
+    return $t
 }
 
 function ConvertTo-OmniUpdateFindingId {
@@ -258,10 +342,21 @@ function Invoke-OmniModuleScan {
     Set-OmniResultMetric -Result $result -Name 'HistoryEntriesRead' -Value $entries.Count
 
     # --- Last successful installation (all entries read) -------------------
+    # Defender definition updates install several times a day; they are reported as a
+    # separate metric and never count as "the last successful install".
     $installs = @($entries | Where-Object { $_.Operation -eq 1 })
     $succeeded = @($installs | Where-Object { $_.ResultCode -eq 2 -or $_.ResultCode -eq 3 } | Sort-Object -Property Date -Descending)
-    $lastInstall = if ($succeeded.Count -gt 0) { $succeeded[0].Date } else { $null }
-    Add-OmniLastInstallFinding -Result $result -LastInstall $lastInstall -Source 'Windows Update history'
+    $definitions = @($succeeded | Where-Object { Test-OmniUpdateDefinitionEntry -Entry $_ })
+    $productUpdates = @($succeeded | Where-Object { -not (Test-OmniUpdateDefinitionEntry -Entry $_) })
+    if ($definitions.Count -gt 0) {
+        $lastDef = [datetime]$definitions[0].Date
+        $defAge = [int][math]::Floor(((Get-Date) - $lastDef).TotalDays)
+        if ($defAge -lt 0) { $defAge = 0 }
+        Set-OmniResultMetric -Result $result -Name 'LastDefinitionUpdate' -Value $lastDef
+        Set-OmniResultMetric -Result $result -Name 'LastDefinitionUpdateAgeDays' -Value $defAge
+    }
+    $lastInstall = if ($productUpdates.Count -gt 0) { $productUpdates[0].Date } else { $null }
+    Add-OmniLastInstallFinding -Result $result -LastInstall $lastInstall -Source 'Windows Update history (definition updates excluded)'
 
     # --- Failed / aborted installations inside the time range --------------
     $failed = @($installs | Where-Object {
@@ -287,8 +382,9 @@ function Invoke-OmniModuleScan {
             })
         $sev = if ($laterSuccess.Count -gt 0) { 'Information' } else { 'Warning' }
         $tail = if ($laterSuccess.Count -gt 0) { ' It installed successfully afterwards.' } else { ' No later successful installation was recorded.' }
+        $label = if ($g.Key -match '^KB\d+$') { $g.Key } else { "$($latest.Title)" }
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id (ConvertTo-OmniUpdateFindingId -Key $g.Key) `
-            -Title "Update failed to install: $($g.Key)" -Severity $sev -Component 'Updates/History' `
+            -Title "Update failed to install: $label" -Severity $sev -Component 'Updates/History' `
             -Detail ("'{0}' {1} {2} time(s) in the scan range; most recently on {3:yyyy-MM-dd HH:mm} with error {4}.{5}" -f $latest.Title, $resultText, $g.Count, $latest.Date, $hex, $tail) `
             -LikelyCause 'Download, servicing-stack, disk-space, or component-store problems are the usual causes; the error code identifies which.' -Confidence 60 `
             -Recommendation ("Look up error {0} (Windows Update error code reference), check free space on the system drive, then retry the update. Persistent servicing errors may need the DISM RestoreHealth or SFC repairs." -f $hex) `
@@ -297,10 +393,11 @@ function Invoke-OmniModuleScan {
 
     # --- Summary ----------------------------------------------------------
     $lastText = if ($null -ne $lastInstall) { '{0:yyyy-MM-dd}' -f [datetime]$lastInstall } else { 'none recorded' }
+    $defText = if ($definitions.Count -gt 0) { '{0:yyyy-MM-dd}' -f [datetime]$definitions[0].Date } else { 'none recorded' }
     Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'update-history-summary' `
         -Title 'Windows Update history summary' -Severity 'Information' -Component 'Updates/History' `
-        -Detail ("Read {0} of {1} history entries. Last successful install: {2}. Failed or aborted installs in {3}: {4} ({5} distinct update(s))." -f `
-                $entries.Count, $history.TotalCount, $lastText, $Context.TimeRange.Label, $failed.Count, $groups.Count))
+        -Detail ("Read {0} of {1} history entries. Last successful install (definition updates excluded): {2}. Last definition update: {6}. Failed or aborted installs in {3}: {4} ({5} distinct update(s))." -f `
+                $entries.Count, $history.TotalCount, $lastText, $Context.TimeRange.Label, $failed.Count, $groups.Count, $defText))
 
     return (Complete-OmniResult -Result $result)
 }

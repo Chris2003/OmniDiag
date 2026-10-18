@@ -4,9 +4,10 @@
 
 .DESCRIPTION
     Checks overall OS servicing health: pending reboot state (the authoritative
-    pending-reboot check of the updates group), Device Manager problem devices,
-    automatic services that are not running, the Windows Update service, and
-    startup program count.
+    pending-reboot check of the updates group), the Windows Update service, and counts
+    (metrics only) of Device Manager problem devices, automatic services that are not
+    running, and startup programs. Per-device and per-service findings are owned by
+    the Drivers and Services scanners, so they are not duplicated here.
 
     This scanner is read-only. It never runs SFC or DISM: component-store and system
     file repair live in the Repair Center (repair.run-system-file-checker-sfc and
@@ -33,7 +34,7 @@ function Get-OmniModuleManifest {
         Group         = 'updates'
         NetworkAccess = 'None'
         Category      = 'Health'
-        Description   = 'Pending reboot, device errors, service state, and update health.'
+        Description   = 'Pending reboot, update service state, and device/service problem counts.'
         RequiresAdmin = $false
         Order         = 50
         Enabled       = $true
@@ -77,33 +78,22 @@ function Invoke-OmniModuleScan {
             -Recommendation 'Restart the device to finish applying pending changes.' -Id 'windows-health-pending-reboot')
     }
 
-    # --- Device Manager problem devices ----------------------------------
+    # --- Device Manager problem devices (count only) ----------------------
+    # Per-device findings, with severities mapped from the error code, are owned by
+    # Drivers (services.drivers); this scanner only records the count.
     try {
         $bad = @(Get-CimInstance -ClassName Win32_PnPEntity -ErrorAction Stop |
             Where-Object { $_.ConfigManagerErrorCode -and $_.ConfigManagerErrorCode -ne 0 })
         Set-OmniResultMetric -Result $result -Name 'ProblemDevices' -Value $bad.Count
-        foreach ($dev in ($bad | Select-Object -First 20)) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Device problem: $($dev.Name)" -Severity 'Warning' `
-                -Component 'Health/Devices' -Detail "Device Manager error code $($dev.ConfigManagerErrorCode) on '$($dev.Name)'." `
-                -LikelyCause 'Missing/failed driver or a disabled or malfunctioning device.' -Confidence 65 `
-                -Recommendation 'Update or reinstall the driver in Device Manager; check vendor support.' `
-                -Data @{ Name = $dev.Name; ErrorCode = $dev.ConfigManagerErrorCode })
-        }
     } catch { $log.Warn("Win32_PnPEntity query failed: $($_.Exception.Message)", 'Windows Health') }
 
-    # --- Automatic services not running ----------------------------------
+    # --- Automatic services not running (count only) ---------------------
+    # The per-service check (exit codes, trigger-start services) is owned by Services
+    # (services.services); this scanner only records the count.
     try {
         $stopped = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop |
             Where-Object { $_.StartMode -eq 'Auto' -and $_.State -ne 'Running' -and -not $_.DelayedAutoStart })
         Set-OmniResultMetric -Result $result -Name 'AutoServicesStopped' -Value $stopped.Count
-        if ($stopped.Count -gt 0) {
-            $names = ($stopped | Select-Object -First 15 | ForEach-Object { $_.DisplayName }) -join '; '
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "$($stopped.Count) automatic service(s) not running" -Severity 'Warning' `
-                -Component 'Health/Services' -Detail "Auto-start services currently stopped: $names" `
-                -LikelyCause 'A service failed to start or was stopped.' -Confidence 55 `
-                -Recommendation 'Review the listed services; start them or investigate start failures in the System log.' `
-                -Data ($stopped | Select-Object Name, DisplayName) -Id 'windows-health-auto-services-stopped')
-        }
     } catch { $log.Warn("Win32_Service query failed: $($_.Exception.Message)", 'Windows Health') }
 
     # --- Windows Update service state ------------------------------------
@@ -126,7 +116,7 @@ function Invoke-OmniModuleScan {
 
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Windows health checks passed' -Severity 'Pass' `
-            -Component 'Health' -Detail 'No pending reboot, device errors, or stopped automatic services detected.')
+            -Component 'Health' -Detail 'No pending reboot and the Windows Update service is not disabled. Device problems and stopped services are reported by Drivers and Services.')
     }
 
     return (Complete-OmniResult -Result $result)

@@ -22,7 +22,7 @@ Get-OmniDiagUpdates -IncludePassed | Format-Table severity, moduleId, title
 | System Health | `updates.system-health` | Servicing (CBS) log freshness; pending reboot is reported by Windows Health. | Not required | None |
 | Update History | `updates.update-history` | Local Windows Update history: last successful install and failed installs. | Not required | None |
 | Update Rings | `updates.update-rings` | Local Windows Update for Business and MDM update policy posture. | Not required | None |
-| Windows Health | `updates.windows-health` | Pending reboot, device errors, service state, and update health. | Not required | None |
+| Windows Health | `updates.windows-health` | Pending reboot, update service state, and device/service problem counts. | Not required | None |
 | Windows Update | `updates.windows-update` | Installed hotfix posture and Windows Update service state. | Not required | None |
 
 ## What it checks
@@ -32,19 +32,31 @@ history.
 
 - Last successful installation (`Operation` = installation, `ResultCode` 2 succeeded or
   3 succeeded with errors): older than 45 days is a Warning, older than 90 days an Error;
-  no successful installation in the history is a Warning.
+  no successful installation in the history is a Warning. Microsoft Defender definition
+  updates are excluded from this grade, because they install several times a day and
+  would hide a stale patch level: titles containing KB2267602, KB915597, KB4052623,
+  "Security Intelligence Update", or "Definition Update", and, when
+  `IUpdateHistoryEntry2.Categories` is available, the Definition Updates category
+  `E0789628-CE08-4437-BE74-2495B842F43B`. The newest definition update is reported
+  separately (metrics `LastDefinitionUpdate`, `LastDefinitionUpdateAgeDays`).
 - Failed (`ResultCode` 4) and aborted (5) installations inside the scan time range
-  (`--range`, default `Last7Days`), grouped by update (the KB number, or the title without a
-  trailing version), with the count, the most recent failure, and its HRESULT as
-  `0xXXXXXXXX`. A failure is Information instead of Warning when the same update
-  installed successfully afterwards. At most 15 updates are listed.
-- A summary: entries read, total history size, last success, failures in range.
+  (`--range`, default `Last7Days`), grouped by update (the KB number; else the
+  `UpdateIdentity.UpdateID` GUID, so version strings in titles never enter the finding
+  Id; else the title without a trailing version), with the count, the most recent
+  failure, and its HRESULT as `0xXXXXXXXX`. A failure is Information instead of Warning
+  when the same update installed successfully afterwards. At most 15 updates are listed.
+- A summary: entries read, total history size, last success, last definition update,
+  failures in range.
+- The history collection and every entry/category COM object are released after reading.
 - Option: `Config.UpdateHistoryMaxEntries` (1-200, default 200).
 
-**Windows Health.** The single, authoritative pending-reboot check of OmniDiag; Device
-Manager devices with a `ConfigManagerErrorCode`; automatic (non-delayed) services that are
-stopped; the `wuauserv` start type; startup program count (metric). It is read-only: it
-never runs SFC or DISM (see "Repairs" below).
+**Windows Health.** The single, authoritative pending-reboot check of OmniDiag; the
+`wuauserv` start type; and counts only (metrics `ProblemDevices`, `AutoServicesStopped`,
+`StartupPrograms`) of Device Manager devices with a `ConfigManagerErrorCode`, stopped
+automatic (non-delayed) services, and startup programs. Per-device findings are owned by
+Drivers (`services.drivers`) and the per-service stopped check by Services
+(`services.services`), so they are not duplicated. It is read-only: it never runs SFC or
+DISM (see "Repairs" below).
 
 **System Health.** Records the last write time of `%SystemRoot%\Logs\CBS\CBS.log`. It no
 longer raises its own pending-reboot finding; its `PendingRebootCheckedBy` metric points
@@ -93,16 +105,14 @@ or an installer. The CI no-network job audits this on every build.
 
 | Scanner | Finding (Id) | Severity | When |
 |---|---|---|---|
-| Update History | Updates installed recently (`update-history-last-install-recent`) | Pass | Last success within 45 days |
+| Update History | Updates installed recently (`update-history-last-install-recent`) | Pass | Last success (definition updates excluded) within 45 days |
 | Update History | No update installed in over 45 / 90 days (`update-history-last-install-stale`) | Warning / Error | Last success older than 45 / 90 days |
 | Update History | No successful update installation recorded (`update-history-no-successful-install`) | Warning | No succeeded installation in the entries read |
-| Update History | Update failed to install: KB... (`update-history-failed-<kb or title>`) | Warning / Information | Failed or aborted inside the time range; Information when it installed later |
+| Update History | Update failed to install: KB... (`update-history-failed-<kb, UpdateID, or title>`) | Warning / Information | Failed or aborted inside the time range; Information when it installed later |
 | Update History | Windows Update history summary (`update-history-summary`) | Information | Every run with history |
 | Update History | Failed-update history not available (`update-history-com-unavailable`) | Information | COM API unavailable; last install graded from `Get-HotFix` |
 | Update History | Update history not available (`update-history-not-available`) | Information | Neither source readable (non-Windows) |
 | Windows Health | A system restart is pending (`windows-health-pending-reboot`) | Warning | Any reboot marker present |
-| Windows Health | Device problem: <device> | Warning | `ConfigManagerErrorCode` not 0 (up to 20) |
-| Windows Health | N automatic service(s) not running (`windows-health-auto-services-stopped`) | Warning | Auto-start, non-delayed services stopped |
 | Windows Health | Windows Update service is disabled (`windows-health-wuauserv-disabled`) | Warning | `wuauserv` start type Disabled |
 | Windows Health | Windows health checks passed | Pass | None of the above |
 | System Health | Servicing log collected (`system-health-servicing-log`) | Pass | CBS log found |

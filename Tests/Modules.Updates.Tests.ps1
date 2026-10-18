@@ -87,11 +87,21 @@ Describe 'Update History scanner: contract and safety' {
         & $script:HistMod { ConvertTo-OmniHResultHex -HResult $null } | Should -Be ''
     }
 
-    It 'groups by KB number, else by title without a version suffix' {
+    It 'groups by KB number, else by UpdateID, else by title without a version suffix' {
         & $script:HistMod { Get-OmniUpdateGroupKey -Title '2026-09 Cumulative Update (KB5012345)' -UpdateId 'x' } | Should -Be 'KB5012345'
-        & $script:HistMod { Get-OmniUpdateGroupKey -Title 'Contoso Driver Update (Version 1.2.3)' -UpdateId 'x' } | Should -Be 'Contoso Driver Update'
+        & $script:HistMod { Get-OmniUpdateGroupKey -Title 'Contoso Driver Update (Version 1.2.3)' -UpdateId '6A1B0C2D-0000-4E5F-9A8B-112233445566' } | Should -Be '6a1b0c2d-0000-4e5f-9a8b-112233445566'
+        & $script:HistMod { Get-OmniUpdateGroupKey -Title 'Contoso Driver Update (Version 1.2.3)' -UpdateId '' } | Should -Be 'Contoso Driver Update'
         & $script:HistMod { Get-OmniUpdateGroupKey -Title '' -UpdateId 'abc' } | Should -Be 'abc'
         & $script:HistMod { ConvertTo-OmniUpdateFindingId -Key 'KB5012345' } | Should -Be 'update-history-failed-kb5012345'
+    }
+
+    It 'recognizes Defender definition updates by title or category' {
+        & $script:HistMod { Test-OmniUpdateDefinitionEntry -Entry ([pscustomobject]@{ Title = 'Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.401.1.0)' }) } | Should -BeTrue
+        & $script:HistMod { Test-OmniUpdateDefinitionEntry -Entry ([pscustomobject]@{ Title = 'Update for Microsoft Defender Antivirus antimalware platform - KB4052623 (Version 4.18.1)' }) } | Should -BeTrue
+        & $script:HistMod { Test-OmniUpdateDefinitionEntry -Entry ([pscustomobject]@{ Title = 'Windows Defender - KB915597 (Definition 1.401.1.0)' }) } | Should -BeTrue
+        & $script:HistMod { Test-OmniUpdateDefinitionEntry -Entry ([pscustomobject]@{ Title = 'Some vendor feed'; CategoryIds = @('e0789628-ce08-4437-be74-2495b842f43b') }) } | Should -BeTrue
+        & $script:HistMod { Test-OmniUpdateDefinitionEntry -Entry ([pscustomobject]@{ Title = '2026-10 Cumulative Update (KB5000001)'; CategoryIds = @('0FA1201D-4330-4FA8-8AE9-B877473B6441') }) } | Should -BeFalse
+        & $script:HistMod { Test-OmniUpdateDefinitionEntry -Entry ([pscustomobject]@{ Title = '2026-10 Cumulative Update (KB5000001)' }) } | Should -BeFalse
     }
 
     It 'caps the entries it asks for at 200' {
@@ -146,6 +156,34 @@ Describe 'Update History scanner: last successful install' {
         $f[0].Detail | Should -Match '120 days ago'
     }
 
+    It 'grades the last Windows update, not the last Defender definition update' {
+        Mock -ModuleName OmniUpdatesTestHistory Get-OmniUpdateHistoryEntry {
+            New-History -Entries @(
+                (New-HistoryEntry 0 'Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.401.1.0)')
+                (New-HistoryEntry 2 'Definition Update for Microsoft Defender Antivirus (Version 1.400.9.0)')
+                (New-HistoryEntry 70 '2026-07 Cumulative Update (KB5000001)')
+            )
+        }
+        $r = Invoke-PluginScan -Module $script:HistMod -Context (New-TestContext)
+        $f = @($r.Findings | Where-Object Id -eq 'update-history-last-install-stale')
+        $f[0].Severity | Should -Be 'Warning'
+        $r.Metrics['LastSuccessfulInstallAgeDays'] | Should -Be 70
+        $r.Metrics['LastDefinitionUpdateAgeDays'] | Should -Be 0
+    }
+
+    It 'excludes definition updates identified by category ID' {
+        Mock -ModuleName OmniUpdatesTestHistory Get-OmniUpdateHistoryEntry {
+            $feed = New-HistoryEntry 1 'Feed'
+            $feed | Add-Member -NotePropertyName CategoryIds -NotePropertyValue @('E0789628-CE08-4437-BE74-2495B842F43B')
+            New-History -Entries @($feed, (New-HistoryEntry 70 '2026-07 Cumulative Update (KB5000001)'))
+        }
+        $r = Invoke-PluginScan -Module $script:HistMod -Context (New-TestContext)
+        @($r.Findings | Where-Object Id -eq 'update-history-last-install-stale')[0].Severity | Should -Be 'Warning'
+        $r.Metrics['LastSuccessfulInstallAgeDays'] | Should -Be 70
+        $r.Metrics['LastDefinitionUpdateAgeDays'] | Should -Be 1
+        ($r.Findings | Where-Object Id -eq 'update-history-summary').Detail | Should -Match 'Last definition update: \d{4}-'
+    }
+
     It 'warns when the history has no successful install' {
         Mock -ModuleName OmniUpdatesTestHistory Get-OmniUpdateHistoryEntry { New-History -Entries @() }
         $r = Invoke-PluginScan -Module $script:HistMod -Context (New-TestContext)
@@ -194,6 +232,21 @@ Describe 'Update History scanner: failed installs' {
         $r.Status | Should -Be 'Healthy'
     }
 
+    It 'builds the Id from UpdateID, not the versioned title, when there is no KB number' {
+        Mock -ModuleName OmniUpdatesTestHistory Get-OmniUpdateHistoryEntry {
+            New-History -Entries @(
+                (New-HistoryEntry 2 'Contoso Driver - 10.1.2.3' -ResultCode 4 -HResult 1 -UpdateId '6A1B0C2D-0000-4E5F-9A8B-112233445566')
+                (New-HistoryEntry 4 'Contoso Driver - 10.1.2.2' -ResultCode 4 -HResult 1 -UpdateId '6A1B0C2D-0000-4E5F-9A8B-112233445566')
+            )
+        }
+        $r = Invoke-PluginScan -Module $script:HistMod -Context (New-TestContext)
+        $f = @($r.Findings | Where-Object Id -like 'update-history-failed-*')
+        $f.Count | Should -Be 1
+        $f[0].Id | Should -Be 'update-history-failed-6a1b0c2d-0000-4e5f-9a8b-112233445566'
+        $f[0].Id | Should -Not -Match '10-1-2'
+        $f[0].Title | Should -Match 'Contoso Driver - 10\.1\.2\.3'
+    }
+
     It 'ignores failures outside the scan time range' {
         Mock -ModuleName OmniUpdatesTestHistory Get-OmniUpdateHistoryEntry {
             New-History -Entries @(
@@ -212,6 +265,82 @@ Describe 'Update History scanner: failed installs' {
         $cts.Cancel()
         $r = Invoke-PluginScan -Module $script:HistMod -Context (New-TestContext -Token $cts.Token)
         @($r.Findings).Count | Should -Be 0
+    }
+}
+
+Describe 'Update History COM reader (New-Object mocked, reader real)' {
+    # Get-OmniUpdateHistoryEntry is NOT mocked here; only New-Object -ComObject is. The
+    # fakes are shaped like the WUA objects: IUpdateHistoryEntryCollection (Count/Item),
+    # IUpdateHistoryEntry(2) (Date, Operation, ResultCode, HResult, Title,
+    # UpdateIdentity.UpdateID, Categories), ICategory (CategoryID).
+    BeforeAll {
+        function New-FakeComCollection {
+            param([object[]] $Items)
+            $c = [pscustomobject]@{ Count = @($Items).Count; Items = @($Items) }
+            $c | Add-Member -MemberType ScriptMethod -Name Item -Value { param($i) $this.Items[$i] }
+            $c
+        }
+        function New-FakeHistoryEntry {
+            param([datetime] $Date, [string] $Title, [int] $ResultCode, [int] $HResult, [string] $UpdateId, [string[]] $Categories)
+            $e = [pscustomobject]@{
+                Date = $Date; Operation = 1; ResultCode = $ResultCode; HResult = $HResult; Title = $Title
+                UpdateIdentity = [pscustomobject]@{ UpdateID = $UpdateId; RevisionNumber = 200 }
+            }
+            if ($PSBoundParameters.ContainsKey('Categories')) {
+                $cats = @($Categories | ForEach-Object { [pscustomobject]@{ CategoryID = $_; Name = 'cat' } })
+                $e | Add-Member -NotePropertyName Categories -NotePropertyValue (New-FakeComCollection -Items $cats)
+            }
+            $e
+        }
+        function New-FakeSession {
+            param([int] $Total, [object[]] $Entries)
+            $searcher = [pscustomobject]@{ Total = $Total; History = (New-FakeComCollection -Items $Entries); Asked = [System.Collections.Generic.List[object]]::new() }
+            $searcher | Add-Member -MemberType ScriptMethod -Name GetTotalHistoryCount -Value { $this.Total }
+            $searcher | Add-Member -MemberType ScriptMethod -Name QueryHistory -Value { param($start, $count) $this.Asked.Add(@($start, $count)); $this.History }
+            $session = [pscustomobject]@{ Searcher = $searcher }
+            $session | Add-Member -MemberType ScriptMethod -Name CreateUpdateSearcher -Value { $this.Searcher }
+            $session
+        }
+    }
+
+    BeforeEach {
+        $d1 = [datetime]'2026-10-01T08:00:00'
+        $d2 = [datetime]'2026-09-15T08:00:00'
+        $script:FakeSession = New-FakeSession -Total 2 -Entries @(
+            (New-FakeHistoryEntry -Date $d1 -Title 'Security Intelligence Update (Version 1.401.1.0)' -ResultCode 2 -HResult 0 -UpdateId 'AAA' -Categories @('E0789628-CE08-4437-BE74-2495B842F43B'))
+            (New-FakeHistoryEntry -Date $d2 -Title '2026-09 Cumulative Update (KB5000001)' -ResultCode 4 -HResult (-2145124329) -UpdateId 'BBB')
+        )
+        Mock -ModuleName OmniUpdatesTestHistory New-Object -ParameterFilter { $ComObject -eq 'Microsoft.Update.Session' } { $script:FakeSession }
+    }
+
+    It 'maps each COM history entry to a record' {
+        $h = & $script:HistMod { Get-OmniUpdateHistoryEntry -MaxEntries 200 }
+        $h.TotalCount | Should -Be 2
+        @($h.Entries).Count | Should -Be 2
+        $h.Entries[0].Date | Should -Be ([datetime]'2026-10-01T08:00:00')
+        $h.Entries[0].Operation | Should -Be 1
+        $h.Entries[0].ResultCode | Should -Be 2
+        $h.Entries[0].UpdateId | Should -Be 'AAA'
+        @($h.Entries[0].CategoryIds) | Should -Be @('E0789628-CE08-4437-BE74-2495B842F43B')
+        $h.Entries[1].Title | Should -Be '2026-09 Cumulative Update (KB5000001)'
+        $h.Entries[1].ResultCode | Should -Be 4
+        $h.Entries[1].HResult | Should -Be (-2145124329)
+        $h.Entries[1].UpdateId | Should -Be 'BBB'
+        @($h.Entries[1].CategoryIds).Count | Should -Be 0 -Because 'an IUpdateHistoryEntry without Categories yields no IDs'
+    }
+
+    It 'asks QueryHistory for at most MaxEntries entries' {
+        $null = & $script:HistMod { Get-OmniUpdateHistoryEntry -MaxEntries 1 }
+        $script:FakeSession.Searcher.Asked[0][0] | Should -Be 0
+        $script:FakeSession.Searcher.Asked[0][1] | Should -Be 1
+    }
+
+    It 'does not query when the history is empty' {
+        $script:FakeSession = New-FakeSession -Total 0 -Entries @()
+        $h = & $script:HistMod { Get-OmniUpdateHistoryEntry -MaxEntries 200 }
+        $h.TotalCount | Should -Be 0
+        @($h.Entries).Count | Should -Be 0
+        $script:FakeSession.Searcher.Asked.Count | Should -Be 0
     }
 }
 
@@ -244,24 +373,37 @@ Describe 'Update History scanner: fallbacks' {
 
 Describe 'Pending reboot: one authoritative check' {
     BeforeAll {
-        # Windows Health also queries CIM and services; make those return nothing.
-        $stubBody = [scriptblock]::Create('[CmdletBinding()] param([Parameter(ValueFromRemainingArguments)] $Rest) ')
-        $script:Stubbed = [System.Collections.Generic.List[string]]::new()
-        foreach ($n in @('Get-CimInstance', 'Get-Service')) {
-            if (-not (Get-Command -Name $n -ErrorAction SilentlyContinue)) {
-                Set-Item -Path "function:global:$n" -Value $stubBody
-                $script:Stubbed.Add($n)
-            }
+        # Windows Health also queries CIM and services. Always define simple stubs inside
+        # the plugin copy's module scope (on Windows too): a function shadows the real
+        # cmdlet, so Pester mocks the stub, not the CDXML/real cmdlet, and nothing leaks
+        # into other test files.
+        & $script:WinHealthMod {
+            function script:Get-CimInstance { [CmdletBinding()] param([string] $ClassName, [Parameter(ValueFromRemainingArguments)] $Rest) }
+            function script:Get-Service { [CmdletBinding()] param([string[]] $Name, [Parameter(ValueFromRemainingArguments)] $Rest) }
         }
-    }
-
-    AfterAll {
-        foreach ($n in $script:Stubbed) { Remove-Item -Path "function:global:$n" -ErrorAction SilentlyContinue }
     }
 
     BeforeEach {
         Mock -ModuleName OmniUpdatesTestWinHealth Get-CimInstance { @() }
         Mock -ModuleName OmniUpdatesTestWinHealth Get-Service { throw 'no service manager' }
+    }
+
+    It 'Windows Health records device and stopped-service counts only (Drivers and Services own the findings)' {
+        Mock -ModuleName OmniUpdatesTestWinHealth Test-OmniPendingReboot { [string[]]@() }
+        Mock -ModuleName OmniUpdatesTestWinHealth Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_PnPEntity' } {
+            [pscustomobject]@{ Name = 'Spare NIC'; ConfigManagerErrorCode = [uint32]22 }
+            [pscustomobject]@{ Name = 'Camera'; ConfigManagerErrorCode = [uint32]43 }
+            [pscustomobject]@{ Name = 'Fine'; ConfigManagerErrorCode = [uint32]0 }
+        }
+        Mock -ModuleName OmniUpdatesTestWinHealth Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Service' } {
+            [pscustomobject]@{ Name = 'Broken'; DisplayName = 'Broken'; StartMode = 'Auto'; State = 'Stopped'; DelayedAutoStart = $false }
+        }
+        $r = Invoke-PluginScan -Module $script:WinHealthMod -Context (New-TestContext)
+        $r.Metrics['ProblemDevices'] | Should -Be 2
+        $r.Metrics['AutoServicesStopped'] | Should -Be 1
+        @($r.Findings | Where-Object { $_.Title -like 'Device problem*' }).Count | Should -Be 0
+        @($r.Findings | Where-Object Id -eq 'windows-health-auto-services-stopped').Count | Should -Be 0
+        @($r.Findings | Where-Object Severity -eq 'Pass').Count | Should -Be 1 -Because (($r.Findings | ForEach-Object { "$($_.Severity): $($_.Id)" }) -join '; ')
     }
 
     It 'Windows Health raises the pending-reboot Warning with a stable Id' {

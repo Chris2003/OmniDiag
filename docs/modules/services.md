@@ -33,7 +33,13 @@ Invoke-OmniDiagScan -Group services
   Manual, Disabled (plus Boot / System / Unknown if present), and by state (running,
   stopped). Always reported as an Information finding and in the `ServicesByStartType` metric.
 - **Stopped automatic services.** Services with start type Automatic (not delayed) that
-  are stopped. The detail shows the first 10, with the exit code when it is not 0.
+  are stopped. Services is the single owner of this check (Windows Health records only the
+  `AutoServicesStopped` count). Trigger-start services (a
+  `HKLM\SYSTEM\CurrentControlSet\Services\<name>\TriggerInfo` subkey) stop by design and
+  are skipped. The finding is a Warning only when at least one service stopped with an
+  `ExitCode` other than 0 and 1077 (`ERROR_SERVICE_NEVER_STARTED`); otherwise it is
+  Information. The detail shows the first 10, failed ones first, with the exit code when it
+  is not 0. Metrics: `AutoStoppedServiceCount`, `AutoStoppedFailedServiceCount`.
 - **Crashes and start failures.** Service Control Manager events in the System log over
   the session time range (`--range`): 7031 and 7034 (the service terminated unexpectedly)
   and 7000, 7009, 7011 (the service failed to start, or start/response timed out). Events
@@ -102,7 +108,7 @@ fetch revocation data).
 | Finding (Id) | Severity | When |
 |---|---|---|
 | Service start types (`services-start-type-summary`) | Information | Always (counts by start type and state) |
-| N automatic service(s) are stopped (`services-auto-start-stopped`) | Warning | An Automatic (not delayed) service is stopped |
+| N automatic service(s) are stopped (`services-auto-start-stopped`) | Warning / Information | An Automatic (not delayed, not trigger-start) service is stopped; Warning when any such service's exit code is not 0 or 1077, otherwise Information |
 | Service terminated unexpectedly: *name* (`services-scm-crash-<service>`) | Warning | Event 7031 or 7034 for the service in the range |
 | Service failed to start: *name* (`services-scm-start-failure-<service>`) | Warning | Event 7000, 7009, or 7011 for the service in the range |
 | More services with SCM failures (`services-scm-more`) | Information | More than 15 services of one kind |
