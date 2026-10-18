@@ -8,10 +8,16 @@
       Commands : Invoke-WebRequest (iwr, curl, wget), Invoke-RestMethod (irm),
                  Test-Connection, Test-NetConnection, Resolve-DnsName,
                  Test-ComputerSecureChannel, Start-BitsTransfer, New-PSSession,
-                 Enter-PSSession, New-CimSession, Invoke-Command -ComputerName
-      .NET     : System.Net.WebClient, System.Net.Http.HttpClient, System.Net.Sockets.*,
+                 Enter-PSSession, New-CimSession, Invoke-Command -ComputerName,
+                 Send-MailMessage, WMI/CIM/event/service cmdlets with -ComputerName or
+                 -CimSession ('Remote -ComputerName')
+      Native   : curl.exe, wget.exe, bitsadmin, ping, nslookup, tracert, pathping,
+                 ftp.exe, tftp.exe (bare name or .exe, with or without a path)
+      .NET     : System.Net.WebClient, System.Net.Http.HttpClient (and HttpClientHandler,
+                 SocketsHttpHandler, HttpMessageInvoker), System.Net.Sockets.*,
                  System.Net.NetworkInformation.Ping, System.Net.Dns,
-                 System.Net.WebRequest, System.Net.HttpWebRequest
+                 System.Net.WebRequest, System.Net.HttpWebRequest, System.Net.FtpWebRequest,
+                 System.Net.Mail.SmtpClient, System.Net.WebSockets.ClientWebSocket
                  (type literals, casts/constraints, generic arguments, and New-Object
                  type-name strings; case-insensitive, with or without 'System.', and
                  resolved through 'using namespace')
@@ -25,7 +31,10 @@
     approval (see CONTRIBUTING.md).
 
     Outside src, install.ps1 is the only script allowed to download (it fetches the
-    release archive); the last Describe asserts that. Cross-platform.
+    release archive); a Describe asserts that. The .cmd launchers are checked with a
+    plain-text scan. Not detected: native tools whose network use depends on their
+    arguments (ipconfig /renew, dism /RestoreHealth, w32tm /resync); those rely on the
+    plugin's NetworkAccess declaration and review. Cross-platform.
 #>
 
 BeforeAll {
@@ -64,7 +73,28 @@ BeforeAll {
         'enter-pssession'            = 'Enter-PSSession'
         'etsn'                       = 'Enter-PSSession'
         'new-cimsession'             = 'New-CimSession'
+        'send-mailmessage'           = 'Send-MailMessage'
+        # Native network clients (a bare name or name.exe; a path prefix is stripped).
+        'curl.exe'                   = 'curl.exe'
+        'wget.exe'                   = 'wget.exe'
+        'bitsadmin'                  = 'bitsadmin.exe'
+        'bitsadmin.exe'              = 'bitsadmin.exe'
+        'ping'                       = 'ping.exe'
+        'ping.exe'                   = 'ping.exe'
+        'nslookup'                   = 'nslookup.exe'
+        'nslookup.exe'               = 'nslookup.exe'
+        'tracert'                    = 'tracert.exe'
+        'tracert.exe'                = 'tracert.exe'
+        'pathping'                   = 'pathping.exe'
+        'pathping.exe'               = 'pathping.exe'
+        'ftp.exe'                    = 'ftp.exe'
+        'tftp.exe'                   = 'tftp.exe'
     }
+
+    # Local cmdlets that reach another machine when given a remote target parameter.
+    $script:RemoteCapableCommands = @('get-wmiobject', 'gwmi', 'invoke-wmimethod', 'set-wmiinstance', 'remove-wmiobject',
+        'get-ciminstance', 'gcim', 'invoke-cimmethod', 'set-ciminstance', 'remove-ciminstance', 'get-winevent',
+        'get-eventlog', 'get-hotfix', 'get-service', 'get-process', 'restart-computer', 'stop-computer')
 
     function Get-NetTypeApi {
         # Canonical 'System.Net....' name if $Name (optionally resolved via using
@@ -83,6 +113,10 @@ BeforeAll {
                 '^(?i)System\.Net\.Dns$'                        { return 'System.Net.Dns' }
                 '^(?i)System\.Net\.WebRequest$'                 { return 'System.Net.WebRequest' }
                 '^(?i)System\.Net\.HttpWebRequest$'             { return 'System.Net.HttpWebRequest' }
+                '^(?i)System\.Net\.FtpWebRequest$'              { return 'System.Net.FtpWebRequest' }
+                '^(?i)System\.Net\.Mail\.SmtpClient$'           { return 'System.Net.Mail.SmtpClient' }
+                '^(?i)System\.Net\.WebSockets\.ClientWebSocket$' { return 'System.Net.WebSockets.ClientWebSocket' }
+                '^(?i)System\.Net\.Http\.(HttpClientHandler|SocketsHttpHandler|HttpMessageInvoker)$' { return ('System.Net.Http.' + $Matches[1]) }
             }
         }
         return $null
@@ -128,6 +162,14 @@ BeforeAll {
                         $_.ParameterName -match '^(?i)(ComputerName|Cn|Session|HostName|ConnectionUri|Uri|VMName|VMId|ContainerId)$'
                     })
                 if ($remote.Count -gt 0) { & $add 'Invoke-Command -ComputerName' $cmd }
+                continue
+            }
+            if ($key -in $script:RemoteCapableCommands) {
+                $remote = @($cmd.CommandElements | Where-Object {
+                        $_ -is [System.Management.Automation.Language.CommandParameterAst] -and
+                        $_.ParameterName -match '^(?i)(ComputerName|Cn|CimSession)$'
+                    })
+                if ($remote.Count -gt 0) { & $add 'Remote -ComputerName' $cmd }
                 continue
             }
             if ($key -eq 'new-object') {
@@ -191,6 +233,15 @@ BeforeAll {
         }
     }
     $script:ProductHits = @($script:ProductHits)
+
+    function Get-NetworkViolation {
+        # Hits (File, Api, ...) that no allowlist entry covers.
+        param([object[]] $Hit, [object[]] $Allowlist = $script:NetworkAllowlist)
+        @($Hit | Where-Object { $null -ne $_ } | Where-Object {
+                $h = $_
+                -not ($Allowlist | Where-Object { $h.File -eq $_.File -and $h.Api -like $_.Api })
+            })
+    }
 }
 
 Describe 'Network-API detector (self-test)' {
@@ -222,6 +273,20 @@ Describe 'Network-API detector (self-test)' {
         @{ Code = "using namespace System.Net`n[Dns]::GetHostAddresses('x')"; Api = 'System.Net.Dns' }
         @{ Code = '[System.Net.WebRequest]::Create(''http://x'')';          Api = 'System.Net.WebRequest' }
         @{ Code = '$r = [Net.HttpWebRequest]$req';                          Api = 'System.Net.HttpWebRequest' }
+        @{ Code = '[System.Net.FtpWebRequest]::Create(''ftp://x'')';        Api = 'System.Net.FtpWebRequest' }
+        @{ Code = '$m = New-Object Net.Mail.SmtpClient ''smtp.example.test'''; Api = 'System.Net.Mail.SmtpClient' }
+        @{ Code = '[System.Net.WebSockets.ClientWebSocket]::new()';         Api = 'System.Net.WebSockets.ClientWebSocket' }
+        @{ Code = '[System.Net.Http.SocketsHttpHandler]::new()';            Api = 'System.Net.Http.SocketsHttpHandler' }
+        @{ Code = 'Send-MailMessage -To a@example.test -SmtpServer smtp';   Api = 'Send-MailMessage' }
+        @{ Code = 'curl.exe -s https://example.test';                       Api = 'curl.exe' }
+        @{ Code = '& C:\Windows\System32\curl.exe https://example.test';    Api = 'curl.exe' }
+        @{ Code = 'ping -n 1 1.1.1.1';                                      Api = 'ping.exe' }
+        @{ Code = 'nslookup.exe example.test';                              Api = 'nslookup.exe' }
+        @{ Code = 'bitsadmin /transfer j http://x C:\y';                    Api = 'bitsadmin.exe' }
+        @{ Code = 'tracert example.test';                                   Api = 'tracert.exe' }
+        @{ Code = 'Get-CimInstance Win32_OperatingSystem -ComputerName srv'; Api = 'Remote -ComputerName' }
+        @{ Code = 'Get-WmiObject Win32_Bios -ComputerName srv';             Api = 'Remote -ComputerName' }
+        @{ Code = 'Get-WinEvent -LogName System -ComputerName srv';         Api = 'Remote -ComputerName' }
     ) {
         $hits = @(Find-NetworkUsageInText -Text $Code)
         $hits.Api | Should -Contain $Api
@@ -235,6 +300,9 @@ Describe 'Network-API detector (self-test)' {
         @{ Code = '[System.Net.IPAddress]::Parse(''10.0.0.1'')' }
         @{ Code = '[System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()' }
         @{ Code = 'Get-NetIPConfiguration; Get-DnsClientServerAddress' }
+        @{ Code = 'Get-CimInstance -ClassName Win32_OperatingSystem' }
+        @{ Code = 'Get-WinEvent -LogName System -MaxEvents 5' }
+        @{ Code = '& $ping $gateway' }
     ) {
         @(Find-NetworkUsageInText -Text $Code).Count | Should -Be 0
     }
@@ -246,10 +314,7 @@ Describe 'Product code uses no network API outside the allowlist' {
     }
 
     It 'has no unapproved network-capable usage' {
-        $violations = @($script:ProductHits | Where-Object {
-                $hit = $_
-                -not ($script:NetworkAllowlist | Where-Object { $hit.File -eq $_.File -and $hit.Api -like $_.Api })
-            })
+        $violations = @(Get-NetworkViolation -Hit $script:ProductHits)
         $report = ($violations | ForEach-Object { '{0}:{1}  {2}  ->  {3}' -f $_.File, $_.Line, $_.Api, $_.Text }) -join [Environment]::NewLine
         $because = "these need an allowlist entry in Tests/NoNetwork.Tests.ps1, a NetworkAccess declaration, the NetworkAccess label, and owner approval:$([Environment]::NewLine)$report"
         $violations.Count | Should -Be 0 -Because $because
@@ -265,6 +330,33 @@ Describe 'Product code uses no network API outside the allowlist' {
 
     It 'gives every allowlist entry a reason' {
         foreach ($e in $script:NetworkAllowlist) { $e.Reason | Should -Not -BeNullOrEmpty }
+    }
+
+    It 'flags an unapproved call injected into a copy of an allowlisted product file (mutation check)' {
+        # Network.psm1 is allowlisted for Ping and Dns only: a web request added to it must
+        # still be a violation, and the untouched copy must not be.
+        $source = Join-Path $script:RepoRoot 'src/Modules/Network.psm1'
+        $copy = Join-Path $TestDrive 'Network.mutated.psm1'
+        $text = [System.IO.File]::ReadAllText($source)
+        [System.IO.File]::WriteAllText($copy, $text + "`nfunction Get-Leak { Invoke-WebRequest -Uri 'https://example.test' -UseBasicParsing }`n")
+
+        $asProduct = { param($Path) @(Find-NetworkUsageInFile -Path $Path | ForEach-Object {
+                    [pscustomobject]@{ File = 'src/Modules/Network.psm1'; Api = $_.Api; Line = $_.Line; Text = $_.Text } }) }
+        @(Get-NetworkViolation -Hit (& $asProduct $source)).Count | Should -Be 0
+        $violations = @(Get-NetworkViolation -Hit (& $asProduct $copy))
+        $violations.Count | Should -Be 1
+        $violations[0].Api | Should -Be 'Invoke-WebRequest'
+    }
+}
+
+Describe 'Launchers start no network tools' {
+    It '<Name> calls no download or network client' -ForEach @(
+        Get-ChildItem -LiteralPath (Split-Path $PSScriptRoot -Parent) -Filter '*.cmd' -File | ForEach-Object { @{ Name = $_.Name; Path = $_.FullName } }
+    ) {
+        # Batch files are outside the PowerShell AST check; scan their non-comment lines.
+        $code = @(Get-Content -LiteralPath $Path | Where-Object { $_ -notmatch '^\s*(@?rem\b|::)' })
+        $hits = @($code | Where-Object { $_ -match '(?i)\b(curl|wget|bitsadmin|certutil|ftp|tftp|nslookup|ping|tracert|Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|DownloadString|DownloadFile)\b' })
+        $hits | Should -BeNullOrEmpty -Because "$Name must not reach the network"
     }
 }
 
