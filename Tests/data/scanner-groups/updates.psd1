@@ -4,6 +4,7 @@
 @{
     Scanners = @{
         'System Health'  = @{ NetworkAccess = 'None' }
+        'Update History' = @{ NetworkAccess = 'None' }
         'Update Rings'   = @{ NetworkAccess = 'None' }
         'Windows Health' = @{ NetworkAccess = 'None' }
         'Windows Update' = @{ NetworkAccess = 'None' }

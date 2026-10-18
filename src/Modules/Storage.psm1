@@ -63,7 +63,7 @@ function Invoke-OmniModuleScan {
                 Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Disk health: $($d.HealthStatus) - $($d.FriendlyName)" -Severity $sev `
                     -Component "Storage/Disk$($d.DeviceId)" -Detail "Physical disk reports HealthStatus '$($d.HealthStatus)', OperationalStatus '$($d.OperationalStatus -join '/')'." `
                     -LikelyCause 'The drive is reporting a SMART/health problem.' -Confidence 80 `
-                    -Recommendation 'Back up data immediately and plan to replace the drive.')
+                    -Recommendation 'Back up data immediately and plan to replace the drive.' -Id "storage-disk-health-$($d.DeviceId)")
             }
 
             # Reliability counters (may require admin).
@@ -76,7 +76,7 @@ function Invoke-OmniModuleScan {
                             Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "High drive temperature ($($rc.Temperature) C)" -Severity 'Warning' `
                                 -Component "Storage/Disk$($d.DeviceId)" -Detail "Drive temperature is $($rc.Temperature) C." `
                                 -LikelyCause 'Inadequate cooling or sustained heavy I/O.' -Confidence 60 `
-                                -Recommendation 'Improve airflow/cooling; check for runaway disk activity.')
+                                -Recommendation 'Improve airflow/cooling; check for runaway disk activity.' -Id "storage-disk-temperature-$($d.DeviceId)")
                         }
                     }
                     if ($null -ne $rc.Wear -and $rc.Wear -gt 0) {
@@ -86,7 +86,7 @@ function Invoke-OmniModuleScan {
                             Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "SSD wear at $($rc.Wear)%" -Severity $wearSev `
                                 -Component "Storage/Disk$($d.DeviceId)" -Detail "The SSD has consumed $($rc.Wear)% of its rated write endurance." `
                                 -LikelyCause 'The drive is approaching the end of its write life.' -Confidence 75 `
-                                -Recommendation 'Plan replacement; ensure backups are current.')
+                                -Recommendation 'Plan replacement; ensure backups are current.' -Id "storage-ssd-wear-$($d.DeviceId)")
                         }
                     }
                 }
@@ -105,7 +105,7 @@ function Invoke-OmniModuleScan {
                 Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Disk $($disk.Number) health: $($disk.HealthStatus)" -Severity 'Warning' `
                     -Component "Storage/Disk$($disk.Number)" -Detail "Operational status: $($disk.OperationalStatus)." `
                     -LikelyCause 'The disk subsystem reports a non-healthy state.' -Confidence 60 `
-                    -Recommendation 'Investigate the disk; check cabling and SMART data.')
+                    -Recommendation 'Investigate the disk; check cabling and SMART data.' -Id "storage-disk-operational-$($disk.Number)")
             }
         }
     } catch { $log.Debug("Get-Disk failed: $($_.Exception.Message)", 'Storage') }
@@ -123,20 +123,20 @@ function Invoke-OmniModuleScan {
                 Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Volume $($v.DriveLetter): health is $($v.HealthStatus)" -Severity 'Error' `
                     -Component "Storage/Volume$($v.DriveLetter)" -Detail "Volume health status is '$($v.HealthStatus)'." `
                     -LikelyCause 'File-system or underlying disk problem.' -Confidence 70 `
-                    -Recommendation 'Run chkdsk on the volume after backing up.')
+                    -Recommendation 'Run chkdsk on the volume after backing up.' -Id ("storage-volume-health-{0}" -f "$($v.DriveLetter)".ToLowerInvariant()))
             }
 
             if ($freePct -le $critPct) {
                 Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Critically low disk space on $($v.DriveLetter): ($freePct% free)" -Severity 'Critical' `
                     -Component "Storage/Volume$($v.DriveLetter)" -Detail "$freeGb GB free of $sizeGb GB." `
                     -LikelyCause 'The volume is nearly full.' -Confidence 90 `
-                    -Recommendation 'Free space urgently (temp files, old profiles, Disk Cleanup); low space can block updates and cause failures.')
+                    -Recommendation 'Free space urgently (temp files, old profiles, Disk Cleanup); low space can block updates and cause failures.' -Id ("storage-volume-low-space-{0}" -f "$($v.DriveLetter)".ToLowerInvariant()))
             }
             elseif ($freePct -le $warnPct) {
                 Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Low disk space on $($v.DriveLetter): ($freePct% free)" -Severity 'Warning' `
                     -Component "Storage/Volume$($v.DriveLetter)" -Detail "$freeGb GB free of $sizeGb GB." `
                     -LikelyCause 'The volume is getting full.' -Confidence 80 `
-                    -Recommendation 'Clean up unused files; aim to keep at least 15% free.')
+                    -Recommendation 'Clean up unused files; aim to keep at least 15% free.' -Id ("storage-volume-low-space-{0}" -f "$($v.DriveLetter)".ToLowerInvariant()))
             }
         }
     } catch {
@@ -152,7 +152,7 @@ function Invoke-OmniModuleScan {
             Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "High disk queue length ($q)" -Severity 'Warning' `
                 -Component 'Storage/Performance' -Detail "Current disk queue length is $q (sustained values > 2 indicate a bottleneck)." `
                 -LikelyCause 'Disk is a performance bottleneck under the current load.' -Confidence 50 `
-                -Recommendation 'Identify heavy I/O processes; consider an SSD upgrade if on HDD.')
+                -Recommendation 'Identify heavy I/O processes; consider an SSD upgrade if on HDD.' -Id 'storage-disk-queue-length')
         }
     } catch { $log.Debug("Disk performance counter unavailable: $($_.Exception.Message)", 'Storage') }
 
