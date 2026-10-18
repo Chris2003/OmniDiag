@@ -3,9 +3,18 @@
     OmniDiag diagnostic module: System Information.
 
 .DESCRIPTION
-    Reference implementation of the OmniDiag plugin contract. Collects core device
-    inventory (hardware, firmware, OS) via CIM/WMI and emits both metrics (for the
-    dashboard) and interpreted findings (TPM / Secure Boot / low-memory posture).
+    Reference implementation of the OmniDiag plugin contract and the system group's
+    inventory scanner: what this machine is (identity, hardware, firmware, board, CPU,
+    graphics, installed memory, operating system name). It reads the shared inventory
+    from Get-OmniSystemInventory (src/Core/SystemInventory.psm1), which the GUI's
+    System Information panel also uses, and emits it as metrics.
+
+    Health checks on the same data (operating system support status, uptime, TPM,
+    Secure Boot) belong to the System scanner (System.psm1), so no fact is reported
+    twice. The only finding here is the installed-memory check, which is part of the
+    hardware inventory.
+
+    Read-only; local CIM and registry only; no network.
 
     Contract:
         Get-OmniModuleManifest -> module metadata
@@ -18,6 +27,9 @@ Set-StrictMode -Version Latest
 # Pester) as well as when loaded by the OmniDiag root module.
 if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
     Import-Module (Join-Path $PSScriptRoot '..\Core\Models.psm1') -Global -Force -DisableNameChecking
+}
+if (-not (Get-Command -Name 'Get-OmniSystemInventory' -ErrorAction SilentlyContinue)) {
+    Import-Module (Join-Path $PSScriptRoot '..\Core\SystemInventory.psm1') -Global -Force -DisableNameChecking
 }
 
 function Get-OmniModuleManifest {
@@ -36,6 +48,22 @@ function Get-OmniModuleManifest {
     }
 }
 
+function Get-OmniSysInfoInstalledAppName {
+    <#
+    .SYNOPSIS
+        Internal: unique DisplayName values from the machine-wide uninstall keys.
+    #>
+    [OutputType([string[]])]
+    param()
+    $paths = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    return [string[]]@(Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue |
+        Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName } |
+        Select-Object -ExpandProperty DisplayName -Unique)
+}
+
 function Invoke-OmniModuleScan {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -48,19 +76,11 @@ function Invoke-OmniModuleScan {
         -RequiresAdmin $false -HadAdmin $Context.IsAdmin
     $log = $Context.Logger
 
-    # Helper: run a CIM query, log + swallow failures, return $null on error.
-    $cim = {
-        param([string] $Class, [string] $Namespace = 'root/cimv2')
-        try {
-            return Get-CimInstance -ClassName $Class -Namespace $Namespace -ErrorAction Stop
-        } catch {
-            $log.Warn("CIM query failed for ${Class}: $($_.Exception.Message)", 'System Information')
-            return $null
-        }
-    }
+    $inv = Get-OmniSystemInventory -Section ComputerSystem, Bios, BaseBoard, Processor, VideoController, OperatingSystem
+    foreach ($e in @($inv.Errors)) { if ($log) { $log.Warn("CIM query failed: $e", 'System Information') } }
 
     # --- Computer system / identity ---------------------------------------
-    $cs = & $cim 'Win32_ComputerSystem'
+    $cs = $inv.ComputerSystem
     if ($cs) {
         Set-OmniResultMetric -Result $result -Name 'Manufacturer' -Value $cs.Manufacturer
         Set-OmniResultMetric -Result $result -Name 'Model'        -Value $cs.Model
@@ -68,131 +88,82 @@ function Invoke-OmniModuleScan {
         Set-OmniResultMetric -Result $result -Name 'CurrentUser'  -Value $cs.UserName
         Set-OmniResultMetric -Result $result -Name 'Domain'       -Value $cs.Domain
 
-        $ramGb = [math]::Round(($cs.TotalPhysicalMemory / 1GB), 1)
-        Set-OmniResultMetric -Result $result -Name 'TotalRAMGB' -Value $ramGb
-        if ($ramGb -gt 0 -and $ramGb -lt 8) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
-                -Title "Low installed memory ($ramGb GB)" -Severity 'Warning' -Component 'System/Memory' `
-                -Detail "The device has $ramGb GB of RAM." `
-                -LikelyCause 'Below the 8 GB practical minimum for a modern business workload.' `
-                -Confidence 70 `
-                -Recommendation 'Consider a memory upgrade if the user reports slowness with multiple apps open.')
+        if ($null -ne $cs.TotalPhysicalMemory) {
+            $ramGb = [math]::Round(([double]$cs.TotalPhysicalMemory / 1GB), 1)
+            Set-OmniResultMetric -Result $result -Name 'TotalRAMGB' -Value $ramGb
+            if ($ramGb -gt 0 -and $ramGb -lt 8) {
+                Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'system.system-information.memory-low' `
+                    -Title "Low installed memory ($ramGb GB)" -Severity 'Warning' -Component 'System/Memory' `
+                    -Detail "The device has $ramGb GB of RAM." `
+                    -LikelyCause 'Below the 8 GB practical minimum for a modern business workload.' `
+                    -Confidence 70 `
+                    -Recommendation 'Consider a memory upgrade if the user reports slowness with multiple apps open.')
+            }
         }
     } else {
         Set-OmniResultMetric -Result $result -Name 'Hostname' -Value $Context.Host.ComputerName
     }
 
     # --- BIOS / serial ----------------------------------------------------
-    $bios = & $cim 'Win32_BIOS'
-    if ($bios) {
-        Set-OmniResultMetric -Result $result -Name 'SerialNumber'   -Value $bios.SerialNumber
-        Set-OmniResultMetric -Result $result -Name 'BIOSVersion'    -Value ($bios.SMBIOSBIOSVersion)
-        Set-OmniResultMetric -Result $result -Name 'BIOSReleaseDate' -Value $bios.ReleaseDate
+    if ($inv.Bios) {
+        Set-OmniResultMetric -Result $result -Name 'SerialNumber'    -Value $inv.Bios.SerialNumber
+        Set-OmniResultMetric -Result $result -Name 'BIOSVersion'     -Value $inv.Bios.SMBIOSBIOSVersion
+        Set-OmniResultMetric -Result $result -Name 'BIOSReleaseDate' -Value $inv.Bios.ReleaseDate
     }
 
     # --- Motherboard ------------------------------------------------------
-    $board = & $cim 'Win32_BaseBoard'
-    if ($board) {
-        Set-OmniResultMetric -Result $result -Name 'Motherboard' -Value ("{0} {1}" -f $board.Manufacturer, $board.Product)
+    if ($inv.BaseBoard) {
+        Set-OmniResultMetric -Result $result -Name 'Motherboard' -Value ("{0} {1}" -f $inv.BaseBoard.Manufacturer, $inv.BaseBoard.Product).Trim()
     }
 
     # --- CPU --------------------------------------------------------------
-    $cpu = & $cim 'Win32_Processor' | Select-Object -First 1
+    $cpu = $inv.Processor
     if ($cpu) {
-        Set-OmniResultMetric -Result $result -Name 'CPU'          -Value $cpu.Name.Trim()
-        Set-OmniResultMetric -Result $result -Name 'CPUCores'     -Value $cpu.NumberOfCores
-        Set-OmniResultMetric -Result $result -Name 'CPUThreads'   -Value $cpu.NumberOfLogicalProcessors
+        Set-OmniResultMetric -Result $result -Name 'CPU'            -Value ([string]$cpu.Name).Trim()
+        Set-OmniResultMetric -Result $result -Name 'CPUCores'       -Value $cpu.NumberOfCores
+        Set-OmniResultMetric -Result $result -Name 'CPUThreads'     -Value $cpu.NumberOfLogicalProcessors
         Set-OmniResultMetric -Result $result -Name 'CPUMaxClockMHz' -Value $cpu.MaxClockSpeed
+        if ($null -ne $cpu.VirtualizationFirmwareEnabled) {
+            Set-OmniResultMetric -Result $result -Name 'VirtualizationFirmwareEnabled' -Value ([bool]$cpu.VirtualizationFirmwareEnabled)
+        }
     }
 
     # --- GPU --------------------------------------------------------------
-    $gpu = & $cim 'Win32_VideoController'
-    if ($gpu) {
-        Set-OmniResultMetric -Result $result -Name 'GPU' -Value (($gpu | ForEach-Object { $_.Name }) -join '; ')
+    $gpus = @($inv.VideoController | Where-Object { $_ -and $_.Name })
+    if ($gpus.Count -gt 0) {
+        Set-OmniResultMetric -Result $result -Name 'GPU' -Value (($gpus | ForEach-Object { $_.Name }) -join '; ')
     }
 
-    # --- OS ---------------------------------------------------------------
-    $os = & $cim 'Win32_OperatingSystem'
-    if ($os) {
-        Set-OmniResultMetric -Result $result -Name 'OS'            -Value $os.Caption
-        Set-OmniResultMetric -Result $result -Name 'OSVersion'     -Value $os.Version
-        Set-OmniResultMetric -Result $result -Name 'BuildNumber'   -Value $os.BuildNumber
-        Set-OmniResultMetric -Result $result -Name 'Architecture'  -Value $os.OSArchitecture
-        try {
-            $uptime = (Get-Date) - $os.LastBootUpTime
-            Set-OmniResultMetric -Result $result -Name 'UptimeDays' -Value ([math]::Round($uptime.TotalDays, 1))
-            if ($uptime.TotalDays -gt 14) {
-                Add-OmniFinding -Result $result -Finding (New-OmniFinding `
-                    -Title ("System uptime is {0:N0} days" -f $uptime.TotalDays) -Severity 'Warning' `
-                    -Component 'System/Uptime' `
-                    -Detail 'The system has not been restarted in over two weeks.' `
-                    -LikelyCause 'Long uptime can defer pending updates and accumulate memory pressure.' `
-                    -Confidence 60 `
-                    -Recommendation 'Restart the device to apply pending updates and clear transient issues.')
-            }
-        } catch { }
-    }
-
-    # --- TPM --------------------------------------------------------------
-    try {
-        $tpm = Get-CimInstance -Namespace 'root/cimv2/Security/MicrosoftTpm' -ClassName 'Win32_Tpm' -ErrorAction Stop
-        if ($tpm) {
-            Set-OmniResultMetric -Result $result -Name 'TPMPresent'    -Value $true
-            Set-OmniResultMetric -Result $result -Name 'TPMVersion'    -Value ($tpm.SpecVersion)
-            Set-OmniResultMetric -Result $result -Name 'TPMEnabled'    -Value ([bool]$tpm.IsEnabled_InitialValue)
+    # --- OS identity (support status, UBR, and uptime: System scanner) ---------
+    if ($inv.OperatingSystem) {
+        Set-OmniResultMetric -Result $result -Name 'OS'           -Value $inv.OperatingSystem.Caption
+        Set-OmniResultMetric -Result $result -Name 'OSVersion'    -Value $inv.OperatingSystem.Version
+        Set-OmniResultMetric -Result $result -Name 'BuildNumber'  -Value $inv.OperatingSystem.BuildNumber
+        Set-OmniResultMetric -Result $result -Name 'Architecture' -Value $inv.OperatingSystem.OSArchitecture
+        if ($inv.OperatingSystem.InstallDate) {
+            Set-OmniResultMetric -Result $result -Name 'OSInstallDate' -Value $inv.OperatingSystem.InstallDate
         }
-    } catch {
-        Set-OmniResultMetric -Result $result -Name 'TPMPresent' -Value $false
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
-            -Title 'No TPM detected' -Severity 'Warning' -Component 'System/Security' `
-            -Detail 'A Trusted Platform Module was not found via WMI.' `
-            -LikelyCause 'TPM disabled in firmware, not present, or query blocked.' `
-            -Confidence 50 `
-            -Recommendation 'A TPM 2.0 is required for Windows 11 and BitLocker. Check firmware (UEFI) settings.')
-    }
-
-    # --- Secure Boot (best-effort; needs UEFI, sometimes elevation) -------
-    try {
-        $sb = Confirm-SecureBootUEFI -ErrorAction Stop
-        Set-OmniResultMetric -Result $result -Name 'SecureBoot' -Value ([bool]$sb)
-        if (-not $sb) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
-                -Title 'Secure Boot is disabled' -Severity 'Warning' -Component 'System/Security' `
-                -Detail 'Secure Boot is supported but currently disabled.' `
-                -LikelyCause 'Disabled in UEFI firmware.' -Confidence 80 `
-                -Recommendation 'Enable Secure Boot in UEFI for boot integrity (required for Windows 11).')
-        }
-    } catch {
-        Set-OmniResultMetric -Result $result -Name 'SecureBoot' -Value 'Unknown'
-        $log.Debug("Secure Boot state unavailable: $($_.Exception.Message)", 'System Information')
-    }
-
-    # --- Virtualization firmware ------------------------------------------
-    if ($cpu) {
-        try {
-            Set-OmniResultMetric -Result $result -Name 'VirtualizationFirmwareEnabled' -Value ([bool]$cpu.VirtualizationFirmwareEnabled)
-        } catch { }
     }
 
     # --- Installed software count -----------------------------------------
-    try {
-        $uninstallPaths = @(
-            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
-            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
-        )
-        $apps = Get-ItemProperty -Path $uninstallPaths -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName } | Select-Object -ExpandProperty DisplayName -Unique
-        Set-OmniResultMetric -Result $result -Name 'InstalledSoftwareCount' -Value (@($apps).Count)
-    } catch {
-        $log.Debug("Installed-software enumeration failed: $($_.Exception.Message)", 'System Information')
+    if (-not ($Context.CancellationToken -and $Context.CancellationToken.IsCancellationRequested)) {
+        try {
+            Set-OmniResultMetric -Result $result -Name 'InstalledSoftwareCount' -Value (@(Get-OmniSysInfoInstalledAppName).Count)
+        } catch {
+            if ($log) { $log.Debug("Installed-software enumeration failed: $($_.Exception.Message)", 'System Information') }
+        }
     }
 
-    # Always record at least one positive finding so the module reads as 'Healthy'
-    # when nothing is wrong (keeps the dashboard honest).
-    if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+    if (-not $cs -and -not $inv.Bios -and -not $cpu -and -not $inv.OperatingSystem) {
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'system.system-information.inventory-unavailable' `
+            -Title 'System inventory is not available' -Severity 'Information' -Component 'System' `
+            -Detail 'The hardware and operating system inventory (CIM/WMI) could not be read on this host.' `
+            -LikelyCause 'Not a Windows host, or the WMI service or repository is unavailable.' `
+            -Recommendation 'On Windows, confirm the Windows Management Instrumentation service is running, then re-run the scan.')
+    } elseif (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'system.system-information.inventory-collected' `
             -Title 'System inventory collected' -Severity 'Pass' -Component 'System' `
-            -Detail 'Hardware, firmware, and OS details were collected without issues.')
+            -Detail 'Hardware, firmware, and operating system inventory was collected without issues.')
     }
 
     return (Complete-OmniResult -Result $result)

@@ -28,6 +28,7 @@
         'Core/Engine.psm1',
         'Core/ExitCodes.psm1',
         'Core/Groups.psm1',
+        'Core/SystemInventory.psm1',
         'Repair/RepairModels.psm1',
         'Repair/RepairRegistry.psm1',
         'Repair/RepairEngine.psm1',
@@ -68,6 +69,7 @@
         'Test-OmniIsAdministrator', 'New-OmniContext', 'Get-OmniModule',
         'Invoke-OmniSession', 'Get-OmniDefaultParallelism', 'Get-OmniHealthScore',
         'Get-OmniHostArchitecture', 'Get-OmniHostPlatform',
+        'Get-OmniSystemInventory',
         # Module contract v1 (ids, groups, network access) - shared by scanners and repairs
         'Get-OmniGroupNames', 'Get-OmniGroup', 'Get-OmniNetworkAccessNames', 'ConvertTo-OmniKebabCase',
         'Resolve-OmniModuleIdentity', 'Resolve-OmniPluginContract',

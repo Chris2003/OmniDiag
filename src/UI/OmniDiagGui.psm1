@@ -262,23 +262,26 @@ function Get-OmniSystemInfo {
 
     .DESCRIPTION
         Returns an ordered dictionary of section name -> ordered dictionary of label/value,
-        for the Dashboard's System Information panel. Every query fails soft (missing values
-        are simply omitted), so this never throws.
+        for the Dashboard's System Information panel. The data comes from the shared
+        Get-OmniSystemInventory (src/Core/SystemInventory.psm1), the same inventory the
+        System Information scanner reports. It fails soft (missing values are simply
+        omitted), so this never throws.
     #>
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
     param()
 
-    $q = {
-        param([string] $Class, [string] $Namespace = 'root/cimv2')
-        try { Get-CimInstance -ClassName $Class -Namespace $Namespace -ErrorAction Stop } catch { $null }
-    }
     $add = { param($Bag, $Key, $Value) if ($null -ne $Value -and "$Value".Trim()) { $Bag[$Key] = "$Value".Trim() } }
 
-    $os   = & $q 'Win32_OperatingSystem'
-    $cs   = & $q 'Win32_ComputerSystem'
-    $bios = & $q 'Win32_BIOS'
-    $cpu  = @(& $q 'Win32_Processor') | Select-Object -First 1
-    $page = @(& $q 'Win32_PageFileUsage') | Select-Object -First 1
+    $inv = $null
+    try { $inv = Get-OmniSystemInventory } catch { $inv = $null }
+    $os   = $null; $cs = $null; $bios = $null; $cpu = $null; $page = $null
+    if ($inv) {
+        $os   = $inv.OperatingSystem
+        $cs   = $inv.ComputerSystem
+        $bios = $inv.Bios
+        $cpu  = $inv.Processor
+        $page = $inv.PageFile
+    }
 
     $info = [ordered]@{}
 
@@ -326,7 +329,7 @@ function Get-OmniSystemInfo {
     }
 
     # --- Display (one section per GPU) -----------------------------------
-    $gpus = @(& $q 'Win32_VideoController' | Where-Object { $_.Name })
+    $gpus = @(if ($inv) { $inv.VideoController | Where-Object { $_.Name } })
     for ($i = 0; $i -lt $gpus.Count; $i++) {
         $g = $gpus[$i]
         $disp = [ordered]@{}
@@ -345,7 +348,7 @@ function Get-OmniSystemInfo {
     }
 
     # --- Sound -----------------------------------------------------------
-    $snd = @(& $q 'Win32_SoundDevice' | Where-Object { $_.Name })
+    $snd = @(if ($inv) { $inv.SoundDevice | Where-Object { $_.Name } })
     if ($snd.Count -gt 0) {
         $sound = [ordered]@{}
         $n = 1
