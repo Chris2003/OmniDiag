@@ -67,7 +67,7 @@ Computer : $($Session.Host.ComputerName)
 Contents:
   report.html        Human-readable report (open in a browser)
   report.pdf         Print-ready PDF report$(if ($pdfIncluded) { '' } else { ' (omitted: generation failed)' })
-  data.json          Full structured session data
+  data.json          Structured report data (OmniDiag report schema v1)
   findings.csv       All findings across modules
   events.csv         Grouped event-log table (if event data was collected)
   omnidiag-log.jsonl Raw structured run log (if available)

@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'WiFi Networks'
+        Id            = 'network.wifi-networks'
+        Group         = 'network'
+        NetworkAccess = 'None'
         Category      = 'Network'
         Description   = 'Reports current wireless connection quality and nearby networks.'
         RequiresAdmin = $false

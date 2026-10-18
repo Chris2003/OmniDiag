@@ -63,12 +63,31 @@ BeforeAll {
 }
 
 Describe 'JSON export' {
-    It 'writes valid JSON round-tripping the score' {
+    It 'writes a report schema v1 document round-tripping the score' {
         $path = Join-Path $TestDrive 'r.json'
         Export-OmniJsonReport -Session $script:Session -Path $path | Should -Be $path
         Test-Path $path | Should -BeTrue
         $obj = Get-Content $path -Raw | ConvertFrom-Json
-        $obj.Summary.Score | Should -Be $script:Session.Summary.Score
+        $obj.schemaVersion | Should -Be '1.0.0'
+        $obj.summary.healthScore | Should -Be $script:Session.Summary.Score
+        @($obj.modules).Count | Should -Be 3
+    }
+
+    It 'reloads with Import-OmniSession and keeps the native severities' {
+        $path = Join-Path $TestDrive 'r2.json'
+        Export-OmniJsonReport -Session $script:Session -Path $path | Out-Null
+        $loaded = Import-OmniSession -Path $path
+        $loaded.Summary.Score | Should -Be $script:Session.Summary.Score
+        @($loaded.Results | ForEach-Object { $_.Findings } | Where-Object Severity -eq 'Error').Count | Should -Be 1
+    }
+}
+
+Describe 'Markdown via Export-OmniReport' {
+    It 'writes a .md file when Md is requested' {
+        $set = Export-OmniReport -Session $script:Session -OutputDirectory (Join-Path $TestDrive 'md') -Format Md -BaseName 'unit'
+        $md = $set.Files | Where-Object { $_ -like '*.md' }
+        $md | Should -Exist
+        Get-Content -LiteralPath $md -Raw | Should -Match '# OmniDiag Report'
     }
 }
 

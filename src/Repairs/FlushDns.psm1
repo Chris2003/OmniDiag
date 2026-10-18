@@ -12,6 +12,8 @@ if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Flush DNS Cache'
+        Id            = 'repair.flush-dns-cache'
+        NetworkAccess = 'None'
         Category      = 'Network'
         Description   = 'Clears the DNS resolver cache to resolve stale or poisoned name lookups.'
         RequiresAdmin = $false

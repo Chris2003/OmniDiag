@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'USB Devices'
+        Id            = 'extras.usb-devices'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'Hardware'
         Description   = 'Enumerates connected USB devices and flags device errors.'
         RequiresAdmin = $false

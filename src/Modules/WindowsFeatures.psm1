@@ -22,6 +22,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Windows Features'
+        Id            = 'extras.windows-features'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Enabled Windows optional feature inventory.'
         RequiresAdmin = $false

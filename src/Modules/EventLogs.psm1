@@ -43,6 +43,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Event Logs'
+        Id            = 'events.event-logs'
+        Group         = 'events'
+        NetworkAccess = 'None'
         Category      = 'Event Logs'
         Description   = 'Collects, groups, and interprets Windows event logs across key channels.'
         RequiresAdmin = $false   # per-channel; Security/Defender skipped when not elevated

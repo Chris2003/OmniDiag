@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Battery'
+        Id            = 'extras.battery'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'Hardware'
         Description   = 'Battery presence, charge level, AC status, and wear.'
         RequiresAdmin = $false

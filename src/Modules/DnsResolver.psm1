@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'DNS Resolver'
+        Id            = 'network.dns-resolver'
+        Group         = 'network'
+        NetworkAccess = 'Internet'
         Category      = 'Network'
         Description   = 'Configured DNS servers per adapter and resolution test.'
         RequiresAdmin = $false

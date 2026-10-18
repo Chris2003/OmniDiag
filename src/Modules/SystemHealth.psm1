@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'System Health'
+        Id            = 'updates.system-health'
+        Group         = 'updates'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Pending-reboot detection and servicing log freshness.'
         RequiresAdmin = $false

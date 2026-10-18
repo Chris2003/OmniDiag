@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Installed Software'
+        Id            = 'extras.installed-software'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Inventory of installed applications from the uninstall hives.'
         RequiresAdmin = $false

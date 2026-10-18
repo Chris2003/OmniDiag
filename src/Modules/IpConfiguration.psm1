@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'IP Configuration'
+        Id            = 'network.ip-configuration'
+        Group         = 'network'
+        NetworkAccess = 'None'
         Category      = 'Network'
         Description   = 'Per-adapter IP addresses, gateway, and DHCP state.'
         RequiresAdmin = $false

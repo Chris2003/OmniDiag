@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Startup'
+        Id            = 'startup.startup'
+        Group         = 'startup'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Autostart entries from registry Run keys and startup commands.'
         RequiresAdmin = $false

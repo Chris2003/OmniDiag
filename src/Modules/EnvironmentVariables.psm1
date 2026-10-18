@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Environment Variables'
+        Id            = 'extras.environment-variables'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Environment variable and PATH integrity inspection.'
         RequiresAdmin = $false

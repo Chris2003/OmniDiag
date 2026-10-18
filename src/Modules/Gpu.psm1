@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'GPU'
+        Id            = 'extras.gpu'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'Hardware'
         Description   = 'Graphics adapter inventory, driver age, and resolution.'
         RequiresAdmin = $false

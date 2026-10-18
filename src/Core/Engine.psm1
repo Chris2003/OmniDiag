@@ -78,6 +78,20 @@ function Invoke-OmniSession {
 
     $log.Info("Starting diagnostic session: $total module(s), range '$($Context.TimeRange.Label)', admin=$($Context.IsAdmin)", 'Engine')
 
+    # Contract v1: stamp each result with the module's stable Id and Group (derived
+    # for registrations that predate the contract) and, for skips, a machine-readable
+    # reason. Additive NoteProperties; existing consumers are unaffected.
+    $stamp = {
+        param($result, $reg, [string] $skippedReason)
+        $regId = if ($reg.PSObject.Properties['Id']) { [string]$reg.Id } else { '' }
+        $regGroup = if ($reg.PSObject.Properties['Group']) { [string]$reg.Group } else { '' }
+        $identity = Resolve-OmniModuleIdentity -Name ([string]$reg.Name) -ModuleId $regId -Group $regGroup
+        Add-Member -InputObject $result -MemberType NoteProperty -Name ModuleId -Value $identity.Id -Force
+        Add-Member -InputObject $result -MemberType NoteProperty -Name Group -Value $identity.Group -Force
+        $reason = if ($skippedReason) { $skippedReason } else { $null }
+        Add-Member -InputObject $result -MemberType NoteProperty -Name SkippedReason -Value $reason -Force
+    }
+
     $report = {
         param($idx, $name, $phase, $result)
         if ($ProgressCallback) {
@@ -113,6 +127,7 @@ function Invoke-OmniSession {
                 -Detail "This check needs elevated rights to read its data source." `
                 -Recommendation 'Re-run OmniDiag as Administrator to include this module.')
             Complete-OmniResult -Result $skip -Status 'Skipped' | Out-Null
+            & $stamp $skip $reg 'RequiresElevation'
             $results.Add($skip)
             $log.Warn("Skipped '$($reg.Name)': requires administrator.", 'Engine')
             & $report ($i + 1) $reg.Name 'Skipped' $skip
@@ -128,6 +143,7 @@ function Invoke-OmniSession {
             }
             # Defensive: ensure timing/status are finalized even if the module forgot.
             if (-not $result.EndTime) { Complete-OmniResult -Result $result | Out-Null }
+            & $stamp $result $reg $null
             $results.Add($result)
             $log.Info("Module '$($reg.Name)' completed: status=$($result.Status), findings=$($result.Findings.Count), $($result.DurationMs)ms", 'Engine')
         } catch {
@@ -139,6 +155,7 @@ function Invoke-OmniSession {
                 -LikelyCause 'The module raised an unhandled exception.' `
                 -Recommendation 'Check the OmniDiag log for the full error and stack trace.')
             Complete-OmniResult -Result $errResult -Status 'Failed' | Out-Null
+            & $stamp $errResult $reg $null
             $results.Add($errResult)
             $log.Error("Module '$($reg.Name)' threw: $($_.Exception.Message)", 'Engine')
         }

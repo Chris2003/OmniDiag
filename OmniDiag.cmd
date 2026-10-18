@@ -8,18 +8,42 @@ rem  only* - no machine-wide policy change, no install, admin optional. This is
 rem  what makes the extracted-from-zip copy "just run" on a locked-down box
 rem  where script execution is otherwise blocked (Mark-of-the-Web / RemoteSigned).
 rem
-rem  Any arguments are passed straight through, e.g.:
-rem      OmniDiag.cmd -Range Last24Hours
-rem      OmniDiag.cmd -Report -ReportFormat Html -AcceptPrivacyNotice
-rem      OmniDiag.cmd -Repair
+rem  It is also the 'omnidiag' command: Windows file names are case-insensitive,
+rem  so this one file serves both spellings. The first argument picks the entry:
+rem    * a subcommand or a --long option  -> the CLI router (src\Cli\omnidiag.ps1)
+rem          omnidiag list modules --format json
+rem          omnidiag scan --group network
+rem          omnidiag report --output C:\Reports
+rem          omnidiag --help
+rem    * nothing, or a PowerShell-style -Switch -> the classic console (OmniDiag.ps1)
+rem          OmniDiag.cmd -Range Last24Hours
+rem          OmniDiag.cmd -Report -ReportFormat Html -AcceptPrivacyNotice
+rem          OmniDiag.cmd -Repair
+rem  Arguments are passed straight through, and the exit code (see docs\CLI.md)
+rem  is propagated as %ERRORLEVEL%.
 rem ============================================================================
 setlocal EnableExtensions
 set "HERE=%~dp0"
 set "SCRIPT=%HERE%OmniDiag.ps1"
+set "CLI=%HERE%src\Cli\omnidiag.ps1"
 
 if not exist "%SCRIPT%" (
     echo [OmniDiag] Cannot find OmniDiag.ps1 next to this launcher.
-    exit /b 1
+    exit /b 20
+)
+
+rem --- Entry point: CLI router for subcommands / --options, classic console otherwise.
+rem (No goto/labels: they are unreliable in batch files with LF line endings.)
+set "MODE=legacy"
+set "ARG1=%~1"
+if defined ARG1 set "MODE=cli"
+if defined ARG1 if "%ARG1:~0,1%"=="-" set "MODE=legacy"
+if defined ARG1 if "%ARG1:~0,2%"=="--" set "MODE=cli"
+set "ENTRY=%SCRIPT%"
+if "%MODE%"=="cli" set "ENTRY=%CLI%"
+if not exist "%ENTRY%" (
+    echo [OmniDiag] Cannot find %ENTRY%.
+    exit /b 20
 )
 
 rem --- Portable / zero-footprint environment (this process only) -------------
@@ -48,11 +72,12 @@ rem which ships on every Windows 10/11 host.
 set "PSEXE=powershell.exe"
 where pwsh >nul 2>nul && set "PSEXE=pwsh"
 
-"%PSEXE%" -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %*
+"%PSEXE%" -NoProfile -ExecutionPolicy Bypass -File "%ENTRY%" %*
 set "RC=%ERRORLEVEL%"
 
 rem When double-clicked (no arguments), keep the window open so the dashboard
-rem is readable. When invoked with arguments (console/automation), don't pause.
+rem is readable. With arguments (console/automation, and every CLI command) it
+rem never pauses.
 if "%~1"=="" (
     echo.
     pause

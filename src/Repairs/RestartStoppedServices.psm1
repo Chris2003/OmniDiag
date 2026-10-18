@@ -12,6 +12,8 @@ if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Restart Stopped Automatic Services'
+        Id            = 'repair.restart-stopped-automatic-services'
+        NetworkAccess = 'None'
         Category      = 'Services'
         Description   = 'Starts services set to Automatic that are currently stopped (excluding delayed-start services).'
         RequiresAdmin = $true

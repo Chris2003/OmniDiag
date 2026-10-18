@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Browser Diagnostics'
+        Id            = 'extras.browser-diagnostics'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'Applications'
         Description   = 'Detects installed browsers, profiles, and cache usage.'
         RequiresAdmin = $false

@@ -14,7 +14,7 @@ if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='Active Directory'; Category='Identity'; Description='Local domain membership, secure channel, DC discovery, and Group Policy posture.'; RequiresAdmin=$false; Order=700; Enabled=$true }
+    @{ Name='Active Directory'; Id='extras.active-directory'; Group='extras'; NetworkAccess='LocalNetwork'; Category='Identity'; Description='Local domain membership, secure channel, DC discovery, and Group Policy posture.'; RequiresAdmin=$false; Order=700; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {

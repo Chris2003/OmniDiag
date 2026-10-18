@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Security'
+        Id            = 'security.security'
+        Group         = 'security'
+        NetworkAccess = 'None'
         Category      = 'Security'
         Description   = 'Checks Defender, firewall profiles, and UAC posture.'
         RequiresAdmin = $false

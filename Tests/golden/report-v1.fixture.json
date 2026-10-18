@@ -1,0 +1,255 @@
+{
+  "schemaVersion": "1.0.0",
+  "tool": {
+    "name": "OmniDiag",
+    "version": "0.5.0"
+  },
+  "generatedAt": "2026-06-01T08:00:00.000Z",
+  "host": {
+    "computerName": "FIXTURE-PC",
+    "userName": "fixture",
+    "isAdmin": false,
+    "psVersion": "5.1.19041.1"
+  },
+  "options": {
+    "command": "scan",
+    "groups": [
+      "system",
+      "network"
+    ],
+    "range": "Last7Days"
+  },
+  "scan": {
+    "startedAt": "2026-06-01T08:00:00.000Z",
+    "finishedAt": "2026-06-01T08:00:06.000Z",
+    "durationMs": 6000,
+    "cancelled": false,
+    "timeRange": {
+      "preset": "Last7Days",
+      "label": "Last7Days",
+      "start": "2026-05-25T08:00:00.000Z",
+      "end": "2026-06-01T08:00:00.000Z"
+    },
+    "plan": null
+  },
+  "summary": {
+    "healthScore": 59,
+    "grade": "Warning",
+    "counts": {
+      "info": 2,
+      "warning": 1,
+      "critical": 3,
+      "passed": 1
+    }
+  },
+  "modules": [
+    {
+      "id": "system.system-information",
+      "name": "System Information",
+      "group": "system",
+      "category": "System",
+      "status": "Healthy",
+      "skippedReason": null,
+      "requiresElevation": false,
+      "startedAt": "2026-06-01T08:00:01.000Z",
+      "durationMs": 120,
+      "error": null,
+      "metrics": {
+        "Manufacturer": "Contoso",
+        "Model": "TestBook 9000 Caf\u00e9",
+        "MemoryGB": 15.5,
+        "InstallDate": "2026-05-31T08:00:00.000Z",
+        "Disks": [
+          {
+            "Name": "C:",
+            "FreeGB": 12
+          }
+        ]
+      },
+      "findings": [
+        {
+          "id": "system-system-inventory-collected",
+          "moduleId": "system.system-information",
+          "title": "System inventory collected",
+          "severity": "Info",
+          "severityNative": "Pass",
+          "passed": true,
+          "component": "System",
+          "evidence": {
+            "detail": "Inventory read.",
+            "data": null
+          },
+          "likelyCause": "",
+          "recommendation": "",
+          "confidence": 0
+        }
+      ]
+    },
+    {
+      "id": "network.dns-resolver",
+      "name": "DNS Resolver",
+      "group": "network",
+      "category": "Network",
+      "status": "Critical",
+      "skippedReason": null,
+      "requiresElevation": false,
+      "startedAt": "2026-06-01T08:00:02.000Z",
+      "durationMs": 340,
+      "error": null,
+      "metrics": {},
+      "findings": [
+        {
+          "id": "network-dns-failure",
+          "moduleId": "network.dns-resolver",
+          "title": "DNS resolution is failing",
+          "severity": "Critical",
+          "severityNative": "Critical",
+          "passed": false,
+          "component": "Network/DNS",
+          "evidence": {
+            "detail": "Lookups for 2 names timed out.\nSecond line | pipe",
+            "data": {
+              "Servers": [
+                "10.0.0.1",
+                "10.0.0.2"
+              ],
+              "alpha": "a",
+              "zeta": 1
+            }
+          },
+          "likelyCause": "DNS server unreachable.",
+          "recommendation": "Check the configured DNS servers.",
+          "confidence": 80
+        },
+        {
+          "id": "network-test-script-alert-1-script",
+          "moduleId": "network.dns-resolver",
+          "title": "<script>alert(1)</script>",
+          "severity": "Warning",
+          "severityNative": "Warning",
+          "passed": false,
+          "component": "Network/Test",
+          "evidence": {
+            "detail": "",
+            "data": null
+          },
+          "likelyCause": "",
+          "recommendation": "Ignore \"quoted\" \\ text.",
+          "confidence": 0
+        },
+        {
+          "id": "network-dns-resolver-cache-size",
+          "moduleId": "network.dns-resolver",
+          "title": "Resolver cache size",
+          "severity": "Info",
+          "severityNative": "Information",
+          "passed": false,
+          "component": "Network/DNS",
+          "evidence": {
+            "detail": "",
+            "data": {
+              "Entries": 42,
+              "Ratio": 0.25
+            }
+          },
+          "likelyCause": "",
+          "recommendation": "",
+          "confidence": 0
+        }
+      ]
+    },
+    {
+      "id": "storage.disk",
+      "name": "Disk",
+      "group": "storage",
+      "category": "Storage",
+      "status": "Critical",
+      "skippedReason": null,
+      "requiresElevation": false,
+      "startedAt": "2026-06-01T08:00:03.000Z",
+      "durationMs": 80,
+      "error": null,
+      "metrics": {},
+      "findings": [
+        {
+          "id": "storage-c-low",
+          "moduleId": "storage.disk",
+          "title": "Low free space on C:",
+          "severity": "Critical",
+          "severityNative": "Error",
+          "passed": false,
+          "component": "Storage/C:",
+          "evidence": {
+            "detail": "",
+            "data": null
+          },
+          "likelyCause": "",
+          "recommendation": "Free up space.",
+          "confidence": 90
+        }
+      ]
+    },
+    {
+      "id": "security.bitlocker",
+      "name": "BitLocker",
+      "group": "security",
+      "category": "Security",
+      "status": "Skipped",
+      "skippedReason": "RequiresElevation",
+      "requiresElevation": true,
+      "startedAt": "2026-06-01T08:00:04.000Z",
+      "durationMs": 0,
+      "error": null,
+      "metrics": {},
+      "findings": [
+        {
+          "id": "security-bitlocker-skipped-requires-administrator",
+          "moduleId": "security.bitlocker",
+          "title": "BitLocker skipped (requires administrator)",
+          "severity": "Info",
+          "severityNative": "Information",
+          "passed": false,
+          "component": "Security",
+          "evidence": {
+            "detail": "",
+            "data": null
+          },
+          "likelyCause": "",
+          "recommendation": "",
+          "confidence": 0
+        }
+      ]
+    },
+    {
+      "id": "extras.custom-plugin",
+      "name": "Custom Plugin",
+      "group": "extras",
+      "category": "Custom",
+      "status": "Failed",
+      "skippedReason": null,
+      "requiresElevation": false,
+      "startedAt": "2026-06-01T08:00:05.000Z",
+      "durationMs": 5,
+      "error": "intentional failure",
+      "metrics": {},
+      "findings": [
+        {
+          "id": "custom-custom-plugin-failed-to-run",
+          "moduleId": "extras.custom-plugin",
+          "title": "Custom Plugin failed to run",
+          "severity": "Critical",
+          "severityNative": "Error",
+          "passed": false,
+          "component": "Custom",
+          "evidence": {
+            "detail": "intentional failure",
+            "data": null
+          },
+          "likelyCause": "",
+          "recommendation": "",
+          "confidence": 0
+        }
+      ]
+    }
+  ]
+}

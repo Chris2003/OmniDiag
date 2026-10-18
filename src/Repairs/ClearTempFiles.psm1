@@ -15,6 +15,8 @@ if (-not (Get-Command Get-OmniDataRoot -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Clear Temporary Files'
+        Id            = 'repair.clear-temporary-files'
+        NetworkAccess = 'None'
         Category      = 'Storage'
         Description   = 'Deletes the contents of the user TEMP folder (and the Windows TEMP folder when elevated) to reclaim space.'
         RequiresAdmin = $false

@@ -25,6 +25,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Reliability'
+        Id            = 'reliability.reliability'
+        Group         = 'reliability'
+        NetworkAccess = 'None'
         Category      = 'Reliability'
         Description   = 'Application crashes/hangs and unexpected shutdowns over time.'
         RequiresAdmin = $false
