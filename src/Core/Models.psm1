@@ -326,8 +326,120 @@ function Get-OmniTimeRange {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Connectivity probes (opt-in, decision 1)
+# ---------------------------------------------------------------------------
+
+# Default probe targets; override per run with $Context.Config.ProbeTargets (hashtable).
+$script:OmniDefaultProbeTargets = [ordered]@{
+    PingGateway   = $true                 # ping the default gateway found in the local IP config
+    PublicAddress = '1.1.1.1'             # public IP pinged for internet reachability
+    DnsName       = 'www.microsoft.com'   # host name resolved by the DNS probes
+    TimeoutMs     = 2000                  # per-probe timeout
+}
+
+function Test-OmniNetworkProbeEnabled {
+    <#
+    .SYNOPSIS
+        Returns $true when the scan context opted in to connectivity probes.
+
+    .DESCRIPTION
+        Connectivity probes (pinging the gateway or a public address, resolving a public
+        name, the domain secure-channel check) contact the network, so they run only when
+        the user asks for them: --network-probes (CLI), -NetworkProbes (OmniDiag.ps1,
+        Invoke-OmniDiag, Invoke-OmniDiagScan), or the GUI option. Contexts created before
+        the NetworkProbes property existed count as "off".
+
+    .PARAMETER Context
+        The scan context handed to Invoke-OmniModuleScan.
+
+    .EXAMPLE
+        if (Test-OmniNetworkProbeEnabled -Context $Context) { $latency = Send-Probe }
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)] [AllowNull()] [object] $Context)
+    if ($null -eq $Context) { return $false }
+    $p = $Context.PSObject.Properties['NetworkProbes']
+    return [bool]($p -and $p.Value)
+}
+
+function Get-OmniProbeTarget {
+    <#
+    .SYNOPSIS
+        Returns the connectivity-probe targets for a scan: the defaults merged with
+        $Context.Config.ProbeTargets.
+
+    .DESCRIPTION
+        Keys: PingGateway (bool), PublicAddress (string), DnsName (string), TimeoutMs (int).
+        Unknown keys in Config.ProbeTargets are ignored; missing keys keep the defaults
+        (gateway, 1.1.1.1, www.microsoft.com, 2000 ms).
+
+    .PARAMETER Context
+        The scan context (may be $null: defaults only).
+
+    .EXAMPLE
+        $targets = Get-OmniProbeTarget -Context $Context
+        $targets.DnsName
+    #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param([AllowNull()] [object] $Context)
+
+    $t = [ordered]@{}
+    foreach ($k in $script:OmniDefaultProbeTargets.Keys) { $t[$k] = $script:OmniDefaultProbeTargets[$k] }
+
+    $cfg = $null
+    if ($null -ne $Context) {
+        $p = $Context.PSObject.Properties['Config']
+        if ($p -and $p.Value -is [System.Collections.IDictionary] -and $p.Value.Contains('ProbeTargets')) { $cfg = $p.Value['ProbeTargets'] }
+    }
+    if ($cfg -is [System.Collections.IDictionary]) {
+        foreach ($k in @($script:OmniDefaultProbeTargets.Keys)) {
+            if ($cfg.Contains($k) -and $null -ne $cfg[$k] -and "$($cfg[$k])" -ne '') {
+                $t[$k] = switch ($k) {
+                    'PingGateway' { [bool]$cfg[$k] }
+                    'TimeoutMs'   { [int]$cfg[$k] }
+                    default       { [string]$cfg[$k] }
+                }
+            }
+        }
+    }
+    if ($t.TimeoutMs -lt 100) { $t.TimeoutMs = 100 }
+    return [pscustomobject]$t
+}
+
+function New-OmniProbeSkippedFinding {
+    <#
+    .SYNOPSIS
+        Creates the standard Information finding a scanner adds when it did not run its
+        connectivity probe because probes are opt-in.
+
+    .PARAMETER Component
+        Finding component (e.g. 'Network/Connectivity').
+
+    .PARAMETER Probe
+        Plain-language description of the probe that was not run (e.g. 'ping the default
+        gateway and 1.1.1.1, resolve www.microsoft.com').
+
+    .EXAMPLE
+        Add-OmniFinding -Result $result -Finding (New-OmniProbeSkippedFinding -Component 'Network/DNS' -Probe 'resolve www.microsoft.com')
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Factory: returns a new in-memory object and changes no state.')]
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)] [string] $Component,
+        [Parameter(Mandatory)] [string] $Probe
+    )
+    return (New-OmniFinding -Title 'Connectivity probe not run' -Severity 'Information' -Component $Component `
+        -Detail "Connectivity probes are off by default, so this scan did not $Probe. Everything else in this check ran locally." `
+        -Recommendation 'To test connectivity, re-run with --network-probes (omnidiag CLI), -NetworkProbes (OmniDiag.ps1 or Invoke-OmniDiagScan), or tick "Run connectivity probes (contacts the network)" in the GUI.')
+}
+
 Export-ModuleMember -Function @(
     'Get-OmniSeverityRank', 'Get-OmniSeverityNames',
     'New-OmniFinding', 'New-OmniResult', 'Add-OmniFinding',
-    'Set-OmniResultMetric', 'Complete-OmniResult', 'Get-OmniTimeRange'
+    'Set-OmniResultMetric', 'Complete-OmniResult', 'Get-OmniTimeRange',
+    'Test-OmniNetworkProbeEnabled', 'Get-OmniProbeTarget', 'New-OmniProbeSkippedFinding'
 )

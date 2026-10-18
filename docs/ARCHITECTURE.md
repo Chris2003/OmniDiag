@@ -166,8 +166,14 @@ and the manifest's `AppliesTo`, surfaced by `Get-OmniApplicableRepair`.
 | `TimeRange` | `Start`, `End`, `Label`, `Preset` for time-aware modules. |
 | `CancellationToken` | `[System.Threading.CancellationToken]` — check `IsCancellationRequested`. |
 | `IsAdmin` | Whether the process is elevated. |
+| `NetworkProbes` | Whether connectivity probes may run (opt-in; read it with `Test-OmniNetworkProbeEnabled`). Probe targets: `Get-OmniProbeTarget` (defaults merged with `Config.ProbeTargets`). |
+| `Architecture` / `Platform` | Host facts the engine uses for `NotSupported` skips (`x64`/`arm64`; `Windows`/`Linux`/`macOS`). |
 | `Config` | Free-form hashtable for per-run options. |
 | `Host` | ComputerName / UserName / PSVersion. |
+
+A module that runs on the parallel engine gets a context rebuilt in its worker runspace from
+these values (its logger is in-memory and merged into the caller's log afterwards), so modules
+must treat the context as plain data and must not stash state in it.
 
 ## Result shapes
 
@@ -178,12 +184,33 @@ and the manifest's `AppliesTo`, surfaced by `Get-OmniApplicableRepair`.
 
 ## Execution & concurrency
 
-Modules currently run **sequentially**, with the cancellation token checked before
-each one; a full 49-scanner run takes roughly a minute. The engine and the module
-contract are intentionally shaped so a runspace-pool parallel executor can be
-substituted later — cutting scan time — without changing any module or caller. GUI
-responsiveness is already handled separately: the whole session runs in a background
-STA runspace while a DispatcherTimer polls progress on the UI thread.
+Since 0.6.0 `Invoke-OmniSession` runs modules on a **runspace pool** (`-MaxParallel`, default
+the logical processor count capped at 8; `-MaxParallel 1` is the sequential engine, kept as
+the fallback):
+
+* Each worker runspace imports the root module manifest once (InitialSessionState) and then
+  imports the plugin file by path: a registration's `PSModuleInfo` belongs to the caller's
+  runspace and is never used across threads.
+* The context crosses as plain data (time range, token, a copy of `Config`, elevation, the
+  probes flag, host facts) and is rebuilt in the worker. Each worker logs to an in-memory
+  logger; the caller merges those records (`AddRecord`, original timestamps kept), so only the
+  caller's thread appends to the log file.
+* The caller's thread runs a poll loop: it dispatches work, collects finished workers, stops
+  modules that exceed their `TimeoutSec` (reported as `Failed`, `Error` = `Timed out after N
+  s`, exit code 3), honors the `CancellationToken` (no new work; running workers are stopped
+  and reported as `Skipped` with `SkippedReason` = `Cancelled`), and invokes the progress
+  callback, so callbacks never run on a worker thread.
+* Results are returned in registration order, whatever finished first.
+* Modules whose manifest sets `Parallel = $false` (e.g. Benchmark, which measures the
+  machine) and registrations without a plugin file run on the caller's thread after the
+  pool. Timeouts are not enforced on the caller's thread.
+* Structured skips: `RequiresElevation`, `NotSupported` (`SupportedPlatforms` /
+  `SupportedArchitectures` exclude the host), `Cancelled`. Modules removed by a caller's
+  filters are simply not part of the session.
+
+The GUI runs the whole session in a background STA runspace (the pool nests inside it) while
+a DispatcherTimer polls progress on the UI thread; pool workers use the caller's COM
+apartment (STA under Windows PowerShell and the GUI, MTA under pwsh).
 
 ## v1.0 target
 
@@ -232,9 +259,11 @@ WPF GUI ────────────────────────
 | `Id` | Stable, unique, kebab/dotted id (e.g. `network.listening-ports`) |
 | `Group` | One of the ten v1.0 groups (or `extras`) *(decision)* |
 | `RequiresElevation` | Alias of `RequiresAdmin` |
-| `NetworkAccess` | `None` · `LocalNetwork` · `Internet`; anything other than `None` doesn't run by default *(decision)* |
+| `NetworkAccess` | `None` · `LocalNetwork` · `Internet`; anything other than `None` means the scanner has a connectivity probe, which runs only with `--network-probes` *(decision)* |
 | `TimeoutSec` | Per-module budget for the engine |
 | `SupportedArchitectures` | `x64`, `arm64` |
+| `SupportedPlatforms` | `Windows`, `Linux`, `macOS` (0.6.0; default all) |
+| `Parallel` | `$false` keeps the module off the runspace pool (0.6.0; default `$true`) |
 
 Manifests without these fields still load with derived defaults. `Invoke-OmniModuleScan($Context)`
 is unchanged; it is the spec's `Run(ctx)`.
@@ -246,10 +275,13 @@ validates and normalizes the fields for both registries and derives the defaults
 `SupportedArchitectures` = `x64`, `arm64`). Invalid values and duplicate Ids are contract
 violations: the plugin is logged and skipped. Registrations expose `Id`, `Group`,
 `RequiresElevation`, `NetworkAccess`, `TimeoutSec`, and `SupportedArchitectures`; the engine stamps
-`ModuleId`, `Group`, and `SkippedReason` on each result. `TimeoutSec` is recorded but not yet
-enforced (runspace-pool engine, Phase 2). The CLI already keeps non-`None` scanners out of default,
-group, and plan selections; `OmniDiag.ps1` and the GUI still run them (Phase 2:
-`--network-probes`). `Tests/Core.Contract.Tests.ps1` enforces the conventions table.
+`ModuleId`, `Group`, and `SkippedReason` on each result. Since 0.6.0 the engine enforces
+`TimeoutSec` for pooled modules, and connectivity probes are opt-in everywhere: scanners with
+`NetworkAccess` other than `None` run in every selection but probe only when the context's
+`NetworkProbes` flag is set (`--network-probes`, `-NetworkProbes`, the GUI option); otherwise
+they add a "Connectivity probe not run" Information finding. `Tests/Core.Contract.Tests.ps1`
+enforces the conventions table, which lives in `Tests/data/scanner-groups/<group>.psd1` (one
+file per group; every scanner listed in exactly one).
 
 ### Report schema v1 *(implemented in 0.5.0)*
 
@@ -294,9 +326,11 @@ stderr.
 
 *Implemented in 0.5.0:* `list`, `scan` (`--group`, `--module`, `--profile`, `--workflow`,
 `--range`), `report`, `version`, `help`, and the global `--format`, `--output`, `--verbose`,
-`--quiet`, `--no-color`, `--help`. The rest of the tree (`<group>` shorthand, `repair`,
-`compare`, `gui`, `--from-session`, `--redact`, `--elevated-only`, `--network-probes`) follows in
-Phases 2-3. Reference: [CLI.md](CLI.md).
+`--quiet`, `--no-color`, `--help`. *0.6.0:* the `<group>` shorthand and `--network-probes`,
+plus the PowerShell cmdlets `Get-OmniDiagGroup`, `Get-OmniDiagModule`, `Invoke-OmniDiagScan`,
+and `Get-OmniDiag<Group>` (`src/Core/Groups.psm1`; findings in the report-v1 shape, type
+`OmniDiag.V1.Finding`). The rest of the tree (`repair`, `compare`, `gui`, `--from-session`,
+`--redact`, `--elevated-only`) follows in Phase 3. Reference: [CLI.md](CLI.md).
 
 ### Exit codes *(implemented in 0.5.0)*
 
@@ -331,13 +365,34 @@ file names. An optional mapping file stays local.
    `Invoke-RestMethod`, `Net.WebClient`, `HttpClient`, sockets, `Ping`, `Dns`, `Resolve-DnsName`,
    `Test-Connection`, `Test-NetConnection`, `Test-ComputerSecureChannel`, `Start-BitsTransfer`)
    and fails on any use outside an allowlist tied to the plugin's `NetworkAccess`.
-2. **Runtime (Windows runner):** an outbound firewall block on the PowerShell executables, then a
-   default scan; assert no outbound connection or DNS query from the test process.
+2. **Runtime (Windows runner):** `build/Test-NoNetworkRuntime.ps1`, CI job `no-network`. It
+   enables auditing for *Filtering Platform Connection* (Security events 5156 allowed / 5157
+   blocked, each carrying the calling `ProcessID` and `Application`) and *Process Creation*
+   (4688, to follow child processes), enables the `Microsoft-Windows-DNS-Client/Operational`
+   log (3006 = query issued, attributed to the calling process), and adds outbound firewall
+   block rules for `pwsh.exe` and `powershell.exe` so an attempt never leaves the runner while
+   other processes keep their connectivity. It then runs, with the environment `OmniDiag.cmd`
+   sets up (PowerShell update check and telemetry off):
+   * a **positive control** (TCP connect to `1.1.1.1:443` and a name lookup) that the detector
+     must see, or the test fails as vacuous;
+   * `omnidiag scan --format json` (default selection) and `omnidiag report`;
+   * when the CLI supports it, `omnidiag scan --network-probes` - reported for information
+     only, since that is the opt-in path.
+
+   For each run it keeps the events from the run's time window and process tree, drops
+   inbound and loopback (`127.0.0.0/8`, `::1`) records, and also flags connections to the
+   known probe targets (`1.1.1.1`, the default gateways) and lookups of the probe name
+   (`www.microsoft.com`) from any process, in case a probe is attributed to a system
+   process. Any remaining event in the scan or report run is a violation (exit 1). Audit
+   policy (`auditpol /backup` / `/restore`), firewall profiles and rules, and the DNS log
+   state are restored in a `finally` block. The JSON and Markdown report is a CI artifact.
 3. **Mocks:** per-module Pester mocks for network cmdlets.
 
 ### CI pipeline
 
 lint (PSScriptAnalyzer + contract/help tests) → tests (Windows pwsh 7, Windows PowerShell 5.1,
 Ubuntu for pure logic, `windows-11-arm`; coverage gate on Core) → standard-user leg →
-no-network runtime test → performance (soft gate) → package (reproducible zip, signing hook,
+no-network runtime test (`build/Test-NoNetworkRuntime.ps1`) → performance (soft gate,
+`build/Measure-ScanPerformance.ps1`: median of three full scans against the 60 s budget,
+startup time, slowest modules) → package (reproducible zip, signing hook,
 `SHA256SUMS`, SBOM) → release on tag.

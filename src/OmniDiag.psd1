@@ -3,7 +3,7 @@
     # OmniDiag module manifest
     # ---------------------------------------------------------------------
     RootModule        = 'OmniDiag.psm1'
-    ModuleVersion     = '0.5.0'
+    ModuleVersion     = '0.6.0'
     GUID              = 'b6e9d0c2-7a4d-4f3e-9c1a-0d2f5a8e10b4'
     Author            = 'OmniDiag Contributors'
     CompanyName       = 'OmniDiag'
@@ -27,6 +27,7 @@
         'Core/RegistryScan.psm1',
         'Core/Engine.psm1',
         'Core/ExitCodes.psm1',
+        'Core/Groups.psm1',
         'Repair/RepairModels.psm1',
         'Repair/RepairRegistry.psm1',
         'Repair/RepairEngine.psm1',
@@ -59,14 +60,22 @@
         # Models
         'New-OmniFinding', 'New-OmniResult', 'Add-OmniFinding', 'Set-OmniResultMetric',
         'Complete-OmniResult', 'Get-OmniTimeRange', 'Get-OmniSeverityRank', 'Get-OmniSeverityNames',
+        # Opt-in connectivity probes (decision 1): used by scanners across modules
+        'Test-OmniNetworkProbeEnabled', 'Get-OmniProbeTarget', 'New-OmniProbeSkippedFinding',
         # Logging
         'New-OmniLogger',
         # Registry / engine / scoring
         'Test-OmniIsAdministrator', 'New-OmniContext', 'Get-OmniModule',
-        'Invoke-OmniSession', 'Get-OmniHealthScore',
+        'Invoke-OmniSession', 'Get-OmniDefaultParallelism', 'Get-OmniHealthScore',
+        'Get-OmniHostArchitecture', 'Get-OmniHostPlatform',
         # Module contract v1 (ids, groups, network access) - shared by scanners and repairs
         'Get-OmniGroupNames', 'Get-OmniGroup', 'Get-OmniNetworkAccessNames', 'ConvertTo-OmniKebabCase',
         'Resolve-OmniModuleIdentity', 'Resolve-OmniPluginContract',
+        # Public group cmdlets (curated v1.0 API, decision 11)
+        'Get-OmniDiagGroup', 'Get-OmniDiagModule', 'Invoke-OmniDiagScan',
+        'Get-OmniDiagSystem', 'Get-OmniDiagPerformance', 'Get-OmniDiagServices', 'Get-OmniDiagStartup',
+        'Get-OmniDiagEvents', 'Get-OmniDiagReliability', 'Get-OmniDiagStorage', 'Get-OmniDiagNetwork',
+        'Get-OmniDiagUpdates', 'Get-OmniDiagSecurity', 'Get-OmniDiagExtras',
         # Exit codes (v1)
         'Get-OmniExitCodeTable', 'Get-OmniExitCodeValue', 'Get-OmniExitCode', 'Get-OmniRepairExitCode',
         # Registry scan/backup/remove (shared by the Registry Health scanner and the
@@ -112,7 +121,7 @@
             Tags         = @('Windows', 'Diagnostics', 'IT', 'Sysadmin', 'Troubleshooting', 'EventLog')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/Chris2003/OmniDiag'
-            ReleaseNotes = '0.5.0: module contract v1 (stable Id, Group, NetworkAccess, TimeoutSec, SupportedArchitectures on every scanner and repair), versioned JSON report schema v1 (schemas/omnidiag-report.v1.json) with a Markdown exporter, documented exit codes, and the omnidiag CLI router (list, scan, report, version, help).'
+            ReleaseNotes = '0.6.0: opt-in connectivity probes (--network-probes / -NetworkProbes), runspace-pool engine with per-module timeouts and structured skips, group cmdlets (Get-OmniDiag<Group>, Invoke-OmniDiagScan, Get-OmniDiagModule, Get-OmniDiagGroup) and the omnidiag <group> shorthand. 0.5.0: module contract v1 (stable Id, Group, NetworkAccess, TimeoutSec, SupportedArchitectures on every scanner and repair), versioned JSON report schema v1 (schemas/omnidiag-report.v1.json) with a Markdown exporter, documented exit codes, and the omnidiag CLI router (list, scan, report, version, help).'
         }
     }
 }

@@ -38,6 +38,12 @@
     NetworkConnectivity, Printing, WindowsUpdate, LoginAndIdentity,
     StorageCleanup, SecurityPosture, CloudReadiness, or FullScan.
 
+.PARAMETER NetworkProbes
+    Also run the connectivity probes: ping the default gateway and 1.1.1.1, resolve
+    www.microsoft.com, and check the domain secure channel. Off by default, so a scan
+    contacts no other machine; without it those scanners do their local checks and add
+    an Information finding saying how to run the probe.
+
 .PARAMETER ListPlans
     List available role profiles and task workflows without running a scan.
 
@@ -105,7 +111,7 @@
     .\OmniDiag.ps1 -Range Last24Hours -IncludeCategory System
 
 .EXAMPLE
-    .\OmniDiag.ps1 -Workflow NetworkConnectivity -CompareWith Last
+    .\OmniDiag.ps1 -Workflow NetworkConnectivity -NetworkProbes -CompareWith Last
 
 .EXAMPLE
     .\OmniDiag.ps1 -FromSession Last -AiChat
@@ -133,6 +139,7 @@ param(
     [string] $Profile,
     [ValidateSet('QuickTriage','SlowComputer','NetworkConnectivity','Printing','WindowsUpdate','LoginAndIdentity','StorageCleanup','SecurityPosture','CloudReadiness','FullScan')]
     [string] $Workflow,
+    [switch] $NetworkProbes,
     [switch] $ListPlans,
     [switch] $Gui,
     [switch] $Quiet,
@@ -261,6 +268,7 @@ try {
         if ($IncludeModule)   { $scan.IncludeModule = $IncludeModule }
         if ($Profile)         { $scan.Profile = $Profile }
         if ($Workflow)        { $scan.Workflow = $Workflow }
+        if ($NetworkProbes)   { $scan.NetworkProbes = $true }
         $session = Invoke-OmniDiag @scan
 
         Write-OmniConsoleDashboard -Session $session

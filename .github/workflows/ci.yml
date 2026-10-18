@@ -57,13 +57,11 @@ jobs:
             shell: powershell
           - os: ubuntu-latest
             shell: pwsh
-          # Free Windows ARM64 runner (public repositories only). Non-blocking until the
-          # ARM64 leg has a green history; flip experimental to false to make it gating.
+          # Free Windows ARM64 runner (public repositories only). Blocking since Phase 2:
+          # green on every run through Phase 1.
           - os: windows-11-arm
             shell: pwsh
-            experimental: true
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental == true }}
     timeout-minutes: 45
     defaults:
       run:
@@ -109,6 +107,60 @@ jobs:
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  no-network:
+    name: No-network runtime test
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 45
+    # Runtime half of the no-network enforcement (docs/ARCHITECTURE.md): WFP connection
+    # auditing + an outbound firewall block on the PowerShell executables, then a default
+    # scan and report; any outbound attempt or DNS query from their process tree fails it.
+    # Blocking: connectivity probes run only with --network-probes.
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run no-network runtime test
+        run: ./build/Test-NoNetworkRuntime.ps1 -OutputDirectory test-results/no-network
+      - name: Upload no-network report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: no-network-report
+          path: test-results/no-network/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  performance:
+    name: Performance (soft gate)
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # Roadmap gate: full default scan under 60 s on windows-latest, median of three runs.
+    # Soft gate: measured and reported in the job summary, never fails the workflow.
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Measure scan performance
+        # Writes the summary to $GITHUB_STEP_SUMMARY; add -Enforce to make the budget fail.
+        run: ./build/Measure-ScanPerformance.ps1 -Runs 3 -BudgetSeconds 60 -OutputDirectory test-results/performance
+      - name: Upload performance summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-summary
+          path: test-results/performance/
+          if-no-files-found: ignore
+          retention-days: 30
 
   package:
     name: Portable package

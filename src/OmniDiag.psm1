@@ -69,8 +69,23 @@ function Invoke-OmniDiag {
         Lowest level written to the structured log (Debug, Info, Warn, Error).
         Default Info; the CLI's --verbose uses Debug.
 
+    .PARAMETER NetworkProbes
+        Also run connectivity probes (ping the default gateway and 1.1.1.1, resolve
+        www.microsoft.com, the domain secure-channel check). Off by default: without it
+        those scanners do their local checks only and say how to run the probe.
+
+    .PARAMETER MaxParallel
+        Engine worker count. 0 (default) = logical processors capped at 8; 1 = sequential.
+
+    .PARAMETER Config
+        Per-run options handed to modules via the context, e.g.
+        @{ ProbeTargets = @{ PublicAddress = '9.9.9.9'; DnsName = 'intranet.example' } }.
+
     .EXAMPLE
         $session = Invoke-OmniDiag -Range Last7Days
+
+    .EXAMPLE
+        $session = Invoke-OmniDiag -IncludeCategory Network -NetworkProbes
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -90,7 +105,11 @@ function Invoke-OmniDiag {
         [scriptblock] $ProgressCallback,
         [switch] $Quiet,
         [ValidateSet('Debug', 'Info', 'Warn', 'Error')]
-        [string] $LogLevel = 'Info'
+        [string] $LogLevel = 'Info',
+        [switch] $NetworkProbes,
+        [ValidateRange(0, 64)]
+        [int] $MaxParallel = 0,
+        [hashtable] $Config = @{}
     )
 
     if ($Profile -and $Workflow) { throw 'Choose either -Profile or -Workflow, not both.' }
@@ -110,7 +129,8 @@ function Invoke-OmniDiag {
     $logger.Info("OmniDiag $(Get-OmniVersion) starting.", 'OmniDiag')
 
     $timeRange = Get-OmniTimeRange -Preset $Range
-    $context = New-OmniContext -Logger $logger -TimeRange $timeRange -CancellationToken $CancellationToken
+    $context = New-OmniContext -Logger $logger -TimeRange $timeRange -CancellationToken $CancellationToken `
+        -Config $Config -NetworkProbes:$NetworkProbes
 
     $registrations = Get-OmniModule -Path $ModulesPath -Logger $logger
     if (@($registrations).Count -eq 0) {
@@ -120,6 +140,7 @@ function Invoke-OmniDiag {
     $params = @{
         Registration = $registrations
         Context      = $context
+        MaxParallel  = $MaxParallel
     }
     if ($ProgressCallback) { $params.ProgressCallback = $ProgressCallback }
     if ($IncludeCategory)  { $params.IncludeCategory = $IncludeCategory }

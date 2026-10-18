@@ -1,9 +1,9 @@
 # OmniDiag — Portable Edition
 
 OmniDiag runs **fully locally** on the machine being diagnosed. There is no
-required installer, service, or remoting, and nothing is uploaded. The only network
-traffic is the small set of diagnostic probes listed under
-[Network activity](#network-activity). This portable
+required installer, service, or remoting, and nothing is uploaded. A default scan sends
+no network traffic; the only network traffic is the small set of opt-in diagnostic probes
+listed under [Network activity](#network-activity). This portable
 package is a self-contained folder you can copy to a USB stick, a network share,
 or push through your existing management tooling — then run in place. The optional
 quick installer only uses the network to download that same application folder.
@@ -114,18 +114,24 @@ anything.
 ## Network activity
 
 OmniDiag never uploads anything and never connects to other machines through
-remoting. A few scanners deliberately send small probes so they can diagnose
-connectivity:
+remoting. **A default scan sends no network traffic.** Every item below is opt-in:
 
-| Source | Traffic |
-|---|---|
-| Network scanner | ICMP ping to the default gateway and to `1.1.1.1`; DNS lookup of `www.microsoft.com` |
-| DNS Resolver scanner | DNS lookup of `www.microsoft.com` through the configured resolvers |
-| Active Directory scanner | Secure-channel check against the domain controller (domain-joined devices only) |
-| Repair Center → **Repair Component Store (DISM)** | Downloads replacement files from Windows Update (only when you run that repair) |
-| Local AI (optional) | HTTP to Ollama on the loopback interface only; redirects are refused |
+| Source | Traffic | When |
+|---|---|---|
+| Network scanner | ICMP ping to the default gateway and to `1.1.1.1`; DNS lookup of `www.microsoft.com` | Only with connectivity probes on |
+| DNS Resolver scanner | DNS lookup of `www.microsoft.com` through the configured resolvers | Only with connectivity probes on |
+| Active Directory scanner | Secure-channel check against the domain controller (domain-joined devices only) | Only with connectivity probes on |
+| Repair Center → **Repair Component Store (DISM)** | Downloads replacement files from Windows Update | Only when you run that repair |
+| Local AI (optional) | HTTP to Ollama on the loopback interface only; redirects are refused | Only when you use Local AI |
 
-To avoid all probes, exclude those scanners (for example `-ExcludeCategory Network`).
+Connectivity probes are off by default. Turn them on with `--network-probes` (the
+`omnidiag` command), `-NetworkProbes` (`OmniDiag.ps1`, `Invoke-OmniDiagScan`,
+`Get-OmniDiagNetwork`, `Get-OmniDiagExtras`), or the **Run connectivity probes (contacts the
+network)** option in the GUI. Without them these scanners still check everything local
+(adapters, IP and DNS configuration, domain membership) and add an Information finding,
+"Connectivity probe not run", that says how to run the probe. From PowerShell the targets can
+be changed with `-Config @{ ProbeTargets = @{ PublicAddress = '9.9.9.9'; DnsName =
+'intranet.example' } }`.
 
 ## Common commands
 
@@ -135,6 +141,9 @@ To avoid all probes, exclude those scanners (for example `-ExcludeCategory Netwo
 
 # Last 24 hours, System modules only
 ./OmniDiag.ps1 -Range Last24Hours -IncludeCategory System
+
+# Network troubleshooting, including the opt-in connectivity probes
+./OmniDiag.ps1 -Workflow NetworkConnectivity -NetworkProbes
 
 # Scan and write reports (no interactive privacy prompt)
 ./OmniDiag.ps1 -Report -ReportFormat Html,Json,Pdf -AcceptPrivacyNotice

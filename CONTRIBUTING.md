@@ -70,12 +70,44 @@ ones. Point the VS Code PowerShell extension at the same settings file
 
 - lint
 - tests on Windows pwsh 7, Windows PowerShell 5.1, Ubuntu pwsh, and Windows 11 ARM64
-  (the ARM64 leg doesn't block merges yet)
+  (all four block merges)
 - a coverage report from the Windows pwsh leg (job summary and `test-results` artifact)
+- the runtime no-network test and the performance measurement (see below)
 - the portable package build (zip and `.sha256` uploaded as an artifact)
 - dependency review on pull requests
 
 Actions are pinned to commit SHAs, and Dependabot proposes updates weekly.
+
+### Runtime no-network test and performance measurement
+
+Two scripts in `build/` back the Phase 2 gates. Both write a JSON and a Markdown summary
+(and append the Markdown to the GitHub job summary when run in CI).
+
+**`build/Test-NoNetworkRuntime.ps1`** (Windows, elevated; CI job `no-network`) proves a
+default scan makes no outbound network attempt. It enables Windows Filtering Platform
+connection auditing and process-creation auditing, turns on the DNS-Client operational
+log, and adds outbound firewall block rules for `pwsh.exe` / `powershell.exe`. It then runs
+a positive control (a TCP connect to `1.1.1.1:443` plus a name lookup, which must be
+detected), `omnidiag scan --format json`, and `omnidiag report`, and fails on any outbound
+connection (allowed or blocked, loopback excluded) or DNS query from their process trees.
+When the CLI supports `--network-probes`, an extra opt-in run is reported for information.
+Everything is restored afterwards. Exit codes: 0 pass, 1 violation or undetected control,
+2 could not run (not Windows, not elevated, setup error).
+
+```powershell
+pwsh -NoProfile -File .\build\Test-NoNetworkRuntime.ps1     # elevated
+```
+
+**`build/Measure-ScanPerformance.ps1`** (any OS; CI job `performance`, soft gate) runs the
+full default scan `-Runs` times (default 3) in fresh child processes, plus `omnidiag version`
+for startup cost, and reports per-run and median wall time and the slowest modules (from
+the JSON report's `durationMs`). `-Enforce` makes a median over `-BudgetSeconds` (default
+60) exit 1.
+
+```powershell
+.\build\Measure-ScanPerformance.ps1
+.\build\Measure-ScanPerformance.ps1 -Runs 5 -Enforce
+```
 
 ### No-network rule and allowlist
 
@@ -91,8 +123,13 @@ To add a network-capable API, you need all of these:
 1. An allowlist entry at the top of `Tests/NoNetwork.Tests.ps1`: the file's repo-relative path,
    the API as the detector reports it, and a reason.
 2. The plugin's manifest declares the matching `NetworkAccess` (`LocalNetwork` or `Internet`).
-3. The pull request has the **NetworkAccess** label.
-4. A project owner approves it.
+3. The network call runs only when `Test-OmniNetworkProbeEnabled -Context $Context` is true
+   (connectivity probes are opt-in: `--network-probes`); otherwise the scanner does its local
+   work and adds `New-OmniProbeSkippedFinding`. Put the call in a small private function so
+   tests can mock it (see `Tests/Modules.NetworkProbes.Tests.ps1`), and take targets from
+   `Get-OmniProbeTarget`.
+4. The pull request has the **NetworkAccess** label.
+5. A project owner approves it.
 
 The test also fails on stale allowlist entries, so remove the entry when the usage goes away.
 
@@ -106,7 +143,10 @@ The test also fails on stale allowlist entries, so remove the entry when the usa
    automatically, so a new scanner is covered on discovery/contract/clean-execution with no
    extra work. Add a dedicated `Tests/Modules.<Name>.Tests.ps1` only for scanner-specific
    behavior worth asserting.
-4. That's it — the engine discovers it automatically. **Do not modify the core** to
+4. List it in its group's `Tests/data/scanner-groups/<group>.psd1` (the contract test fails
+   until every scanner is listed in exactly one file) and in its group's page under
+   [docs/modules](docs/modules/README.md).
+5. That's it — the engine discovers it automatically. **Do not modify the core** to
    add a scanner.
 
 ### Module guidelines
@@ -120,6 +160,12 @@ The test also fails on stale allowlist entries, so remove the entry when the usa
 - **Honor cancellation.** For long loops, check `$Context.CancellationToken.IsCancellationRequested`.
 - **Declare admin needs.** Set `RequiresAdmin = $true` if you read an elevated-only
   source; the engine will skip gracefully when not elevated.
+- **Be runspace-safe.** Scanners run in parallel worker runspaces: keep state inside
+  `Invoke-OmniModuleScan`, treat `$Context` as read-only data, and log through
+  `$Context.Logger`. Stay within `TimeoutSec` (default 60 s; raise it in the manifest if the
+  scanner is legitimately slower). Set `Parallel = $false` only if the scanner must not run
+  next to others (Benchmark measures the machine), and `SupportedPlatforms` /
+  `SupportedArchitectures` if it can't run on some hosts (skipped as `NotSupported`).
 
 ## Style
 

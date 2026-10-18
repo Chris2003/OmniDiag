@@ -4,7 +4,10 @@
 
 .DESCRIPTION
     Read-only local domain membership, secure-channel, domain-controller, and
-    Group Policy posture checks. No remoting and no directory changes.
+    Group Policy posture checks. No remoting and no directory changes. The
+    secure-channel check (Test-ComputerSecureChannel) contacts a domain controller, so
+    it runs only when $Context.NetworkProbes is set (decision 1); otherwise the
+    scanner adds an Information finding saying how to run it.
 #>
 
 Set-StrictMode -Version Latest
@@ -14,7 +17,24 @@ if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='Active Directory'; Id='extras.active-directory'; Group='extras'; NetworkAccess='LocalNetwork'; Category='Identity'; Description='Local domain membership, secure channel, DC discovery, and Group Policy posture.'; RequiresAdmin=$false; Order=700; Enabled=$true }
+    @{ Name='Active Directory'; Id='extras.active-directory'; Group='extras'; NetworkAccess='LocalNetwork'; Category='Identity'; Description='Local domain membership, DC discovery, Group Policy posture, and an opt-in secure-channel check.'; RequiresAdmin=$false; Order=700; Enabled=$true }
+}
+
+function Test-OmniAdSecureChannel {
+    <#
+    .SYNOPSIS
+        Internal (connectivity probe): the domain secure-channel check. Returns $true /
+        $false, or $null when the check is unavailable. Only called when probes are enabled.
+    #>
+    param($Logger)
+    try {
+        if (Get-Command -Name Test-ComputerSecureChannel -ErrorAction SilentlyContinue) {
+            return [bool](Test-ComputerSecureChannel -ErrorAction Stop)
+        }
+    } catch {
+        if ($Logger) { $Logger.Debug("Secure-channel check unavailable: $($_.Exception.Message)", 'Active Directory') }
+    }
+    return $null
 }
 
 function Invoke-OmniModuleScan {
@@ -48,13 +68,12 @@ function Invoke-OmniModuleScan {
     }
 
     $secureChannel = $null
-    try {
-        if (Get-Command -Name Test-ComputerSecureChannel -ErrorAction SilentlyContinue) {
-            $secureChannel = [bool](Test-ComputerSecureChannel -ErrorAction Stop)
-            Set-OmniResultMetric -Result $result -Name 'SecureChannelHealthy' -Value $secureChannel
-        }
-    } catch {
-        $log.Debug("Secure-channel check unavailable: $($_.Exception.Message)", 'Active Directory')
+    if (Test-OmniNetworkProbeEnabled -Context $Context) {
+        $secureChannel = Test-OmniAdSecureChannel -Logger $log
+        if ($null -ne $secureChannel) { Set-OmniResultMetric -Result $result -Name 'SecureChannelHealthy' -Value $secureChannel }
+    } else {
+        Add-OmniFinding -Result $result -Finding (New-OmniProbeSkippedFinding -Component 'Identity/ActiveDirectory/SecureChannel' `
+            -Probe "check the computer's secure channel with a domain controller of '$domain'")
     }
 
     $dcName = [string]$env:LOGONSERVER

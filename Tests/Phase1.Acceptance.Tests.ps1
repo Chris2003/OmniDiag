@@ -200,7 +200,7 @@ Describe 'Exit codes produced by the real engines and router' {
 }
 
 Describe 'scan --format json over the built-in scanners' {
-    It 'emits a v1 document for the default (local-only) scan that validates against the schema' {
+    It 'emits a v1 document for the default (probes off) scan that validates against the schema' {
         $out = [System.IO.StringWriter]::new()
         $err = [System.IO.StringWriter]::new()
         $code = Invoke-OmniDiagCli -Arguments @('scan', '--format', 'json', '--quiet') -Out $out -Err $err
@@ -209,7 +209,7 @@ Describe 'scan --format json over the built-in scanners' {
         $doc = $text | ConvertFrom-Json
         $doc.schemaVersion | Should -Be '1.0.0'
         $expected = @(Get-OmniModule -Path (Join-Path $script:Root 'src/Modules') -Logger (New-OmniLogger -MinimumLevel Error) |
-            Where-Object { $_.Enabled -and $_.NetworkAccess -eq 'None' })
+            Where-Object { $_.Enabled })
         @($doc.modules).Count | Should -Be $expected.Count
         @($doc.modules.id | Sort-Object) | Should -Be @($expected.Id | Sort-Object)
         if (-not $script:CanValidate) { Set-ItResult -Skipped -Because 'Test-Json -Schema requires PowerShell 7'; return }
@@ -254,7 +254,7 @@ Describe 'omnidiag.ps1 in a child process: clean stdout and local logging' {
         $trimmed = $r.Out.Trim()
         $trimmed | Should -Match '^\{'
         $trimmed | Should -Match '\}$'
-        @(($trimmed | ConvertFrom-Json).items).Count | Should -Be 49
+        @(($trimmed | ConvertFrom-Json).items).Count | Should -Be @(Get-ChildItem -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'src/Modules') -Filter '*.psm1').Count
         if ($script:CanValidate) { Test-Json -Json $trimmed -SchemaFile $script:ListSchema | Should -BeTrue }
     }
 

@@ -31,6 +31,15 @@
         TimeoutSec             [int]      per-module budget in seconds (default 60)
         SupportedArchitectures [string[]] x64 | arm64 (default both)
 
+    Added in 0.6.0, both optional:
+        SupportedPlatforms     [string[]] Windows | Linux | macOS (default all three; the
+                                          engine skips the module with SkippedReason
+                                          'NotSupported' on any other host)
+        Parallel               [bool]     default $true; $false runs the module on the
+                                          caller's thread after the parallel pool (for
+                                          modules that are not thread-safe or that
+                                          measure the machine, like Benchmark)
+
     Invalid values and duplicate Ids are contract violations: the plugin is logged
     and skipped, exactly like a missing convention function.
 #>
@@ -58,6 +67,7 @@ $script:OmniGroups = [ordered]@{
 
 $script:OmniNetworkAccessValues = @('None', 'LocalNetwork', 'Internet')
 $script:OmniArchitectureValues = @('x64', 'arm64')
+$script:OmniPlatformValues = @('Windows', 'Linux', 'macOS')
 $script:OmniDefaultTimeoutSec = 60
 
 # Group of each built-in scanner, used only to place results from sessions saved
@@ -232,6 +242,17 @@ function Resolve-OmniPluginContract {
     }
     if ($archOut.Count -eq 0) { throw "Plugin '$name' declares no SupportedArchitectures." }
 
+    $platforms = @(Get-OmniManifestValue $Manifest 'SupportedPlatforms' $script:OmniPlatformValues)
+    $platOut = [System.Collections.Generic.List[string]]::new()
+    foreach ($pl in $platforms) {
+        $hit = @($script:OmniPlatformValues | Where-Object { $_ -ieq [string]$pl })
+        if ($hit.Count -eq 0) {
+            throw "Plugin '$name' has invalid SupportedPlatforms value '$pl'. Valid: $($script:OmniPlatformValues -join ', ')."
+        }
+        if (-not $platOut.Contains($hit[0])) { $platOut.Add($hit[0]) }
+    }
+    if ($platOut.Count -eq 0) { throw "Plugin '$name' declares no SupportedPlatforms." }
+
     return [pscustomobject]@{
         Id                     = $id
         Group                  = $group
@@ -239,7 +260,56 @@ function Resolve-OmniPluginContract {
         NetworkAccess          = $networkAccess
         TimeoutSec             = $timeoutSec
         SupportedArchitectures = [string[]]$archOut.ToArray()
+        SupportedPlatforms     = [string[]]$platOut.ToArray()
+        Parallel               = [bool](Get-OmniManifestValue $Manifest 'Parallel' $true)
     }
+}
+
+function Get-OmniHostArchitecture {
+    <#
+    .SYNOPSIS
+        Returns the operating system's processor architecture as a contract v1 value
+        ('x64' or 'arm64'), or the raw lower-case name for anything else (e.g. 'x86').
+
+    .DESCRIPTION
+        Uses RuntimeInformation.OSArchitecture when the runtime has it (PowerShell 7,
+        .NET Framework 4.7.1+), else PROCESSOR_ARCHITEW6432 / PROCESSOR_ARCHITECTURE, so a
+        32-bit PowerShell on 64-bit Windows still reports the OS architecture.
+
+    .EXAMPLE
+        Get-OmniHostArchitecture
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $raw = $null
+    try { $raw = [string][System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture } catch { $raw = $null }
+    if (-not $raw) {
+        $raw = if ($env:PROCESSOR_ARCHITEW6432) { [string]$env:PROCESSOR_ARCHITEW6432 } else { [string]$env:PROCESSOR_ARCHITECTURE }
+    }
+    switch -Regex ($raw) {
+        '^(?i)(x64|amd64)$' { return 'x64' }
+        '^(?i)arm64$'       { return 'arm64' }
+    }
+    if ($raw) { return $raw.ToLowerInvariant() }
+    return 'unknown'
+}
+
+function Get-OmniHostPlatform {
+    <#
+    .SYNOPSIS
+        Returns the host platform as a contract value: 'Windows', 'Linux', or 'macOS'.
+
+    .EXAMPLE
+        Get-OmniHostPlatform
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    if ($PSVersionTable.PSEdition -ne 'Core') { return 'Windows' }
+    if (Get-Variable -Name 'IsLinux' -ValueOnly -ErrorAction SilentlyContinue) { return 'Linux' }
+    if (Get-Variable -Name 'IsMacOS' -ValueOnly -ErrorAction SilentlyContinue) { return 'macOS' }
+    return 'Windows'
 }
 
 function Test-OmniIsAdministrator {
@@ -270,10 +340,27 @@ function New-OmniContext {
     .DESCRIPTION
         The context is the only argument a module receives. It carries the logger,
         the resolved time range, a cooperative cancellation token, the elevation
-        state, and a free-form Config bag for per-run options.
+        state, whether connectivity probes may run, the host architecture and
+        platform, and a free-form Config bag for per-run options.
+
+    .PARAMETER Logger
+        Logger from New-OmniLogger.
+
+    .PARAMETER TimeRange
+        Range from Get-OmniTimeRange. Default: the last 7 days.
 
     .PARAMETER CancellationToken
         A [System.Threading.CancellationToken]. Defaults to CancellationToken.None.
+
+    .PARAMETER Config
+        Per-run options read by modules (e.g. MaxEventsPerChannel, ProbeTargets).
+
+    .PARAMETER NetworkProbes
+        Allow connectivity probes (decision 1: off by default). Scanners that declare
+        NetworkAccess other than 'None' still run without it, doing local work only.
+
+    .EXAMPLE
+        $ctx = New-OmniContext -Logger (New-OmniLogger) -NetworkProbes -Config @{ ProbeTargets = @{ PublicAddress = '9.9.9.9' } }
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -281,7 +368,8 @@ function New-OmniContext {
         [Parameter(Mandatory)] [pscustomobject] $Logger,
         [pscustomobject] $TimeRange,
         [System.Threading.CancellationToken] $CancellationToken = ([System.Threading.CancellationToken]::None),
-        [hashtable] $Config = @{}
+        [hashtable] $Config = @{},
+        [switch] $NetworkProbes
     )
 
     if (-not $TimeRange) { $TimeRange = Get-OmniTimeRange -Preset Last7Days }
@@ -292,6 +380,9 @@ function New-OmniContext {
         TimeRange         = $TimeRange
         CancellationToken = $CancellationToken
         IsAdmin           = (Test-OmniIsAdministrator)
+        NetworkProbes     = [bool]$NetworkProbes
+        Architecture      = (Get-OmniHostArchitecture)
+        Platform          = (Get-OmniHostPlatform)
         Config            = $Config
         Host              = [pscustomobject]@{
             ComputerName = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [System.Environment]::MachineName }
@@ -372,7 +463,9 @@ function Get-OmniModule {
                     NetworkAccess          = $contract.NetworkAccess
                     TimeoutSec             = $contract.TimeoutSec
                     SupportedArchitectures = $contract.SupportedArchitectures
-                    Order                  = [int](Get-OmniManifestValue $manifest 'Order' 0)
+                    SupportedPlatforms     = $contract.SupportedPlatforms
+                    Parallel               = $contract.Parallel
+                    Order                 = [int](Get-OmniManifestValue $manifest 'Order' 0)
                     Enabled                = [bool](Get-OmniManifestValue $manifest 'Enabled' $true)
                     ModuleInfo             = $modInfo
                     SourceFile             = $file.FullName
@@ -393,5 +486,6 @@ function Get-OmniModule {
 Export-ModuleMember -Function @(
     'Test-OmniIsAdministrator', 'New-OmniContext', 'Get-OmniModule',
     'Get-OmniGroupNames', 'Get-OmniGroup', 'Get-OmniNetworkAccessNames', 'ConvertTo-OmniKebabCase',
-    'Resolve-OmniModuleIdentity', 'Resolve-OmniPluginContract'
+    'Resolve-OmniModuleIdentity', 'Resolve-OmniPluginContract',
+    'Get-OmniHostArchitecture', 'Get-OmniHostPlatform'
 )

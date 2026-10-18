@@ -439,6 +439,9 @@ function Start-OmniScan {
     $rangeMap = @('Last24Hours', 'Last7Days', 'Last30Days')
     $idx = [Math]::Max(0, $ui.Controls.CmbRange.SelectedIndex)
     $range = $rangeMap[$idx]
+    # Connectivity probes are opt-in (decision 1): only when the box is ticked.
+    $probes = $false
+    if ($ui.Controls.ChkNetworkProbes) { $probes = ($ui.Controls.ChkNetworkProbes.IsChecked -eq $true) }
 
     $sync = [hashtable]::Synchronized(@{ Progress = 0; CurrentModule = ''; Phase = ''; Done = $false; Session = $null; Error = $null })
     $cts = [System.Threading.CancellationTokenSource]::new()
@@ -449,7 +452,7 @@ function Start-OmniScan {
     $rs.Open()
 
     $bg = {
-        param($SyncHash, $Token, $Range, $Manifest, $ModulesPath, $IncludeModule)
+        param($SyncHash, $Token, $Range, $Manifest, $ModulesPath, $IncludeModule, $NetworkProbes)
         try {
             Import-Module $Manifest -Force -DisableNameChecking
             $cb = {
@@ -461,6 +464,7 @@ function Start-OmniScan {
             $params = @{
                 Range = $Range; ProgressCallback = $cb; CancellationToken = $Token
                 Quiet = $true; ModulesPath = $ModulesPath
+                NetworkProbes = [bool]$NetworkProbes
             }
             if ($IncludeModule) { $params.IncludeModule = $IncludeModule }
             $SyncHash.Session = Invoke-OmniDiag @params
@@ -476,11 +480,11 @@ function Start-OmniScan {
     [void]$ps.AddScript($bg).AddParameters(@{
         SyncHash = $sync; Token = $cts.Token; Range = $range
         Manifest = $ui.Manifest; ModulesPath = $ui.ModulesPath
-        IncludeModule = $IncludeModule
+        IncludeModule = $IncludeModule; NetworkProbes = $probes
     })
     $handle = $ps.BeginInvoke()
 
-    $ui.Scan = @{ Sync = $sync; Cts = $cts; PowerShell = $ps; Runspace = $rs; Handle = $handle }
+    $ui.Scan =@{ Sync = $sync; Cts = $cts; PowerShell = $ps; Runspace = $rs; Handle = $handle }
 
     $ui.Controls.BtnScan.IsEnabled = $false
     $ui.Controls.BtnCancel.IsEnabled = $true
@@ -609,7 +613,7 @@ function Invoke-OmniWindow {
     $reader = [System.Xml.XmlNodeReader]::new($xaml)
     $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
-    $names = @('BtnScan','BtnCancel','BtnExport','BtnTheme','CmbRange','NavList',
+    $names = @('BtnScan','BtnCancel','BtnExport','BtnTheme','CmbRange','ChkNetworkProbes','NavList',
                'PanelDiagnostics','DiagGrid','BtnDiagEnableAll','BtnDiagDisableAll',
                'PanelDashboard','PanelSysInfo','GridFindings','TxtScore','TxtGrade','TxtComputer',
                'TxtUser','TxtRange','TxtDuration','TxtCounts','ItemsRecommendations',
