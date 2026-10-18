@@ -3,3 +3,4 @@ reports/
 dist/
 coverage.xml
 testResults.xml
+verification-results/

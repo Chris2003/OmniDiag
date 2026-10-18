@@ -53,8 +53,12 @@ Use it instead of a bare `Invoke-Pester`. `-TestResultPath` writes NUnit XML.
 
 **Coverage.** `-Coverage` measures `src/Core`, `src/Repair`, and `src/Reporting`, writes a
 JaCoCo report (`-CoverageOutputPath`, default `coverage.xml`, git-ignored), and prints the
-percentage per folder. `-CoverageTarget` is report-only in Phase 1; `-EnforceCoverage` makes a
-miss fail the run. Windows-only code paths count as missed on Linux, so compare Windows numbers.
+percentage per folder. `-CoverageTarget` (overall) and `-CoverageTargets` (per folder, e.g.
+`@{ 'src/Core' = 80; 'src/Repair' = 80 }`, or `'src/Core=80,src/Repair=80'` from `pwsh -File`)
+are report-only unless `-EnforceCoverage` is given; then any missed target fails the run. CI
+enforces Core, Repair, and overall at 80% on the Windows pwsh 7 leg (Phase 4) and writes the
+table to the job summary and `coverage-summary.json`. Windows-only code paths count as missed on
+Linux, so compare Windows numbers.
 
 **`build/Invoke-Lint.ps1`** runs PSScriptAnalyzer with
 [`PSScriptAnalyzerSettings.psd1`](PSScriptAnalyzerSettings.psd1) over `src`, `OmniDiag.ps1`,
@@ -71,7 +75,12 @@ ones. Point the VS Code PowerShell extension at the same settings file
 - lint
 - tests on Windows pwsh 7, Windows PowerShell 5.1, Ubuntu pwsh, and Windows 11 ARM64
   (all four block merges)
-- a coverage report from the Windows pwsh leg (job summary and `test-results` artifact)
+- the coverage gate on the Windows pwsh leg (Core, Repair, overall >= 80%; job summary and
+  `test-results` artifact), plus a check that an elevated `report` has the elevation-only data
+- a standard-user leg (`standard-user` job): the suite, `report`, and `scan` run as a throwaway
+  local non-admin account (`build/Invoke-AsStandardUser.ps1`) and are validated with
+  `build/Test-PrivilegeReport.ps1` against an elevated report from the same machine
+- an OS-info line on every Windows leg (edition and build, for `docs/VERIFICATION.md`)
 - the runtime no-network test and the performance measurement (see below)
 - the portable package build (zip and `.sha256` uploaded as an artifact)
 - dependency review on pull requests
