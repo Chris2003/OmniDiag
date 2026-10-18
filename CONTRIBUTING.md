@@ -70,12 +70,44 @@ ones. Point the VS Code PowerShell extension at the same settings file
 
 - lint
 - tests on Windows pwsh 7, Windows PowerShell 5.1, Ubuntu pwsh, and Windows 11 ARM64
-  (the ARM64 leg doesn't block merges yet)
+  (all four block merges)
 - a coverage report from the Windows pwsh leg (job summary and `test-results` artifact)
+- the runtime no-network test and the performance measurement (see below)
 - the portable package build (zip and `.sha256` uploaded as an artifact)
 - dependency review on pull requests
 
 Actions are pinned to commit SHAs, and Dependabot proposes updates weekly.
+
+### Runtime no-network test and performance measurement
+
+Two scripts in `build/` back the Phase 2 gates. Both write a JSON and a Markdown summary
+(and append the Markdown to the GitHub job summary when run in CI).
+
+**`build/Test-NoNetworkRuntime.ps1`** (Windows, elevated; CI job `no-network`) proves a
+default scan makes no outbound network attempt. It enables Windows Filtering Platform
+connection auditing and process-creation auditing, turns on the DNS-Client operational
+log, and adds outbound firewall block rules for `pwsh.exe` / `powershell.exe`. It then runs
+a positive control (a TCP connect to `1.1.1.1:443` plus a name lookup, which must be
+detected), `omnidiag scan --format json`, and `omnidiag report`, and fails on any outbound
+connection (allowed or blocked, loopback excluded) or DNS query from their process trees.
+When the CLI supports `--network-probes`, an extra opt-in run is reported for information.
+Everything is restored afterwards. Exit codes: 0 pass, 1 violation or undetected control,
+2 could not run (not Windows, not elevated, setup error).
+
+```powershell
+pwsh -NoProfile -File .\build\Test-NoNetworkRuntime.ps1     # elevated
+```
+
+**`build/Measure-ScanPerformance.ps1`** (any OS; CI job `performance`, soft gate) runs the
+full default scan `-Runs` times (default 3) in fresh child processes, plus `omnidiag version`
+for startup cost, and reports per-run and median wall time and the slowest modules (from
+the JSON report's `durationMs`). `-Enforce` makes a median over `-BudgetSeconds` (default
+60) exit 1.
+
+```powershell
+.\build\Measure-ScanPerformance.ps1
+.\build\Measure-ScanPerformance.ps1 -Runs 5 -Enforce
+```
 
 ### No-network rule and allowlist
 
