@@ -12,7 +12,8 @@ is the "v1.0 target" section of [ARCHITECTURE.md](ARCHITECTURE.md).
 | 0 — Reconnaissance | ✅ Done 2026-10-18 | 0.4.1 | Baseline below; decisions approved (ROADMAP.md) |
 | 1 — Foundation | ✅ Done 2026-10-18 | 0.5.0 | PR #2; CI run 39154720085 green on all legs |
 | 2 — Diagnostic modules | ✅ Done 2026-10-18 | 0.6.0 + 0.7.0 | PR #4 (wave A), PR #5 (wave B); CI run 39164402996 green on all legs |
-| 3 — Interfaces & UX | Next | — | — |
+| 3 — Interfaces & UX | ✅ Done 2026-10-18 (GUI startup carried to Phase 4) | 0.8.0 | PR #6; CI run 39169868812 green on all legs |
+| 4 — Hardening & verification | Next | — | — |
 
 ### Phase 1 results (0.5.0)
 
@@ -38,6 +39,32 @@ is the "v1.0 target" section of [ARCHITECTURE.md](ARCHITECTURE.md).
 - **Unverified on real clients**: `.cmd` exit-code pass-through on a desktop, the real elevation
   path for exit 4, Windows 10/11 client behavior (hosted runners are Windows Server).
 - `ARM64` leg is non-blocking until it has a green history (green so far).
+
+### Phase 3 results (0.8.0)
+
+| Acceptance criterion | Result | Evidence |
+|---|---|---|
+| `Get-Help` shows at least one example for every public cmdlet | ✅ | `Tests/PublicApi.Tests.ps1` (curated cmdlet list; SYNOPSIS, DESCRIPTION, EXAMPLE) |
+| Redaction fixture leaves zero planted identifiers in JSON, HTML, CSV, Markdown, PDF, ZIP, and file names | ✅ | `Tests/Reporting.Redaction.Tests.ps1`, plus regression tests for every leak the reviewer found (domain without `USERDNSDOMAIN`, device/UNC/WSL profile paths, MAC/IPv6 next to ':', 5.1 `\u0027` escapes) |
+| Repair without `--apply` performs no action | ✅ | `Tests/Repair.Audit.Tests.ps1`, `Tests/Cli.Commands.Tests.ps1` (marker file never written, no audit entry); deprecated `-WhatIf` creates no restore point (`Tests/Repair.Engine.Tests.ps1`) |
+| UI Automation: a name on every focusable control and full Tab traversal | ✅ | `Tests/UI.Accessibility.Tests.ps1` ran the real window on Windows pwsh 7, Windows PowerShell 5.1, and ARM64 |
+| GUI first render < 2 s | ❌ carried to Phase 4 | 2.8 s (pwsh 7), 3.7 s (5.1), 3.4 s (ARM64). XAML parsing is 1.6–2.6 s of it; plan: render a small shell first and load each section's XAML on first use |
+| Manual Narrator / High Contrast checklist | ⏳ owner | Checklist in `docs/GUI.md`; needs a Windows desktop |
+
+Other results: Windows pwsh 7 980 passed / 0 failed, Windows PowerShell 5.1 976 / 0, ARM64
+980 / 0, Ubuntu 967 / 0; runtime no-network test PASS; full scan median 21.6 s; CLI startup 1.2 s.
+
+**How Phase 3 ran:** 3 parallel agents (CLI/PowerShell, redaction, GUI), a reviewer, and a
+fixer. The reviewer found 3 High privacy leaks in redaction before merge; all fixed with tests.
+Integration fixes by the lead: the if-expression unrolling bug (twice), `GetNewClosure` over
+validated parameters on 5.1 (132 test failures from one line), and Pester mocks that stopped
+reaching a nested module after other test files ran (replaced with a context seam).
+
+**Open risks after Phase 3**
+- GUI startup above target (see table).
+- The GUI's background runspaces still call deprecated names (harmless now; must move to the
+  new cmdlets before the old names are removed).
+- Accessibility verified by automation only; the Narrator / High Contrast pass is manual.
 
 ### Phase 2 results (0.6.0 wave A, 0.7.0 wave B)
 
