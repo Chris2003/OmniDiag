@@ -3,7 +3,7 @@
     # OmniDiag module manifest
     # ---------------------------------------------------------------------
     RootModule        = 'OmniDiag.psm1'
-    ModuleVersion     = '0.6.0'
+    ModuleVersion     = '0.7.0'
     GUID              = 'b6e9d0c2-7a4d-4f3e-9c1a-0d2f5a8e10b4'
     Author            = 'OmniDiag Contributors'
     CompanyName       = 'OmniDiag'
@@ -123,7 +123,7 @@
             Tags         = @('Windows', 'Diagnostics', 'IT', 'Sysadmin', 'Troubleshooting', 'EventLog')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/Chris2003/OmniDiag'
-            ReleaseNotes = '0.6.0: opt-in connectivity probes (--network-probes / -NetworkProbes), runspace-pool engine with per-module timeouts and structured skips, group cmdlets (Get-OmniDiag<Group>, Invoke-OmniDiagScan, Get-OmniDiagModule, Get-OmniDiagGroup) and the omnidiag <group> shorthand. 0.5.0: module contract v1 (stable Id, Group, NetworkAccess, TimeoutSec, SupportedArchitectures on every scanner and repair), versioned JSON report schema v1 (schemas/omnidiag-report.v1.json) with a Markdown exporter, documented exit codes, and the omnidiag CLI router (list, scan, report, version, help).'
+            ReleaseNotes = '0.7.0: all ten v1.0 module groups complete - routes, listening ports, local administrators, Reliability Monitor, crash dumps, TRIM, update history, service and startup persistence, unsigned/third-party drivers, handle counts, OS support status; no tool-output parsing where an API exists. 0.6.0: opt-in connectivity probes (--network-probes / -NetworkProbes), runspace-pool engine with per-module timeouts and structured skips, group cmdlets (Get-OmniDiag<Group>, Invoke-OmniDiagScan, Get-OmniDiagModule, Get-OmniDiagGroup) and the omnidiag <group> shorthand. 0.5.0: module contract v1 (stable Id, Group, NetworkAccess, TimeoutSec, SupportedArchitectures on every scanner and repair), versioned JSON report schema v1 (schemas/omnidiag-report.v1.json) with a Markdown exporter, documented exit codes, and the omnidiag CLI router (list, scan, report, version, help).'
         }
     }
 }

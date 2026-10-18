@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+
+Phase 2, wave B of the v1.0 roadmap: every v1.0 module group is complete. Nine new scanners;
+all new and changed findings have stable Ids without live values.
+
+### Services & startup
+- Services: counts by start type; per-service crash (7031/7034) and start-failure
+  (7000/7009/7011) history from the System log over the scan range.
+- Drivers: unsigned and third-party drivers, running system drivers outside the driver folders,
+  and one finding per problem device with the Device Manager error meaning and a fix.
+- New `startup.service-persistence`: auto-start services in user-writable or non-standard
+  folders, and unquoted service paths.
+- New `startup.startup-folders`: per-user and all-users Startup entries with shortcut targets;
+  flags risky locations and script hosts.
+- Scheduled Tasks: non-Microsoft logon/boot tasks with their actions; flags user-writable and
+  script-host actions.
+
+### Performance, events & reliability
+- Handle and thread totals and the top processes by handle count (Warning above 10,000).
+- Event hints for disk 153, Ntfs 137, and the BugCheck / WER 1001 sources; Ntfs 98 keeps its
+  logged level; event and reliability findings have stable Ids.
+- New `reliability.reliability-monitor`: System Stability Index (latest, trend) and failure
+  records by product, bounded to the time range.
+- New `reliability.crash-dumps`: minidump and MEMORY.DMP inventory plus crash-dump settings.
+- Reliability, VPN, and Intune event queries are bounded.
+
+### Storage & updates
+- New `storage.trim`: TRIM state for NTFS and ReFS from the registry, correlated with SSDs.
+- New `updates.update-history`: local Windows Update history (last successful install, failed
+  installs with HRESULT), read-only and offline (never searches Windows Update).
+- Pending reboot is reported once (Windows Health).
+- Fixed: Windows Health no longer runs `sfc /verifyonly`; scanners are read-only.
+
+### Network & security
+- New `network.routes`: default routes, equal-metric ambiguity, persistent routes.
+- New `network.listening-ports`: listeners with owning process and services; FTP, Telnet,
+  RDP, and WinRM bound to all interfaces are Warnings, SMB is Information.
+- New `security.local-admins`: Administrators by SID and the built-in Administrator check; on
+  domain/Entra-joined devices members are listed only with `--network-probes` (name
+  resolution can contact a domain controller).
+- WinHTTP proxy read from the registry; `netsh` fallback and Wi-Fi parsing no longer depend on
+  the display language. UAC also checks `ConsentPromptBehaviorAdmin` and `PromptOnSecureDesktop`.
+
+### System & extras
+- System: Windows support status (version, release, edition, end-of-servicing table; Windows
+  10 22H2 end-of-support notice), architecture check, and TPM / Secure Boot states including
+  "requires elevation" and legacy BIOS.
+- System and System Information no longer report the same facts; the GUI panel and the
+  scanner share `Get-OmniSystemInventory`.
+- Entra ID reads join state from the registry; `dsregcmd /status` (needs Entra connectivity)
+  runs only with `--network-probes`.
+- Time Synchronization reads registry configuration and Time-Service events instead of
+  localized `w32tm` output and never contacts a time server.
+
+### Workflows
+- New scanners added to the relevant task workflows; QuickTriage, LoginAndIdentity,
+  CloudReadiness, and SecurityPosture include the System health checks.
+
+
 ## 0.6.0 (unreleased)
 
 Phase 2, wave A of the v1.0 roadmap: the shared foundation for the module groups.

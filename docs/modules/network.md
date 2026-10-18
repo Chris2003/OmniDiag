@@ -57,12 +57,12 @@ for example `TermService`). The full table is in the `Listeners` metric. Checks:
   Windows process name. This is a heuristic on file metadata, not a signature check: an
   Authenticode check can fetch revocation data from the network, which a default scan never
   does.
-- FTP (21), Telnet (23), SMB (445), Remote Desktop (3389), and WinRM (5985 / 5986) listening
-  on every interface over TCP are each a Warning that asks you to confirm the firewall scope
-  for that port. The scanner does not read firewall rules for the port and makes no
-  connection attempt, so the Warning says the port is bound, not that it is reachable. SMB
-  445 is bound on most Windows installations; review its firewall scope (normally not open
-  on the Public profile).
+- FTP (21), Telnet (23), Remote Desktop (3389), and WinRM (5985 / 5986) listening on every
+  interface over TCP are each a Warning that asks you to confirm the firewall scope for that
+  port. SMB (445) is bound on almost every Windows installation by default, so it is reported
+  as Information with the same advice (it should normally not be open on the Public
+  profile). The scanner does not read firewall rules for the port and makes no connection
+  attempt, so the finding says the port is bound, not that it is reachable.
 
 **Network.** Active adapters (`Status = Up`), adapters with more than 1000 receive + send
 errors, the IPv4 default gateway, and (with probes) gateway / public-address / DNS
@@ -178,7 +178,7 @@ run**, whose recommendation says how to run the probe.
 | Hosts File | Hosts file is clean | Pass | No warning |
 | IP Configuration | APIPA address on *adapter* (DHCP failure) | Warning | 169.254.x.x address |
 | IP Configuration | IP configuration valid | Pass | No warning |
-| Listening Ports | *Service* (TCP *port*) listens on all interfaces | Warning | TCP 21, 23, 445, 3389, 5985, or 5986 bound to `0.0.0.0` or `::` |
+| Listening Ports | *Service* (TCP *port*) listens on all interfaces | Warning (Information for 445) | TCP 21, 23, 445, 3389, 5985, or 5986 bound to `0.0.0.0` or `::` |
 | Listening Ports | *n* non-Microsoft listener(s) on all interfaces | Information | A non-Windows program listens on every interface (TCP or UDP) |
 | Listening Ports | Some listener program paths require elevation | Information | Standard user and a non-Windows owner's path is unreadable |
 | Listening Ports | Listening ports not available | Information | `Get-NetTCPConnection` missing or failing |

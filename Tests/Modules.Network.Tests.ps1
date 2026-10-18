@@ -241,6 +241,8 @@ Describe 'Listening Ports scanner' {
         $r = Invoke-PluginScan -Module $script:PortsMod -Context (New-TestContext)
         foreach ($port in @(21, 23, 445, 5985, 5986)) {
             (Get-FindingById $r "network-listening-ports-exposed-$port").Count | Should -Be 1 -Because "TCP $port"
+            $expected = if ($port -eq 445) { 'Information' } else { 'Warning' }
+            (Get-FindingById $r "network-listening-ports-exposed-$port")[0].Severity | Should -Be $expected -Because "TCP $port"
         }
         (Get-FindingById $r 'network-listening-ports-exposed-3389').Count | Should -Be 0
         (Get-FindingById $r 'network-listening-ports-third-party-all-interfaces').Count | Should -Be 0

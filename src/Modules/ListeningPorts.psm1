@@ -28,14 +28,16 @@ if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
     Import-Module (Join-Path $PSScriptRoot '..\Core\Models.psm1') -Global -Force -DisableNameChecking
 }
 
-# TCP ports whose exposure on every interface deserves a firewall-scope review.
+# TCP ports whose exposure on every interface deserves a firewall-scope review. SMB (445)
+# listens on every interface on almost every Windows device by default, so it is reported as
+# Information to avoid a warning on healthy machines; the others are opt-in services.
 $script:OmniRiskyListenPort = @(
-    [pscustomobject]@{ Port = 21;   Service = 'FTP' }
-    [pscustomobject]@{ Port = 23;   Service = 'Telnet' }
-    [pscustomobject]@{ Port = 445;  Service = 'SMB (file and printer sharing)' }
-    [pscustomobject]@{ Port = 3389; Service = 'Remote Desktop' }
-    [pscustomobject]@{ Port = 5985; Service = 'WinRM (HTTP)' }
-    [pscustomobject]@{ Port = 5986; Service = 'WinRM (HTTPS)' }
+    [pscustomobject]@{ Port = 21;   Service = 'FTP';                            Severity = 'Warning' }
+    [pscustomobject]@{ Port = 23;   Service = 'Telnet';                         Severity = 'Warning' }
+    [pscustomobject]@{ Port = 445;  Service = 'SMB (file and printer sharing)'; Severity = 'Information' }
+    [pscustomobject]@{ Port = 3389; Service = 'Remote Desktop';                 Severity = 'Warning' }
+    [pscustomobject]@{ Port = 5985; Service = 'WinRM (HTTP)';                   Severity = 'Warning' }
+    [pscustomobject]@{ Port = 5986; Service = 'WinRM (HTTPS)';                  Severity = 'Warning' }
 )
 
 # Windows processes that own listeners and whose path a standard user cannot read.
@@ -271,7 +273,7 @@ function Invoke-OmniModuleScan {
         $svcName = $risky.Service
         $owner = @($hits | ForEach-Object { if ($_.Services) { "$($_.ProcessName) [$($_.Services)]" } elseif ($_.ProcessName) { $_.ProcessName } else { "PID $($_.ProcessId)" } } | Select-Object -Unique) -join ', '
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id ("network-listening-ports-exposed-{0}" -f $port) `
-            -Title ("{0} (TCP {1}) listens on all interfaces" -f $svcName, $port) -Severity 'Warning' -Component 'Network/Ports' `
+            -Title ("{0} (TCP {1}) listens on all interfaces" -f $svcName, $port) -Severity $risky.Severity -Component 'Network/Ports' `
             -Detail ("TCP port {0} ({1}) is bound to every interface, owned by {2}. Whether it is reachable depends on the Windows Firewall rules for that port." -f $port, $svcName, $owner) `
             -LikelyCause 'The service is enabled on this device; it accepts connections from any network the firewall allows.' `
             -Confidence 60 `
