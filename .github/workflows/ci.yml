@@ -112,7 +112,7 @@ jobs:
     name: No-network runtime test
     needs: test
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     # Runtime half of the no-network enforcement (docs/ARCHITECTURE.md): WFP connection
     # auditing + an outbound firewall block on the PowerShell executables, then a default
     # scan and report; any outbound attempt or DNS query from their process tree fails it.

@@ -240,6 +240,7 @@ function Get-RunNetworkActivity {
         if (-not ($inTree -or $probeTarget)) { continue }
         [pscustomobject]@{
             Time        = $e.TimeCreated.ToString('o')
+            InWindow    = ($e.TimeCreated -ge $Run.Start -and $e.TimeCreated -le $Run.End)
             Event       = $e.Id
             Outcome     = if ($e.Id -eq 5157) { 'blocked' } else { 'allowed' }
             ProcessId   = $procId
@@ -262,6 +263,7 @@ function Get-RunNetworkActivity {
             if (-not ($inTree -or $probeName)) { continue }
             [pscustomobject]@{
                 Time      = $e.TimeCreated.ToString('o')
+                InWindow  = ($e.TimeCreated -ge $Run.Start -and $e.TimeCreated -le $Run.End)
                 ProcessId = [long]$e.ProcessId
                 QueryName = $name
                 Matched   = if ($inTree) { 'process tree' } else { 'probe name (any process)' }
@@ -271,6 +273,7 @@ function Get-RunNetworkActivity {
 
     [pscustomobject]@{
         ProcessTree = $tree.Children
+        Pids        = @($pidSet)
         Connections = @($connections)
         DnsQueries  = @($dns)
     }
@@ -283,6 +286,7 @@ $dnsWasEnabled = $null
 $script:DnsLogEnabled = $false
 $runs = [System.Collections.Generic.List[object]]::new()
 $setupNotes = [System.Collections.Generic.List[string]]::new()
+$script:Attribution = $null   # set only when the scan reached the network
 $harnessError = $null
 $envBackup = @{}
 
@@ -358,6 +362,10 @@ try { [void][System.Net.Dns]::GetHostAddresses('$controlName') } catch { 'dns: '
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($controlCommand))
     $runs.Add((Invoke-ChildRun -Name 'control' -Arguments ($common + @('-EncodedCommand', $encoded))))
 
+    # Baseline: start the CLI and load the module without scanning, so network activity that
+    # comes from PowerShell or module import (not a scanner) is told apart.
+    $runs.Add((Invoke-ChildRun -Name 'import' -Arguments ($common + @('-File', $cli, 'version'))))
+
     # b, c. Default scan and report.
     $runs.Add((Invoke-ChildRun -Name 'scan' -Arguments ($common + @('-File', $cli, 'scan', '--format', 'json', '--output', (Join-Path $work 'scan.json'), '--quiet'))))
     $runs.Add((Invoke-ChildRun -Name 'report' -Arguments ($common + @('-File', $cli, 'report', '--output', (Join-Path $work 'report'), '--quiet'))))
@@ -379,8 +387,26 @@ try { [void][System.Net.Dns]::GetHostAddresses('$controlName') } catch { 'dns: '
     foreach ($run in $runs) {
         $activity = Get-RunNetworkActivity -Run $run -ProbeTargets $probeTargets
         $run | Add-Member -NotePropertyName ProcessTree -NotePropertyValue $activity.ProcessTree
+        $run | Add-Member -NotePropertyName Pids -NotePropertyValue $activity.Pids
         $run | Add-Member -NotePropertyName Connections -NotePropertyValue $activity.Connections
         $run | Add-Member -NotePropertyName DnsQueries -NotePropertyValue $activity.DnsQueries
+    }
+
+    # Attribution: if the default scan reached the network, re-run each scanner on its own so
+    # the report names the module(s) responsible.
+    $scanRun = $runs | Where-Object Name -eq 'scan' | Select-Object -First 1
+    if ($scanRun -and (@($scanRun.Connections | Where-Object Matched -eq 'process tree').Count + @($scanRun.DnsQueries | Where-Object Matched -eq 'process tree').Count) -gt 0) {
+        $list = Invoke-ChildRun -Name 'list-modules' -Arguments ($common + @('-File', $cli, 'list', 'modules', '--format', 'json'))
+        $ids = @()
+        try { $ids = @(($list.Stdout | ConvertFrom-Json).items | ForEach-Object { $_.id }) } catch { $setupNotes.Add("Attribution skipped: could not list modules ($($_.Exception.Message)).") }
+        $script:Attribution = [System.Collections.Generic.List[object]]::new()
+        foreach ($id in $ids) {
+            $one = Invoke-ChildRun -Name "module-$id" -Arguments ($common + @('-File', $cli, 'scan', '--module', $id, '--format', 'json', '--output', (Join-Path $work "module-$id.json"), '--quiet'))
+            Start-Sleep -Seconds 2
+            $act = Get-RunNetworkActivity -Run $one -ProbeTargets @()
+            $hits = @($act.Connections | Where-Object Matched -eq 'process tree' | ForEach-Object { $_.Destination }) + @($act.DnsQueries | Where-Object Matched -eq 'process tree' | ForEach-Object { 'dns:' + $_.QueryName })
+            if ($hits.Count -gt 0) { $script:Attribution.Add([pscustomobject]@{ Module = $id; Activity = @($hits | Select-Object -Unique) }) }
+        }
     }
 } catch {
     $harnessError = "$($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber))"
@@ -421,10 +447,36 @@ if (-not $harnessError) {
         if (-not $dnsByName) { $failures.Add("Positive control: the DNS query for $controlName was NOT detected; the DNS check would be vacuous.") }
         elseif (-not $dnsByPid) { $notes.Add('DNS control was seen by name but not attributed to its PID: DNS queries are only checked against the known probe names.') }
     }
-    foreach ($name in 'scan', 'report') {
+    # PIDs owned by other runs (e.g. the positive control) never count against scan/report.
+    $pidOwner = @{}
+    foreach ($r in $runs) { foreach ($p in @($r.Pids)) { $pidOwner[[long]$p] = $r.Name } }
+    foreach ($name in 'import', 'scan', 'report') {
+        if (-not $runByName.ContainsKey($name)) { continue }
         $r = $runByName[$name]
-        foreach ($c in $r.Connections) { $failures.Add("[$name] $($c.Outcome) connection to $($c.Destination) (protocol $($c.Protocol)) by PID $($c.ProcessId) $($c.Application) [$($c.Matched)]") }
-        foreach ($q in $r.DnsQueries) { $failures.Add("[$name] DNS query for $($q.QueryName) by PID $($q.ProcessId) [$($q.Matched)]") }
+        foreach ($c in $r.Connections) {
+            $owner = $pidOwner[[long]$c.ProcessId]
+            if ($c.Matched -ne 'process tree') {
+                # Any-process matches exist for ICMP, which Windows attributes to System (PID 4).
+                # Count them only from System, inside this run's exact window, and not owned by another run.
+                if ($owner -or -not $c.InWindow -or [long]$c.ProcessId -ne 4) {
+                    $notes.Add("[$name] ignored any-process match: $($c.Outcome) $($c.Destination) by PID $($c.ProcessId) $($c.Application)$(if ($owner) { " (belongs to run '$owner')" })")
+                    continue
+                }
+            }
+            $failures.Add("[$name] $($c.Outcome) connection to $($c.Destination) (protocol $($c.Protocol)) by PID $($c.ProcessId) $($c.Application) [$($c.Matched)]")
+        }
+        foreach ($q in $r.DnsQueries) {
+            if ($q.Matched -ne 'process tree') {
+                $notes.Add("[$name] DNS query for $($q.QueryName) by PID $($q.ProcessId), not in this run's process tree (informational).")
+                continue
+            }
+            $failures.Add("[$name] DNS query for $($q.QueryName) by PID $($q.ProcessId) [$($q.Matched)]")
+        }
+    }
+    if ($script:Attribution -and $script:Attribution.Count -gt 0) {
+        foreach ($a in $script:Attribution) { $notes.Add("Attribution: module '$($a.Module)' reached $($a.Activity -join ', ')") }
+    } elseif ($null -ne $script:Attribution) {
+        $notes.Add('Attribution: no single module reproduced the activity on its own (it comes from engine/module loading or a combination).')
     }
     if ($runByName.ContainsKey('network-probes')) {
         $pr = $runByName['network-probes']
