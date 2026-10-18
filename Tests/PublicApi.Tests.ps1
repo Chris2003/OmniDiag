@@ -164,7 +164,7 @@ Describe 'Deprecation warnings' {
     It 'warns once per session when a user calls an old name' {
         $first = Get-ExternalWarning -Command 'Import-OmniSession -Path $args[0] | Out-Null' -ArgumentList @($script:LastPath)
         @($first).Count | Should -Be 1
-        $first[0] | Should -BeLike 'Import-OmniSession is deprecated; use Import-OmniDiagSession*'
+        @($first)[0] | Should -BeLike 'Import-OmniSession is deprecated; use Import-OmniDiagSession*'
         $second = Get-ExternalWarning -Command 'Import-OmniSession -Path $args[0] | Out-Null' -ArgumentList @($script:LastPath)
         @($second).Count | Should -Be 0
     }
@@ -175,7 +175,7 @@ Describe 'Deprecation warnings' {
     ) {
         $w = Get-ExternalWarning -Command $Command -ArgumentList @($script:PreviousPath, $script:LastPath, $script:Repairs)
         @($w).Count | Should -Be 1
-        $w[0] | Should -BeLike "$Old is deprecated; use $New*"
+        @($w)[0] | Should -BeLike "$Old is deprecated; use $New*"
     }
 
     It 'is silenced by OMNIDIAG_NO_DEPRECATION_WARNING' {

@@ -4,103 +4,312 @@
   "title": "OmniDiag catalog listing (schema v1)",
   "description": "Document written by 'omnidiag list <kind> --format json'. Versioning follows SemVer, like the report schema; see docs/SCHEMA.md.",
   "type": "object",
-  "required": ["schemaVersion", "kind", "tool", "items"],
+  "required": [
+    "schemaVersion",
+    "kind",
+    "tool",
+    "items"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schemaVersion": { "type": "string", "pattern": "^1\\.[0-9]+\\.[0-9]+$" },
-    "kind": { "enum": ["modules", "groups", "repairs", "plans"] },
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$"
+    },
+    "kind": {
+      "enum": [
+        "modules",
+        "groups",
+        "repairs",
+        "plans"
+      ]
+    },
     "tool": {
       "type": "object",
-      "required": ["name", "version"],
+      "required": [
+        "name",
+        "version"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "const": "OmniDiag" },
-        "version": { "type": "string", "minLength": 1 }
+        "name": {
+          "const": "OmniDiag"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
-    "items": { "type": "array" }
+    "items": {
+      "type": "array"
+    }
   },
   "allOf": [
     {
-      "if": { "properties": { "kind": { "const": "modules" } } },
-      "then": { "properties": { "items": { "items": { "$ref": "#/$defs/module" } } } }
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "modules"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/module"
+            }
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "kind": { "const": "groups" } } },
-      "then": { "properties": { "items": { "items": { "$ref": "#/$defs/group" } } } }
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "groups"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/group"
+            }
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "kind": { "const": "repairs" } } },
-      "then": { "properties": { "items": { "items": { "$ref": "#/$defs/repair" } } } }
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "repairs"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/repair"
+            }
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "kind": { "const": "plans" } } },
-      "then": { "properties": { "items": { "items": { "$ref": "#/$defs/plan" } } } }
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "plans"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/plan"
+            }
+          }
+        }
+      }
     }
   ],
   "$defs": {
-    "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
-    "groupId": {
-      "enum": ["system", "performance", "services", "startup", "events", "reliability", "storage", "network", "updates", "security", "extras"]
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
     },
-    "networkAccess": { "enum": ["None", "LocalNetwork", "Internet"] },
+    "groupId": {
+      "enum": [
+        "system",
+        "performance",
+        "services",
+        "startup",
+        "events",
+        "reliability",
+        "storage",
+        "network",
+        "updates",
+        "security",
+        "extras"
+      ]
+    },
+    "networkAccess": {
+      "enum": [
+        "None",
+        "LocalNetwork",
+        "Internet"
+      ]
+    },
     "module": {
       "type": "object",
-      "required": ["id", "name", "group", "category", "requiresElevation", "networkAccess", "timeoutSec", "supportedArchitectures", "enabled", "description"],
+      "required": [
+        "id",
+        "name",
+        "group",
+        "category",
+        "requiresElevation",
+        "networkAccess",
+        "timeoutSec",
+        "supportedArchitectures",
+        "enabled",
+        "description"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "name": { "type": "string", "minLength": 1 },
-        "group": { "$ref": "#/$defs/groupId" },
-        "category": { "type": "string" },
-        "requiresElevation": { "type": "boolean" },
-        "networkAccess": { "$ref": "#/$defs/networkAccess" },
-        "timeoutSec": { "type": "integer", "minimum": 1 },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "group": {
+          "$ref": "#/$defs/groupId"
+        },
+        "category": {
+          "type": "string"
+        },
+        "requiresElevation": {
+          "type": "boolean"
+        },
+        "networkAccess": {
+          "$ref": "#/$defs/networkAccess"
+        },
+        "timeoutSec": {
+          "type": "integer",
+          "minimum": 1
+        },
         "supportedArchitectures": {
           "type": "array",
           "minItems": 1,
-          "items": { "enum": ["x64", "arm64"] }
+          "items": {
+            "enum": [
+              "x64",
+              "arm64"
+            ]
+          }
         },
-        "enabled": { "type": "boolean" },
-        "description": { "type": "string" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        }
       }
     },
     "group": {
       "type": "object",
-      "required": ["id", "name", "moduleCount"],
+      "required": [
+        "id",
+        "name",
+        "moduleCount"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/groupId" },
-        "name": { "type": "string" },
-        "moduleCount": { "type": "integer", "minimum": 0 }
+        "id": {
+          "$ref": "#/$defs/groupId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "moduleCount": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "repair": {
       "type": "object",
-      "required": ["id", "name", "category", "risk", "requiresElevation", "networkAccess", "restorePoint", "rebootHint", "description"],
+      "required": [
+        "id",
+        "name",
+        "category",
+        "risk",
+        "requiresElevation",
+        "networkAccess",
+        "restorePoint",
+        "rebootHint",
+        "description"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "name": { "type": "string", "minLength": 1 },
-        "category": { "type": "string" },
-        "risk": { "enum": ["Safe", "Moderate", "Destructive"] },
-        "requiresElevation": { "type": "boolean" },
-        "networkAccess": { "$ref": "#/$defs/networkAccess" },
-        "restorePoint": { "type": "boolean" },
-        "rebootHint": { "type": "boolean" },
-        "description": { "type": "string" }
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string"
+        },
+        "risk": {
+          "enum": [
+            "Safe",
+            "Moderate",
+            "Destructive"
+          ]
+        },
+        "requiresElevation": {
+          "type": "boolean"
+        },
+        "networkAccess": {
+          "$ref": "#/$defs/networkAccess"
+        },
+        "restorePoint": {
+          "type": "boolean"
+        },
+        "rebootHint": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "recommended": {
+          "type": "boolean",
+          "description": "Present with 'repair list --from-session': the repair addresses a finding in that session."
+        }
       }
     },
     "plan": {
       "type": "object",
-      "required": ["name", "type", "description", "allModules", "moduleIds"],
+      "required": [
+        "name",
+        "type",
+        "description",
+        "allModules",
+        "moduleIds"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "type": { "enum": ["profile", "workflow"] },
-        "description": { "type": "string" },
-        "allModules": { "type": "boolean" },
-        "moduleIds": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "enum": [
+            "profile",
+            "workflow"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "allModules": {
+          "type": "boolean"
+        },
+        "moduleIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
       }
     }
   }
