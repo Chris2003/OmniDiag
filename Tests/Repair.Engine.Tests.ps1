@@ -133,6 +133,28 @@ Export-ModuleMember -Function @('Get-OmniRepairManifest','Invoke-OmniRepairActio
         $session.Results[0].Status | Should -Not -Be 'Skipped'
     }
 
+    It 'creates no restore point under the deprecated -WhatIf: it is a dry run' {
+        # A recording provider instead of Mock: mocks don't reliably reach the nested engine module.
+        $calls = [System.Collections.Generic.List[string]]::new()
+        $ctx = New-OmniRepairContext -Logger $script:Logger
+        $ctx | Add-Member -NotePropertyName RestorePointProvider -NotePropertyValue ({ param($d, $l) $calls.Add($d); [pscustomobject]@{ Status = 'Created'; Protected = $true; Message = 'test' } }.GetNewClosure())
+        $session = Invoke-OmniRepair -Registration $script:Risky -Context $ctx -WhatIf 3>$null
+        $calls.Count | Should -Be 0
+        $session.RestorePoint | Should -BeNullOrEmpty
+        $session.DryRun | Should -BeTrue
+        $session.Results[0].Status | Should -Be 'DryRun'
+        $ctx.DryRun | Should -BeFalse -Because 'the caller context is not modified'
+    }
+
+    It 'creates the restore point when the RestorePoint repair really runs (control)' {
+        $calls = [System.Collections.Generic.List[string]]::new()
+        $ctx = New-OmniRepairContext -Logger $script:Logger
+        $ctx | Add-Member -NotePropertyName RestorePointProvider -NotePropertyValue ({ param($d, $l) $calls.Add($d); [pscustomobject]@{ Status = 'Created'; Protected = $true; Message = 'test' } }.GetNewClosure())
+        $session = Invoke-OmniRepair -Registration $script:Risky -Context $ctx -Confirm:$false 3>$null
+        $calls.Count | Should -Be 1
+        $session.Results[0].Status | Should -Not -Be 'Skipped'
+    }
+
     It 'stops a step that starts after cancellation' {
         $cts = [System.Threading.CancellationTokenSource]::new(); $cts.Cancel()
         $ctx = New-OmniRepairContext -Logger $script:Logger -CancellationToken $cts.Token

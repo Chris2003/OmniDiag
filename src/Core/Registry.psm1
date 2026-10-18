@@ -388,8 +388,41 @@ function New-OmniContext {
             ComputerName = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [System.Environment]::MachineName }
             UserName     = if ($env:USERNAME) { $env:USERNAME } else { [System.Environment]::UserName }
             PSVersion    = $PSVersionTable.PSVersion.ToString()
+            # Saved with the session so redaction knows the domains even when the session
+            # is redacted later, elsewhere, or was collected as SYSTEM / a local account.
+            Domain       = [string]$env:USERDOMAIN
+            DnsDomain    = (Get-OmniHostDnsDomain)
         }
     }
+}
+
+function Get-OmniHostDnsDomain {
+    <#
+    .SYNOPSIS
+        Internal: the machine's primary DNS domain (corp.contoso.com), or '' when there is none.
+
+    .DESCRIPTION
+        Read from the TCP/IP parameters in the registry (Domain, then NV Domain), which is
+        set on domain-joined machines regardless of who runs OmniDiag (SYSTEM, a local
+        account). Falls back to $env:USERDNSDOMAIN. A local registry read: no network I/O.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $key = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters'
+    try {
+        if (Test-Path -LiteralPath $key) {
+            $props = Get-ItemProperty -LiteralPath $key -ErrorAction Stop
+            foreach ($n in @('Domain', 'NV Domain')) {
+                $p = $props.PSObject.Properties[$n]
+                if ($p -and -not [string]::IsNullOrWhiteSpace([string]$p.Value)) { return ([string]$p.Value).Trim() }
+            }
+        }
+    } catch {
+        Write-Verbose "DNS domain not readable from the registry: $($_.Exception.Message)"
+    }
+    if ($env:USERDNSDOMAIN) { return [string]$env:USERDNSDOMAIN }
+    return ''
 }
 
 function Get-OmniModule {

@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.8.0 (unreleased)
+
+Phase 3 of the v1.0 roadmap: interfaces and UX.
+
+### Sharing reports safely
+- **Report redaction:** `--redact` (CLI), `-Redact` (`Export-OmniDiagReport`,
+  `Invoke-OmniDiagReport`), and a GUI export option replace host, user, and domain names,
+  the FQDN, profile folders, account SIDs, and IPv4/IPv6/MAC addresses with stable pseudonyms
+  (`HOST-1`, `USER-1`, `IP-1`, ...) in HTML, JSON, CSV, Markdown, PDF, the ZIP (incl. its
+  README and run log), and file names. The session itself is never changed. `-Salt` keeps
+  pseudonyms aligned across bundles; `--redaction-map` / `-RedactionMapPath` writes a
+  local-only mapping file. See docs/REDACTION.md.
+- Report schema 1.1.0 (additive): optional `options.redacted`.
+
+### Command line
+- `omnidiag repair list [--from-session]` and `repair run <id>... (--what-if | --apply [--yes])`:
+  nothing changes without `--apply`; y/N per repair, `--yes` required when stdin isn't
+  interactive; exit codes 4/11/12.
+- `omnidiag compare <before> <after>` (paths, report zips, `last`, `previous`; text, JSON, or
+  Markdown), `omnidiag gui`, `--elevated-only`, `report --bundle`, `report --from-session`.
+- **Repair audit log:** every applied repair step is appended to
+  `OmniDiagData\logs\repair-audit.jsonl` from the CLI, console, GUI, and cmdlets. Dry runs are
+  never audited.
+
+### PowerShell
+- Curated cmdlets with full help: `Invoke-OmniDiagScan`, `Get-OmniDiag<Group>`,
+  `Invoke-OmniDiagReport`, `Export-OmniDiagReport`, `Import-OmniDiagSession`,
+  `Compare-OmniDiagSession`, `Get-OmniDiagRepair`, `Invoke-OmniDiagRepair` (`-WhatIf` = dry
+  run, ConfirmImpact High), `Show-OmniDiagGui`, plus `Get-OmniDiagModule`/`Get-OmniDiagGroup`.
+  New docs/POWERSHELL.md (cmdlets, object types, plugin SDK, deprecations).
+- Deprecated (still working, one-time warning, `OMNIDIAG_NO_DEPRECATION_WARNING=1` hides it):
+  `Invoke-OmniDiag`, `Export-OmniReport`, `Import-OmniSession`, `Compare-OmniSession`,
+  `Invoke-OmniRepairCenter`, `Invoke-OmniRepair`, `Show-OmniDiagWindow`.
+
+### Review fixes
+- Redaction: the machine DNS domain and Domain/DnsDomain/DomainName metrics are redacted even
+  without `USERDNSDOMAIN` (SYSTEM, local accounts, imported sessions); sessions record
+  `Host.Domain` / `Host.DnsDomain`.
+- Redaction: profile folders behind device paths, UNC shares, and WSL mounts; MAC/IPv6
+  addresses glued to labels or followed by ':'; run-log names written as `\u0027`/`\u0026` by
+  Windows PowerShell 5.1.
+- `Invoke-OmniRepair -WhatIf` creates no restore point; `-Confirm` asks before the restore point
+  is created. CLI `--redact` also redacts the stderr status lines.
+- Windows PowerShell 5.1: `Invoke-OmniDiagScan` and the group cmdlets work (no `GetNewClosure`
+  over validated parameters); GUI live regions work (legacy accessibility switches off).
+
+### GUI
+- Screen-reader names on every control and grid row; status and progress announced as live
+  regions; access keys and a logical Tab order with visible focus in every theme.
+- Keyboard shortcuts: F5 scan, Esc cancel, Ctrl+E export, Ctrl+F filter, Alt+T theme, F1 help,
+  Ctrl+1..6 sections, Enter for details / open group (docs/GUI.md).
+- Follows Windows High Contrast live using system colours; severity is always shown as text.
+- Groups view with per-group status, score, worst severity, and counts, with drill-down; All
+  Findings gets a text/severity filter and a detail panel.
+- Export dialog adds Bundle (.zip) and "Redact identifiers for sharing"; export runs in the
+  background. First render is measured; inventory and catalogs load after first paint.
+
+
 ## 0.7.0 (unreleased)
 
 Phase 2, wave B of the v1.0 roadmap: every v1.0 module group is complete. Nine new scanners;

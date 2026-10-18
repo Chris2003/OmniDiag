@@ -68,7 +68,7 @@ Describe 'JSON export' {
         Export-OmniJsonReport -Session $script:Session -Path $path | Should -Be $path
         Test-Path $path | Should -BeTrue
         $obj = Get-Content $path -Raw | ConvertFrom-Json
-        $obj.schemaVersion | Should -Be '1.0.0'
+        $obj.schemaVersion | Should -Be '1.1.0'
         $obj.summary.healthScore | Should -Be $script:Session.Summary.Score
         @($obj.modules).Count | Should -Be 3
     }

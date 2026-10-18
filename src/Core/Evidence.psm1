@@ -120,11 +120,20 @@ function Import-OmniSession {
     .PARAMETER Path
         A saved session, a JSON report, a report package .zip (its data.json is read),
         or a folder (the newest *.json file in it is used).
+
+    .NOTES
+        Deprecated as a user-facing name in 0.8.0: use Import-OmniDiagSession.
+
+    .EXAMPLE
+        $session = Import-OmniSession -Path .\OmniDiagData\sessions\session-20261018-101500.json
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param([Parameter(Mandatory)][string] $Path)
 
+    if (Get-Command Write-OmniDeprecationWarning -ErrorAction SilentlyContinue) {
+        Write-OmniDeprecationWarning -Name 'Import-OmniSession' -Replacement 'Import-OmniDiagSession'
+    }
     if (-not (Test-Path -LiteralPath $Path)) { throw "Saved session not found: $Path" }
     $item = Get-Item -LiteralPath $Path
     if ($item.PSIsContainer) {
@@ -277,6 +286,12 @@ function Compare-OmniSession {
 
     .PARAMETER After
         Later session, or a path to a saved JSON report / package.
+
+    .NOTES
+        Deprecated as a user-facing name in 0.8.0: use Compare-OmniDiagSession.
+
+    .EXAMPLE
+        Compare-OmniSession -Before .\before.json -After .\after.json
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -284,6 +299,10 @@ function Compare-OmniSession {
         [Parameter(Mandatory)][object] $Before,
         [Parameter(Mandatory)][object] $After
     )
+
+    if (Get-Command Write-OmniDeprecationWarning -ErrorAction SilentlyContinue) {
+        Write-OmniDeprecationWarning -Name 'Compare-OmniSession' -Replacement 'Compare-OmniDiagSession'
+    }
 
     if ($Before -is [string]) { $Before = Import-OmniSession -Path $Before }
     if ($After -is [string]) { $After = Import-OmniSession -Path $After }
