@@ -133,6 +133,24 @@ Export-ModuleMember -Function @('Get-OmniRepairManifest','Invoke-OmniRepairActio
         $session.Results[0].Status | Should -Not -Be 'Skipped'
     }
 
+    It 'creates no restore point under the deprecated -WhatIf: it is a dry run' {
+        Mock -ModuleName RepairEngine New-OmniRestorePoint { [pscustomobject]@{ Status = 'Created'; Protected = $true; Message = 'mock' } }
+        $ctx = New-OmniRepairContext -Logger $script:Logger
+        $session = Invoke-OmniRepair -Registration $script:Risky -Context $ctx -WhatIf 3>$null
+        Should -Invoke -ModuleName RepairEngine New-OmniRestorePoint -Times 0 -Exactly
+        $session.RestorePoint | Should -BeNullOrEmpty
+        $session.DryRun | Should -BeTrue
+        $session.Results[0].Status | Should -Be 'DryRun'
+        $ctx.DryRun | Should -BeFalse -Because 'the caller context is not modified'
+    }
+
+    It 'creates the restore point when the RestorePoint repair really runs (mock control)' {
+        Mock -ModuleName RepairEngine New-OmniRestorePoint { [pscustomobject]@{ Status = 'Created'; Protected = $true; Message = 'mock' } }
+        $session = Invoke-OmniRepair -Registration $script:Risky -Context (New-OmniRepairContext -Logger $script:Logger) -Confirm:$false 3>$null
+        Should -Invoke -ModuleName RepairEngine New-OmniRestorePoint -Times 1 -Exactly
+        $session.Results[0].Status | Should -Not -Be 'Skipped'
+    }
+
     It 'stops a step that starts after cancellation' {
         $cts = [System.Threading.CancellationTokenSource]::new(); $cts.Cancel()
         $ctx = New-OmniRepairContext -Logger $script:Logger -CancellationToken $cts.Token

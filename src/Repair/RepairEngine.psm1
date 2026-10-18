@@ -13,7 +13,8 @@
     which would hit the 24h throttle). The engine never prompts; selection and
     confirmation are the caller's job (the console today, the GUI next), which keeps
     the engine surface-agnostic and testable. It is SupportsShouldProcess, so -WhatIf
-    and -Confirm work for programmatic callers.
+    and -Confirm work for programmatic callers: -WhatIf is a dry run (no restore point
+    either), and -Confirm asks about every repair before the restore point is created.
 
     Audit log (0.8.0): every repair the engine actually executes (not a dry run, not
     skipped) appends one JSON line per recorded step to
@@ -146,6 +147,27 @@ function Invoke-OmniRepair {
     $total = $selected.Count
     $sessionStart = Get-Date
 
+    # -WhatIf is a dry run: nothing changes - not even a System Restore point. Each repair
+    # still gets its 'What if:' line, then runs its describe path on a DryRun copy of the
+    # context (the caller's context is not modified).
+    if ($WhatIfPreference -and -not $Context.DryRun) {
+        foreach ($r in $selected) { [void]$PSCmdlet.ShouldProcess($r.Name, 'Run repair') }
+        $Context = $Context.PSObject.Copy()
+        $Context.DryRun = $true
+    }
+
+    # Ask for every confirmation (-Confirm) before anything changes, so the restore point is
+    # only created when at least one approved repair wants it. Admin-only repairs that are
+    # skipped for lack of elevation are not asked about.
+    $approved = @{}
+    if (-not $Context.DryRun) {
+        for ($k = 0; $k -lt $total; $k++) {
+            $r = $selected[$k]
+            if ($r.RequiresAdmin -and -not $Context.IsAdmin) { continue }
+            $approved[$k] = [bool]$PSCmdlet.ShouldProcess($r.Name, 'Run repair')
+        }
+    }
+
     $log.Info("Starting repair session: $total repair(s), dryRun=$($Context.DryRun), admin=$($Context.IsAdmin)", 'RepairEngine')
 
     $report = {
@@ -163,7 +185,10 @@ function Invoke-OmniRepair {
 
     # --- One restore point up front, if any selected repair wants one ----------
     $restorePoint = $null
-    $needsRestore = @($selected | Where-Object { $_.RestorePoint }).Count -gt 0
+    $needsRestore = $false
+    for ($k = 0; $k -lt $total; $k++) {
+        if ($selected[$k].RestorePoint -and ($Context.DryRun -or $approved[$k])) { $needsRestore = $true }
+    }
     if ($needsRestore -and -not $Context.DryRun -and -not $SkipRestorePoint) {
         $restorePoint = New-OmniRestorePoint -Description 'OmniDiag repair checkpoint' -Logger $log
     } elseif ($needsRestore -and $Context.DryRun) {
@@ -206,6 +231,15 @@ function Invoke-OmniRepair {
             continue
         }
 
+        # Declined at the -Confirm prompt (asked up front, see above).
+        if (-not $Context.DryRun -and -not $approved[$i]) {
+            $skip = New-OmniRepairResult -Name $reg.Name -Category $reg.Category
+            Complete-OmniRepairResult -Result $skip -Status 'Skipped' | Out-Null
+            $results.Add($skip)
+            & $report ($i + 1) $reg.Name 'Skipped' $skip
+            continue
+        }
+
         # Repairs that promise a restore point never run without one, unless the caller
         # explicitly opted out (-SkipRestorePoint / -AllowWithoutRestorePoint).
         if ($reg.RestorePoint -and -not $Context.DryRun -and -not $SkipRestorePoint -and -not $AllowWithoutRestorePoint -and
@@ -217,16 +251,6 @@ function Invoke-OmniRepair {
             Complete-OmniRepairResult -Result $skip -Status 'Skipped' | Out-Null
             $results.Add($skip)
             $log.Warn("Skipped repair '$($reg.Name)': no restore point.", 'RepairEngine')
-            & $report ($i + 1) $reg.Name 'Skipped' $skip
-            continue
-        }
-
-        # -WhatIf path (programmatic). The context DryRun flag is the user-facing
-        # dry-run and still invokes the action's describe path.
-        if (-not $Context.DryRun -and -not $PSCmdlet.ShouldProcess($reg.Name, 'Run repair')) {
-            $skip = New-OmniRepairResult -Name $reg.Name -Category $reg.Category
-            Complete-OmniRepairResult -Result $skip -Status 'Skipped' | Out-Null
-            $results.Add($skip)
             & $report ($i + 1) $reg.Name 'Skipped' $skip
             continue
         }

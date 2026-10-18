@@ -155,7 +155,7 @@ call comes from outside the tool's `src` folder and `OmniDiag.ps1`.
 | `Import-OmniSession` | `Import-OmniDiagSession` | Also takes `last` / `previous` and pipeline input. |
 | `Compare-OmniSession` | `Compare-OmniDiagSession` | Also takes `last` / `previous`. |
 | `Invoke-OmniRepairCenter` | `Get-OmniDiagRepair` | `-Session` accepts a path or `last`. |
-| `Invoke-OmniRepair` | `Invoke-OmniDiagRepair` | Takes ids instead of registrations plus a context; adds `-WhatIf` / `-Confirm` and `ExitCode`. |
+| `Invoke-OmniRepair` | `Invoke-OmniDiagRepair` | Takes ids instead of registrations plus a context; adds `ExitCode`. On the deprecated command `-WhatIf` is a dry run (no restore point is created) and `-Confirm` asks about every repair before the restore point is created. |
 | `Show-OmniDiagWindow` | `Show-OmniDiagGui` | |
 
 `Test-OmniOllama` and `Invoke-OmniOllamaAnalysis` (opt-in local AI, [OLLAMA.md](OLLAMA.md))
