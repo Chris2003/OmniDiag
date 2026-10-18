@@ -51,8 +51,11 @@ function Get-OmniEventRecord {
     .PARAMETER Channel
         A channel definition from Get-OmniEventChannelDefinition.
 
-    .PARAMETER Start / End
-        Time window.
+    .PARAMETER Start
+        Start of the time window.
+
+    .PARAMETER End
+        End of the time window.
 
     .PARAMETER Level
         Optional array of Windows level numbers to include (1=Crit,2=Err,3=Warn,
