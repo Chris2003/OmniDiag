@@ -226,6 +226,27 @@ function Invoke-OmniDiagScan {
     .PARAMETER CancellationToken
         Cooperative cancellation token.
 
+    .PARAMETER Profile
+        Run a role profile (HelpDesk, DesktopSupport, SystemsAdmin, NetworkAdmin,
+        SecurityAdmin, CloudAdmin, Full). Cannot be combined with -Workflow, -Group,
+        or -Module.
+
+    .PARAMETER Workflow
+        Run a task workflow (QuickTriage, SlowComputer, NetworkConnectivity, Printing,
+        WindowsUpdate, LoginAndIdentity, StorageCleanup, SecurityPosture, CloudReadiness,
+        FullScan). Cannot be combined with -Profile, -Group, or -Module.
+
+    .PARAMETER ElevatedOnly
+        Run only the selected scanners that require elevation. Throws an
+        UnauthorizedAccessException when the process is not elevated.
+
+    .PARAMETER ProgressCallback
+        Optional scriptblock invoked as each scanner starts and finishes (see
+        Invoke-OmniSession). Without it, Write-Progress shows the progress.
+
+    .OUTPUTS
+        OmniDiag.V1.Finding objects, or one OmniDiag.Session with -AsSession.
+
     .EXAMPLE
         Invoke-OmniDiagScan -Group storage, performance | Where-Object severity -ne 'Info'
 
@@ -233,7 +254,10 @@ function Invoke-OmniDiagScan {
         Invoke-OmniDiagScan -Module network.dns-resolver -NetworkProbes -IncludePassed
 
     .EXAMPLE
-        $session = Invoke-OmniDiagScan -AsSession; Export-OmniReport -Session $session -Format Html
+        $session = Invoke-OmniDiagScan -AsSession; Export-OmniDiagReport -Session $session -Format Html
+
+    .EXAMPLE
+        $session = Invoke-OmniDiagScan -Workflow SlowComputer -AsSession
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -249,8 +273,25 @@ function Invoke-OmniDiagScan {
         [switch] $AsSession,
         [hashtable] $Config = @{},
         [string[]] $ModulesPath = $script:OmniGroupModulesPath,
-        [System.Threading.CancellationToken] $CancellationToken = ([System.Threading.CancellationToken]::None)
+        [System.Threading.CancellationToken] $CancellationToken = ([System.Threading.CancellationToken]::None),
+        [ValidateSet('HelpDesk', 'DesktopSupport', 'SystemsAdmin', 'NetworkAdmin', 'SecurityAdmin', 'CloudAdmin', 'Full')]
+        [string] $Profile,
+        [ValidateSet('QuickTriage', 'SlowComputer', 'NetworkConnectivity', 'Printing', 'WindowsUpdate', 'LoginAndIdentity', 'StorageCleanup', 'SecurityPosture', 'CloudReadiness', 'FullScan')]
+        [string] $Workflow,
+        [switch] $ElevatedOnly,
+        [scriptblock] $ProgressCallback
     )
+
+    if ($Profile -and $Workflow) { throw [System.ArgumentException]::new('Choose either -Profile or -Workflow, not both.') }
+    if (($Profile -or $Workflow) -and (@($Group | Where-Object { $_ }).Count -gt 0 -or @($Module | Where-Object { $_ }).Count -gt 0)) {
+        throw [System.ArgumentException]::new('Do not combine -Profile or -Workflow with -Group or -Module.')
+    }
+    if ($ElevatedOnly -and -not (Test-OmniIsAdministrator)) {
+        throw [System.UnauthorizedAccessException]::new('-ElevatedOnly runs only the scanners that need elevation; start PowerShell as administrator.')
+    }
+    $plan = $null; $planInfo = $null
+    if ($Profile) { $plan = Get-OmniRoleProfile -Name $Profile; $planInfo = [pscustomobject]@{ Type = 'RoleProfile'; Name = $plan.Name; Description = $plan.Description } }
+    if ($Workflow) { $plan = Get-OmniTaskWorkflow -Name $Workflow; $planInfo = [pscustomobject]@{ Type = 'TaskWorkflow'; Name = $plan.Name; Description = $plan.Description } }
 
     $groups = @($Group | Where-Object { $_ } | ForEach-Object { $_.ToLowerInvariant() })
     foreach ($g in $groups) {
@@ -271,7 +312,10 @@ function Invoke-OmniDiagScan {
     }
     $selected = if ($groups.Count -gt 0 -or $explicit.Count -gt 0) {
         @($regs | Where-Object { $_.Group -in $groups -or $explicit.ContainsKey($_.Id) })
+    } elseif ($plan -and @($plan.Modules).Count -gt 0) {
+        @($regs | Where-Object { $_.Name -in @($plan.Modules) })
     } else { $regs }
+    if ($ElevatedOnly) { $selected = @($selected | Where-Object { $_.RequiresElevation }) }
     if (@($selected).Count -eq 0) { throw [System.ArgumentException]::new('No scanners match the selection.') }
 
     $context = New-OmniContext -Logger $logger -TimeRange (Get-OmniTimeRange -Preset $Range) `
@@ -282,12 +326,14 @@ function Invoke-OmniDiagScan {
         $status = if ($p.Phase -eq 'Start') { "Running $($p.Name)" } else { "$($p.Name): $($p.Phase)" }
         Write-Progress -Activity $activity -Status $status -PercentComplete ([Math]::Min(100, [Math]::Max(0, [int]$p.PercentComplete)))
     }.GetNewClosure()
+    if ($ProgressCallback) { $progress = $ProgressCallback }
     try {
         $session = Invoke-OmniSession -Registration $selected -Context $context -ProgressCallback $progress -MaxParallel $MaxParallel
     } finally {
-        Write-Progress -Activity $activity -Completed
+        if (-not $ProgressCallback) { Write-Progress -Activity $activity -Completed }
     }
     Add-Member -InputObject $session -MemberType NoteProperty -Name LogPath -Value $logger.Path -Force
+    if ($planInfo) { Add-Member -InputObject $session -MemberType NoteProperty -Name ScanPlan -Value $planInfo -Force }
 
     if ($AsSession) { return $session }
 

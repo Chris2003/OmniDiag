@@ -42,8 +42,14 @@ function Invoke-OmniDiag {
     .PARAMETER Range
         Time-range preset for time-aware modules (e.g. Event Logs).
 
-    .PARAMETER IncludeCategory / ExcludeCategory
-        Optional category filters.
+    .PARAMETER IncludeCategory
+        Optional category filter: run only these categories.
+
+    .PARAMETER ExcludeCategory
+        Optional category filter: skip these categories.
+
+    .PARAMETER IncludeModule
+        Optional module names to run.
 
     .PARAMETER Profile
         Focus the scan for an IT role such as HelpDesk, SystemsAdmin, or CloudAdmin.
@@ -86,6 +92,9 @@ function Invoke-OmniDiag {
 
     .EXAMPLE
         $session = Invoke-OmniDiag -IncludeCategory Network -NetworkProbes
+
+    .NOTES
+        Deprecated as a user-facing name in 0.8.0: use Invoke-OmniDiagScan -AsSession.
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -112,6 +121,7 @@ function Invoke-OmniDiag {
         [hashtable] $Config = @{}
     )
 
+    Write-OmniDeprecationWarning -Name 'Invoke-OmniDiag' -Replacement 'Invoke-OmniDiagScan -AsSession'
     if ($Profile -and $Workflow) { throw 'Choose either -Profile or -Workflow, not both.' }
     if (($Profile -or $Workflow) -and $IncludeModule) { throw 'Do not combine -Profile or -Workflow with -IncludeModule. Use one selection method.' }
 
@@ -174,6 +184,15 @@ function Invoke-OmniRepairCenter {
 
     .PARAMETER RepairsPath
         Folder of repair plugins. Defaults to src/Repairs.
+
+    .PARAMETER Logger
+        Optional OmniDiag logger. Default: a new log file in OmniDiagData\logs.
+
+    .NOTES
+        Deprecated as a user-facing name in 0.8.0: use Get-OmniDiagRepair.
+
+    .EXAMPLE
+        Invoke-OmniRepairCenter -Session $session | Where-Object Recommended
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -182,6 +201,8 @@ function Invoke-OmniRepairCenter {
         [string] $RepairsPath = (Join-Path $PSScriptRoot 'Repairs'),
         [pscustomobject] $Logger
     )
+
+    Write-OmniDeprecationWarning -Name 'Invoke-OmniRepairCenter' -Replacement 'Get-OmniDiagRepair'
 
     if (-not $Logger) {
         $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
