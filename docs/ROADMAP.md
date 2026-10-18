@@ -22,7 +22,7 @@ be checked on a hosted runner is listed as unverified.
 - **Finding/report schema v1.** `schemas/omnidiag-report.v1.json` (JSON Schema 2020-12) with
   `schemaVersion`; a v1 projection of the session (`ConvertTo-OmniReportV1`) that maps the native
   severities to the spec's Info / Warning / Critical. The internal five-level scale stays.
-- **Exit codes.** The table in ARCHITECTURE.md, used by every command and propagated by the
+- **Exit codes.** The table in [CLI.md](CLI.md) (data in `src/Core/ExitCodes.psm1`), used by every command and propagated by the
   `.cmd` launchers.
 - **CLI router.** `omnidiag.cmd` + `src/Cli/Router.psm1` with `list`, `scan`, `report`,
   `version`, global `--format`, `--output`, `--verbose`, `--quiet`. `OmniDiag.ps1` keeps its

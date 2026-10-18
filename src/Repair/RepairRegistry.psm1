@@ -26,12 +26,19 @@
         AppliesTo     [string[]] optional, finding Id/Component substrings addressed
         Order         [int]     optional, sort weight (lower first)
         Enabled       [bool]    optional, default $true
+
+    Module contract v1 (0.5.0) adds Id ('repair.<kebab-name>' by default),
+    RequiresElevation (alias of RequiresAdmin), NetworkAccess (None | LocalNetwork |
+    Internet, default None), TimeoutSec (default 60), and SupportedArchitectures
+    (default x64, arm64). Validation is shared with scanners
+    (Resolve-OmniPluginContract); invalid values and duplicate Ids skip the plugin.
 #>
 
 Set-StrictMode -Version Latest
 
-# Standalone (e.g. Pester) bootstrap: Test-OmniIsAdministrator lives in Core/Registry.
-if (-not (Get-Command Test-OmniIsAdministrator -ErrorAction SilentlyContinue)) {
+# Standalone (e.g. Pester) bootstrap: Test-OmniIsAdministrator and the shared contract
+# validator (Resolve-OmniPluginContract) live in Core/Registry.
+if (-not (Get-Command Resolve-OmniPluginContract -ErrorAction SilentlyContinue)) {
     Import-Module (Join-Path $PSScriptRoot '..\Core\Registry.psm1') -Global -Force -DisableNameChecking
 }
 
@@ -53,6 +60,7 @@ function Get-OmniRepair {
     )
 
     $registrations = [System.Collections.Generic.List[object]]::new()
+    $seenIds = @{}
 
     foreach ($folder in $Path) {
         if (-not (Test-Path -LiteralPath $folder)) {
@@ -84,12 +92,22 @@ function Get-OmniRepair {
                     throw "Repair '$($m.Name)' has invalid Risk '$risk'. Valid: $((Get-OmniRepairRiskNames) -join ', ')."
                 }
 
+                $contract = Resolve-OmniPluginContract -Manifest $m -Kind Repair
+                if ($seenIds.ContainsKey($contract.Id)) {
+                    throw "Repair '$($file.Name)' declares Id '$($contract.Id)', already used by '$($seenIds[$contract.Id])'. Ids must be unique; the duplicate was skipped."
+                }
+
                 $registration = [pscustomobject]@{
                     PSTypeName     = 'OmniDiag.RepairRegistration'
+                    Id             = $contract.Id
                     Name           = [string]$m.Name
                     Category       = [string]$m.Category
                     Description    = if ($m.Contains('Description')) { [string]$m.Description } else { '' }
-                    RequiresAdmin  = if ($m.Contains('RequiresAdmin')) { [bool]$m.RequiresAdmin } else { $false }
+                    RequiresAdmin  = $contract.RequiresAdmin
+                    RequiresElevation = $contract.RequiresAdmin
+                    NetworkAccess  = $contract.NetworkAccess
+                    TimeoutSec     = $contract.TimeoutSec
+                    SupportedArchitectures = $contract.SupportedArchitectures
                     Risk           = $risk
                     RestorePoint   = if ($m.Contains('RestorePoint')) { [bool]$m.RestorePoint } else { $false }
                     RebootHint     = if ($m.Contains('RebootHint'))   { [bool]$m.RebootHint }   else { $false }
@@ -101,8 +119,9 @@ function Get-OmniRepair {
                     ModuleInfo     = $modInfo
                     SourceFile     = $file.FullName
                 }
+                $seenIds[$contract.Id] = $file.FullName
                 $registrations.Add($registration)
-                if ($Logger) { $Logger.Debug("Registered repair '$($registration.Name)' [$($registration.Category)]", 'RepairRegistry') }
+                if ($Logger) { $Logger.Debug("Registered repair '$($registration.Name)' [$($registration.Id)]", 'RepairRegistry') }
             } catch {
                 if ($Logger) { $Logger.Error("Failed to load repair '$($file.Name)': $($_.Exception.Message)", 'RepairRegistry') }
                 else { Write-Warning "OmniDiag: failed to load repair '$($file.Name)': $($_.Exception.Message)" }

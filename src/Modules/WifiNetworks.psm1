@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'WiFi Networks'
+        Id            = 'network.wifi-networks'
+        Group         = 'network'
+        NetworkAccess = 'None'
         Category      = 'Network'
         Description   = 'Reports current wireless connection quality and nearby networks.'
         RequiresAdmin = $false
@@ -92,8 +95,8 @@ function Invoke-OmniModuleScan {
     try {
         $netText = & netsh wlan show networks mode=bssid 2>&1 | Out-String
         if (-not [string]::IsNullOrWhiteSpace($netText)) {
-            $matches = [regex]::Matches($netText, '(?im)^\s*SSID\s+\d+\s*:')
-            $nearbyCount = $matches.Count
+            $ssidMatches = [regex]::Matches($netText, '(?im)^\s*SSID\s+\d+\s*:')
+            $nearbyCount = $ssidMatches.Count
         }
     } catch {
         $log.Debug("netsh wlan show networks failed: $($_.Exception.Message)", 'WiFi Networks')

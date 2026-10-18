@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Temp Files'
+        Id            = 'extras.temp-files'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'Storage'
         Description   = 'Estimated reclaimable space across temp and cache locations.'
         RequiresAdmin = $false
@@ -64,8 +67,9 @@ function Invoke-OmniModuleScan {
     $windir = if ($env:WINDIR) { $env:WINDIR } else { 'C:\Windows' }
     $paths = @(
         $userTemp,
-        (Join-Path $windir 'Temp'),
-        (Join-Path $windir 'Prefetch')
+        # Path.Combine, not Join-Path: Join-Path errors when the drive doesn't exist (non-Windows hosts).
+        [System.IO.Path]::Combine($windir, 'Temp'),
+        [System.IO.Path]::Combine($windir, 'Prefetch')
     )
 
     # Per-user browser caches (best-effort, only if reachable).

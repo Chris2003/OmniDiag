@@ -37,7 +37,8 @@ Describe 'Portable package contents' {
     It 'includes the launcher, module, and portable docs' {
         foreach ($rel in @('OmniDiag.ps1', 'OmniDiag.cmd', 'OmniDiag-GUI.cmd', 'install.ps1',
                            'PORTABLE.md', 'README.md', 'VERSION.txt',
-                           'src/OmniDiag.psd1', 'src/OmniDiag.psm1')) {
+                           'src/OmniDiag.psd1', 'src/OmniDiag.psm1', 'src/Cli/omnidiag.ps1',
+                           'schemas/omnidiag-report.v1.json', 'schemas/omnidiag-list.v1.json')) {
             Join-Path $script:StageDir $rel | Should -Exist -Because "$rel must ship in the portable package"
         }
     }

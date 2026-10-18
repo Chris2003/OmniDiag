@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Hosts File'
+        Id            = 'network.hosts-file'
+        Group         = 'network'
+        NetworkAccess = 'None'
         Category      = 'Network'
         Description   = 'Inspects the Windows hosts file for custom entries and possible hijacks.'
         RequiresAdmin = $false

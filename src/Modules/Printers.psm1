@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Printers'
+        Id            = 'extras.printers'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'Peripherals'
         Description   = 'Installed printers, default printer, and offline/error state.'
         RequiresAdmin = $false

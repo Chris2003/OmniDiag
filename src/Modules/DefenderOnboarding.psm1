@@ -6,7 +6,7 @@ if (-not (Get-Command New-OmniFinding -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='Defender Onboarding'; Category='Security'; Description='Microsoft Defender Antivirus and Defender for Endpoint onboarding posture.'; RequiresAdmin=$false; Order=540; Enabled=$true }
+    @{ Name='Defender Onboarding'; Id='security.defender-onboarding'; Group='security'; NetworkAccess='None'; Category='Security'; Description='Microsoft Defender Antivirus and Defender for Endpoint onboarding posture.'; RequiresAdmin=$false; Order=540; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {

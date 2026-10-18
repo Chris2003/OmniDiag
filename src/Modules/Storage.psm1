@@ -26,6 +26,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Storage'
+        Id            = 'storage.storage'
+        Group         = 'storage'
+        NetworkAccess = 'None'
         Category      = 'Storage'
         Description   = 'Disk SMART health, SSD wear/temperature, volume health, and free space.'
         RequiresAdmin = $false

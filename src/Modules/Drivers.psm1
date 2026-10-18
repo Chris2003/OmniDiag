@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Drivers'
+        Id            = 'services.drivers'
+        Group         = 'services'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Driver inventory and problem-device detection.'
         RequiresAdmin = $false

@@ -16,9 +16,9 @@
     is safe on headless/Server Core hosts.
 
     Threading model:
-        UI thread  ── BtnScan ──> spawn background runspace (Invoke-OmniDiag)
-                   <── DispatcherTimer polls $sync (Progress/Phase/Done) ──
-        Cancel     ── $cts.Cancel()  (engine checks the token between modules)
+        UI thread  -- BtnScan --> spawn background runspace (Invoke-OmniDiag)
+                   <-- DispatcherTimer polls $sync (Progress/Phase/Done) --
+        Cancel     -- $cts.Cancel()  (engine checks the token between modules)
 #>
 
 Set-StrictMode -Version Latest
@@ -688,9 +688,9 @@ function Invoke-OmniWindow {
                 }
 
                 # Save the scan with the tool (like the console) so -FromSession/-CompareWith Last see GUI scans.
+                # Native session format (Save-OmniSession), not the public v1 report.
                 try {
-                    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-                    Export-OmniJsonReport -Session $sync.Session -Path (Get-OmniDataPath -Kind Sessions -ChildPath "session-$stamp.json") | Out-Null
+                    Save-OmniSession -Session $sync.Session | Out-Null
                 } catch { }
 
                 $cancelledNote = if ($sync.Session.Cancelled) { ' (cancelled)' } else { '' }

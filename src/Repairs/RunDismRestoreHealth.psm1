@@ -12,6 +12,8 @@ if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Repair Component Store (DISM)'
+        Id            = 'repair.repair-component-store-dism'
+        NetworkAccess = 'Internet'
         Category      = 'System'
         Description   = 'Runs DISM /Online /Cleanup-Image /RestoreHealth to repair the Windows component store. Can take several minutes and needs internet for replacement files.'
         RequiresAdmin = $true

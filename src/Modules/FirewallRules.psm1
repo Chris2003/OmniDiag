@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Firewall Rules'
+        Id            = 'security.firewall-rules'
+        Group         = 'security'
+        NetworkAccess = 'None'
         Category      = 'Security'
         Description   = 'Summarizes enabled firewall rules and inbound exposure.'
         RequiresAdmin = $false

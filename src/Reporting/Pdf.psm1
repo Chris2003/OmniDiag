@@ -110,6 +110,7 @@ function New-OmniPdfDocument {
         PageH  = 792.0
         Margin = 54.0     # 0.75"
         Pages  = [System.Collections.Generic.List[object]]::new()
+        Images = [System.Collections.Generic.List[object]]::new()   # embedded JPEG XObjects
         Cur    = $null
         Y      = 0.0
     }
@@ -197,7 +198,87 @@ function Add-OmniPdfRule {
     Add-OmniPdfSpacer -Doc $Doc -Height 8
 }
 
-function ConvertTo-OmniPdfBytes {
+function Get-OmniJpegInfo {
+    <#
+    .SYNOPSIS
+        Internal: read width, height, and component count from a JPEG's SOF marker.
+
+    .DESCRIPTION
+        Walks the JPEG marker segments (no decoding) until the first start-of-frame
+        marker (SOF0-SOF15 except DHT C4, JPG C8, DAC CC). Returns $null when the bytes
+        are not a JPEG or no usable frame header is found.
+    #>
+    [OutputType([hashtable])]
+    param([byte[]] $Bytes)
+
+    if ($null -eq $Bytes -or $Bytes.Length -lt 4) { return $null }
+    if ($Bytes[0] -ne 0xFF -or $Bytes[1] -ne 0xD8) { return $null }
+
+    $i = 2
+    while ($i -lt $Bytes.Length - 1) {
+        if ($Bytes[$i] -ne 0xFF) { return $null }
+        $marker = $Bytes[$i + 1]
+        if ($marker -eq 0xFF) { $i++; continue }                          # fill byte
+        if ($marker -eq 0x01 -or ($marker -ge 0xD0 -and $marker -le 0xD8)) { $i += 2; continue }   # no length
+        if ($marker -eq 0xD9 -or $marker -eq 0xDA) { return $null }       # EOI / SOS before any SOF
+        if ($i + 3 -ge $Bytes.Length) { return $null }
+        $segLen = ([int]$Bytes[$i + 2] -shl 8) -bor [int]$Bytes[$i + 3]
+        if ($segLen -lt 2) { return $null }
+        $isSof = ($marker -ge 0xC0 -and $marker -le 0xCF) -and ($marker -ne 0xC4) -and ($marker -ne 0xC8) -and ($marker -ne 0xCC)
+        if ($isSof) {
+            if ($i + 9 -ge $Bytes.Length) { return $null }
+            $height = ([int]$Bytes[$i + 5] -shl 8) -bor [int]$Bytes[$i + 6]
+            $width  = ([int]$Bytes[$i + 7] -shl 8) -bor [int]$Bytes[$i + 8]
+            $comps  = [int]$Bytes[$i + 9]
+            if ($width -le 0 -or $height -le 0 -or $comps -notin 1, 3, 4) { return $null }
+            return @{ Width = $width; Height = $height; Components = $comps; Bits = [int]$Bytes[$i + 4] }
+        }
+        $i += 2 + $segLen
+    }
+    return $null
+}
+
+function Add-OmniPdfLogo {
+    <#
+    .SYNOPSIS
+        Internal: embed a JPEG logo as an image XObject and draw it at the top-right of
+        the current page. Returns $true when embedded; writes a warning and returns $false
+        for a missing, unreadable, or non-JPEG file (the report is still written).
+    #>
+    [OutputType([bool])]
+    param([hashtable] $Doc, [string] $Path, [double] $MaxWidth = 160, [double] $MaxHeight = 40)
+
+    if (-not $Path) { return $false }
+    $bytes = $null
+    try {
+        $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+        if (Test-Path -LiteralPath $full -PathType Leaf) { $bytes = [System.IO.File]::ReadAllBytes($full) }
+    } catch { $bytes = $null }
+    if ($null -eq $bytes) {
+        Write-Warning "PDF report: brand logo '$Path' was not found or could not be read; the logo was skipped."
+        return $false
+    }
+    $info = Get-OmniJpegInfo -Bytes $bytes
+    if ($null -eq $info) {
+        Write-Warning ("PDF report: brand logo '$Path' is not a JPEG; the native PDF writer embeds JPEG logos only " +
+            '(the HTML report shows any format). The logo was skipped.')
+        return $false
+    }
+
+    $name = 'Im{0}' -f ($Doc.Images.Count + 1)
+    $Doc.Images.Add(@{ Name = $name; Bytes = $bytes; Width = $info.Width; Height = $info.Height; Components = $info.Components; Bits = $info.Bits })
+
+    $scale = [math]::Min($MaxWidth / $info.Width, $MaxHeight / $info.Height)
+    $w = $info.Width * $scale
+    $h = $info.Height * $scale
+    $x = $Doc.PageW - $Doc.Margin - $w
+    $y = $Doc.PageH - $Doc.Margin - $h
+    [void]$Doc.Cur.Append(('q {0} 0 0 {1} {2} {3} cm /{4} Do Q' -f (Format-OmniPdfNum $w), (Format-OmniPdfNum $h),
+            (Format-OmniPdfNum $x), (Format-OmniPdfNum $y), $name) + "`n")
+    return $true
+}
+
+function ConvertTo-OmniPdfBinary {
     <# .SYNOPSIS Internal: assemble the page content streams into a valid PDF byte array. #>
     [OutputType([byte[]])]
     param([hashtable] $Doc)
@@ -207,8 +288,18 @@ function ConvertTo-OmniPdfBytes {
     $W = { param($s) $b = $enc.GetBytes($s); $ms.Write($b, 0, $b.Length) }
 
     $pageCount = $Doc.Pages.Count
-    $objCount = 4 + $pageCount * 2          # 1 catalog, 2 pages, 3 F1, 4 F2, then 2/page
+    $images = @()
+    if ($Doc.ContainsKey('Images') -and $Doc.Images) { $images = @($Doc.Images) }
+    # 1 catalog, 2 pages, 3 F1, 4 F2, then 2/page, then one per embedded image.
+    $firstImageObj = 5 + $pageCount * 2
+    $objCount = 4 + $pageCount * 2 + $images.Count
     $offsets = New-Object 'long[]' ($objCount + 1)
+
+    $xobjects = ''
+    if ($images.Count -gt 0) {
+        $refs = for ($j = 0; $j -lt $images.Count; $j++) { '/{0} {1} 0 R' -f $images[$j].Name, ($firstImageObj + $j) }
+        $xobjects = " /XObject << $($refs -join ' ') >>"
+    }
 
     # Header (binary comment marks the file as containing binary data).
     & $W "%PDF-1.4`n"
@@ -234,11 +325,24 @@ function ConvertTo-OmniPdfBytes {
 
         $offsets[$pageObj] = $ms.Position
         & $W ("$pageObj 0 obj`n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {0} {1}] " -f [int]$Doc.PageW, [int]$Doc.PageH)
-        & $W "/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents $contentObj 0 R >>`nendobj`n"
+        & $W "/Resources << /Font << /F1 3 0 R /F2 4 0 R >>$xobjects >> /Contents $contentObj 0 R >>`nendobj`n"
 
         $offsets[$contentObj] = $ms.Position
         & $W "$contentObj 0 obj`n<< /Length $($contentBytes.Length) >>`nstream`n"
         $ms.Write($contentBytes, 0, $contentBytes.Length)
+        & $W "`nendstream`nendobj`n"
+    }
+
+    # Image XObjects: JPEG bytes are embedded verbatim and decoded by the viewer (DCTDecode).
+    for ($j = 0; $j -lt $images.Count; $j++) {
+        $img = $images[$j]
+        $imgObj = $firstImageObj + $j
+        $colorSpace = switch ($img.Components) { 1 { '/DeviceGray' } 4 { '/DeviceCMYK' } default { '/DeviceRGB' } }
+        $bits = if ($img.Bits -gt 0) { $img.Bits } else { 8 }
+        $offsets[$imgObj] = $ms.Position
+        & $W ("$imgObj 0 obj`n<< /Type /XObject /Subtype /Image /Width {0} /Height {1} /ColorSpace {2} " -f $img.Width, $img.Height, $colorSpace)
+        & $W "/BitsPerComponent $bits /Filter /DCTDecode /Length $($img.Bytes.Length) >>`nstream`n"
+        $ms.Write($img.Bytes, 0, $img.Bytes.Length)
         & $W "`nendstream`nendobj`n"
     }
 
@@ -273,15 +377,17 @@ function Export-OmniPdfReport {
         Optional accent color (#RRGGBB) for the title and recommendations.
 
     .PARAMETER BrandLogo
-        Accepted for signature compatibility with the other exporters; image logos are
-        not embedded in the native PDF (use the HTML report for a logo).
-
-    .PARAMETER TimeoutSeconds
-        Deprecated and ignored (the native writer never launches an external process).
-        Retained so existing callers/scripts don't break.
+        Optional path to a logo image, drawn at the top-right of the first page. JPEG files
+        are embedded directly (DCTDecode image XObject; size read from the SOF marker), so
+        no image library is needed. Other formats are skipped with a warning (Write-Warning)
+        and the report is still written; the HTML report shows any format.
 
     .OUTPUTS
         The written .pdf path (string).
+
+    .NOTES
+        The -TimeoutSeconds parameter (ignored since the native writer replaced the
+        headless-browser renderer) was removed in 0.5.0; no caller in the repository used it.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -290,8 +396,7 @@ function Export-OmniPdfReport {
         [Parameter(Mandatory)] [string] $Path,
         [string] $BrandName,
         [string] $BrandLogo,
-        [string] $BrandColor,
-        [int] $TimeoutSeconds
+        [string] $BrandColor
     )
 
     $dir = Split-Path -Path $Path -Parent
@@ -305,6 +410,7 @@ function Export-OmniPdfReport {
     $muted = '0.42 0.46 0.50'
 
     $doc = New-OmniPdfDocument
+    if ($BrandLogo) { [void](Add-OmniPdfLogo -Doc $doc -Path $BrandLogo) }
 
     # --- Title ---------------------------------------------------------------
     Add-OmniPdfLine -Doc $doc -Text 'OmniDiag Diagnostic Report' -Font 'F1' -Size 20 -Rgb $accent
@@ -393,7 +499,7 @@ function Export-OmniPdfReport {
         'Privacy: OmniDiag runs entirely on the local machine and uploads nothing. This report may ' +
         'contain usernames, device names, file paths, and domain information. Review before sharing.')
 
-    [System.IO.File]::WriteAllBytes(($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)), (ConvertTo-OmniPdfBytes -Doc $doc))
+    [System.IO.File]::WriteAllBytes(($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)), (ConvertTo-OmniPdfBinary -Doc $doc))
     return $Path
 }
 

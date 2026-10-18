@@ -107,7 +107,7 @@ param(
 
         # Keep the installed surface small and exclude tests/repository metadata.
         $include = @(
-            'OmniDiag.ps1','OmniDiag.cmd','OmniDiag-GUI.cmd','install.ps1','src','docs','runbooks',
+            'OmniDiag.ps1','OmniDiag.cmd','OmniDiag-GUI.cmd','install.ps1','src','schemas','docs','runbooks',
             'README.md','PORTABLE.md','ROADMAP.md','CHANGELOG.md','LICENSE','SECURITY.md'
         )
         foreach ($item in $include) {

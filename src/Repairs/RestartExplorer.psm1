@@ -12,6 +12,8 @@ if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Restart Windows Explorer'
+        Id            = 'repair.restart-windows-explorer'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Restarts the Explorer shell to clear taskbar, tray, and desktop glitches.'
         RequiresAdmin = $false

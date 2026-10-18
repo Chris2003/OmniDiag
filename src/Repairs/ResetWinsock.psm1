@@ -12,6 +12,8 @@ if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Reset Winsock Catalog'
+        Id            = 'repair.reset-winsock-catalog'
+        NetworkAccess = 'None'
         Category      = 'Network'
         Description   = 'Resets the Windows Sockets catalog to a clean state. Requires a reboot to fully apply.'
         RequiresAdmin = $true

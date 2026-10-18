@@ -26,6 +26,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Network'
+        Id            = 'network.network'
+        Group         = 'network'
+        NetworkAccess = 'Internet'
         Category      = 'Network'
         Description   = 'Active adapters, packet errors, and connectivity probes.'
         RequiresAdmin = $false

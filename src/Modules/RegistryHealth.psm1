@@ -31,6 +31,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Registry Health'
+        Id            = 'startup.registry-health'
+        Group         = 'startup'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Integrity of security-relevant registry keys and values.'
         RequiresAdmin = $false

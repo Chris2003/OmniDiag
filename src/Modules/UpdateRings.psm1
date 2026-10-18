@@ -6,7 +6,7 @@ if (-not (Get-Command New-OmniFinding -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='Update Rings'; Category='Cloud'; Description='Local Windows Update for Business and MDM update policy posture.'; RequiresAdmin=$false; Order=550; Enabled=$true }
+    @{ Name='Update Rings'; Id='updates.update-rings'; Group='updates'; NetworkAccess='None'; Category='Cloud'; Description='Local Windows Update for Business and MDM update policy posture.'; RequiresAdmin=$false; Order=550; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {

@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Error Summary'
+        Id            = 'events.error-summary'
+        Group         = 'events'
+        NetworkAccess = 'None'
         Category      = 'Event Logs'
         Description   = 'Summarizes recent critical/error events from System and Application logs.'
         RequiresAdmin = $false

@@ -63,14 +63,63 @@ function Get-OmniSessionFinding {
     }
 }
 
+function Save-OmniSession {
+    <#
+    .SYNOPSIS
+        Saves a session in OmniDiag's native (internal) JSON format.
+
+    .DESCRIPTION
+        Native session snapshots are what -FromSession / -CompareWith 'Last' and the
+        GUI reload. They keep every internal property (metrics, timings, severities)
+        and are NOT the public report format - Export-OmniJsonReport writes the
+        versioned report schema v1. Import-OmniSession reads both.
+
+    .PARAMETER Session
+        The OmniDiag.Session to save.
+
+    .PARAMETER Path
+        Destination file. Default: OmniDiagData\sessions\session-<timestamp>.json.
+
+    .OUTPUTS
+        The written file path (string).
+
+    .EXAMPLE
+        $saved = Save-OmniSession -Session $session
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)] [pscustomobject] $Session,
+        [string] $Path
+    )
+    if (-not $Path) {
+        $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+        $Path = Get-OmniDataPath -Kind Sessions -ChildPath "session-$stamp.json"
+    }
+    # .NET resolves relative paths against the process directory, not PowerShell's location.
+    $Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    $dir = Split-Path -Path $Path -Parent
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    # Depth 12 captures findings -> Data -> nested event groups/timeline entries.
+    $json = $Session | ConvertTo-Json -Depth 12
+    [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
+    return $Path
+}
+
 function Import-OmniSession {
     <#
     .SYNOPSIS
-        Loads a session saved by Export-OmniJsonReport (or a report .zip package).
+        Loads a saved session (native format), a JSON report (schema v1), or a report
+        .zip package.
+
+    .DESCRIPTION
+        Files that carry 'schemaVersion' are v1 reports and are rebuilt with
+        ConvertFrom-OmniReportV1 (major version 1 only); anything else must be a
+        native session written by Save-OmniSession (or by OmniDiag before 0.5.0).
 
     .PARAMETER Path
-        A JSON report, a report package .zip (its data.json is read), or a folder
-        (the newest *.json report in it is used).
+        A saved session, a JSON report, a report package .zip (its data.json is read),
+        or a folder (the newest *.json file in it is used).
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -97,6 +146,15 @@ function Import-OmniSession {
     }
 
     try { $session = $json | ConvertFrom-Json -ErrorAction Stop } catch { throw "Not a valid OmniDiag JSON report: $($item.FullName)" }
+    if ($null -eq $session -or $session -isnot [System.Management.Automation.PSCustomObject]) { throw "JSON does not contain an OmniDiag session (no Results): $($item.FullName)" }
+
+    # Report schema v1 (Export-OmniJsonReport, report packages from 0.5.0 on).
+    if ($session.PSObject.Properties['schemaVersion']) {
+        $session = ConvertFrom-OmniReportV1 -Report $session
+        Add-Member -InputObject $session -MemberType NoteProperty -Name SourcePath -Value $item.FullName -Force
+        return $session
+    }
+
     if (-not $session.PSObject.Properties['Results']) { throw "JSON does not contain an OmniDiag session (no Results): $($item.FullName)" }
 
     # Restore live-session shapes the reporters rely on: Metrics is an ordered dictionary
@@ -318,4 +376,4 @@ function Compare-OmniSession {
     }
 }
 
-Export-ModuleMember -Function @('Get-OmniSessionFinding', 'Import-OmniSession', 'Search-OmniEvidence', 'Compare-OmniSession')
+Export-ModuleMember -Function @('Get-OmniSessionFinding', 'Save-OmniSession', 'Import-OmniSession', 'Search-OmniEvidence', 'Compare-OmniSession')

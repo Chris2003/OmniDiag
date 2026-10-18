@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Services'
+        Id            = 'services.services'
+        Group         = 'services'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Windows service inventory and stopped auto-start detection.'
         RequiresAdmin = $false

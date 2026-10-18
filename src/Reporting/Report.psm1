@@ -28,7 +28,8 @@ function Export-OmniReport {
         Folder to write into. Created if missing. Default: OmniDiagData\reports next to the tool (see Get-OmniDataRoot).
 
     .PARAMETER Format
-        Any of Html, Json, Csv, Zip. Default: Html, Json, Csv.
+        Any of Html, Json (report schema v1), Csv, Md (Markdown), Pdf, Zip.
+        Default: Html, Json, Csv.
 
     .PARAMETER BaseName
         Base file name (no extension). Default: OmniDiag-<computer>-<timestamp>.
@@ -42,6 +43,9 @@ function Export-OmniReport {
     .PARAMETER BrandColor
         Optional accent color (#RRGGBB) for HTML/PDF reports.
 
+    .PARAMETER Option
+        Optional run options recorded in the JSON report's 'options' object.
+
     .OUTPUTS
         OmniDiag.ReportSet describing the files written (and any Warnings).
     #>
@@ -50,12 +54,13 @@ function Export-OmniReport {
     param(
         [Parameter(Mandatory)] [pscustomobject] $Session,
         [string] $OutputDirectory = (Get-OmniDataPath -Kind Reports),
-        [ValidateSet('Html', 'Json', 'Csv', 'Pdf', 'Zip')]
+        [ValidateSet('Html', 'Json', 'Csv', 'Md', 'Pdf', 'Zip')]
         [string[]] $Format = @('Html', 'Json', 'Csv'),
         [string] $BaseName,
         [string] $BrandName,
         [string] $BrandLogo,
-        [string] $BrandColor
+        [string] $BrandColor,
+        [hashtable] $Option
     )
 
     # Resolve relative paths against PowerShell's location (.NET file APIs use the process directory).
@@ -76,7 +81,12 @@ function Export-OmniReport {
     foreach ($fmt in ($Format | Select-Object -Unique)) {
         switch ($fmt) {
             'Html' { $files.Add((Export-OmniHtmlReport -Session $Session -Path "$base.html" -BrandName $BrandName -BrandLogo $BrandLogo -BrandColor $BrandColor)) }
-            'Json' { $files.Add((Export-OmniJsonReport -Session $Session -Path "$base.json")) }
+            'Json' {
+                $jsonParams = @{ Session = $Session; Path = "$base.json" }
+                if ($Option) { $jsonParams.Option = $Option }
+                $files.Add((Export-OmniJsonReport @jsonParams))
+            }
+            'Md'   { $files.Add((Export-OmniMarkdownReport -Session $Session -Path "$base.md" -BrandName $BrandName)) }
             'Csv'  {
                 $files.Add((Export-OmniCsvReport -Session $Session -Path "$base.findings.csv"))
                 $evt = Export-OmniEventCsvReport -Session $Session -Path "$base.events.csv"

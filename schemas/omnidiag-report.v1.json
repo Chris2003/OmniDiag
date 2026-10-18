@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Chris2003/OmniDiag/schemas/omnidiag-report.v1.json",
+  "title": "OmniDiag report (schema v1)",
+  "description": "Versioned JSON report written by OmniDiag (Export-OmniJsonReport, 'omnidiag scan --format json', 'omnidiag report'). A projection of a diagnostic session; see docs/SCHEMA.md. Versioning follows SemVer: additive changes bump the minor version, breaking changes bump the major version and add a new schema file.",
+  "type": "object",
+  "required": ["schemaVersion", "tool", "generatedAt", "host", "options", "scan", "summary", "modules"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "description": "Report schema version (SemVer). Readers accept any 1.x document.",
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$"
+    },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "const": "OmniDiag" },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "host": {
+      "description": "The scanned device. Contains identifying information; review before sharing.",
+      "type": "object",
+      "required": ["computerName", "userName", "isAdmin", "psVersion"],
+      "additionalProperties": false,
+      "properties": {
+        "computerName": { "type": "string" },
+        "userName": { "type": "string" },
+        "isAdmin": { "type": "boolean" },
+        "psVersion": { "type": "string" }
+      }
+    },
+    "options": {
+      "description": "Free-form run options recorded by the caller (keys sorted), e.g. command, range, groups, modules, formats.",
+      "type": "object"
+    },
+    "scan": {
+      "type": "object",
+      "required": ["startedAt", "finishedAt", "durationMs", "cancelled", "timeRange", "plan"],
+      "additionalProperties": false,
+      "properties": {
+        "startedAt": { "$ref": "#/$defs/nullableTimestamp" },
+        "finishedAt": { "$ref": "#/$defs/nullableTimestamp" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "cancelled": { "type": "boolean" },
+        "timeRange": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["preset", "label", "start", "end"],
+              "additionalProperties": false,
+              "properties": {
+                "preset": { "type": "string" },
+                "label": { "type": "string" },
+                "start": { "$ref": "#/$defs/nullableTimestamp" },
+                "end": { "$ref": "#/$defs/nullableTimestamp" }
+              }
+            }
+          ]
+        },
+        "plan": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["type", "name"],
+              "additionalProperties": false,
+              "properties": {
+                "type": { "type": "string" },
+                "name": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["healthScore", "grade", "counts"],
+      "additionalProperties": false,
+      "properties": {
+        "healthScore": {
+          "description": "0-100 health score; null when no module completed.",
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "grade": {
+          "oneOf": [
+            { "type": "null" },
+            { "enum": ["Healthy", "Warning", "Critical"] }
+          ]
+        },
+        "counts": {
+          "description": "Findings by v1 severity. 'passed' counts passing checks (severity Info, passed true); 'info' counts the other Info findings.",
+          "type": "object",
+          "required": ["info", "warning", "critical", "passed"],
+          "additionalProperties": false,
+          "properties": {
+            "info": { "type": "integer", "minimum": 0 },
+            "warning": { "type": "integer", "minimum": 0 },
+            "critical": { "type": "integer", "minimum": 0 },
+            "passed": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "modules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/module" }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "description": "ISO-8601 UTC timestamp with milliseconds.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "nullableTimestamp": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/timestamp" }
+      ]
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+    },
+    "nullableString": {
+      "type": ["string", "null"]
+    },
+    "module": {
+      "type": "object",
+      "required": ["id", "name", "group", "category", "status", "skippedReason", "requiresElevation", "startedAt", "durationMs", "error", "metrics", "findings"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "group": {
+          "enum": ["system", "performance", "services", "startup", "events", "reliability", "storage", "network", "updates", "security", "extras"]
+        },
+        "category": { "type": "string" },
+        "status": {
+          "enum": ["Healthy", "Warning", "Critical", "Unknown", "Skipped", "Failed"]
+        },
+        "skippedReason": {
+          "description": "Why a module was skipped (e.g. RequiresElevation); null when it ran.",
+          "$ref": "#/$defs/nullableString"
+        },
+        "requiresElevation": { "type": "boolean" },
+        "startedAt": { "$ref": "#/$defs/nullableTimestamp" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "error": { "$ref": "#/$defs/nullableString" },
+        "metrics": {
+          "description": "Module-specific measurements (free-form).",
+          "type": "object"
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["id", "moduleId", "title", "severity", "severityNative", "passed", "component", "evidence", "likelyCause", "recommendation", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Stable finding id (unique within its module; pair with moduleId for a global key).",
+          "type": "string",
+          "minLength": 1
+        },
+        "moduleId": { "$ref": "#/$defs/id" },
+        "title": { "type": "string" },
+        "severity": {
+          "description": "v1 severity: Pass and Information -> Info, Warning -> Warning, Error and Critical -> Critical.",
+          "enum": ["Info", "Warning", "Critical"]
+        },
+        "severityNative": {
+          "description": "OmniDiag's internal five-level severity.",
+          "enum": ["Pass", "Information", "Warning", "Error", "Critical"]
+        },
+        "passed": {
+          "description": "True for passing checks (severityNative Pass).",
+          "type": "boolean"
+        },
+        "component": { "type": "string" },
+        "evidence": {
+          "type": "object",
+          "required": ["detail", "data"],
+          "additionalProperties": false,
+          "properties": {
+            "detail": { "type": "string" },
+            "data": { "description": "Structured payload backing the finding (any JSON value)." }
+          }
+        },
+        "likelyCause": { "type": "string" },
+        "recommendation": { "type": "string" },
+        "confidence": { "type": "integer", "minimum": 0, "maximum": 100 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "severityNative": { "const": "Pass" } } },
+          "then": { "properties": { "severity": { "const": "Info" }, "passed": { "const": true } } },
+          "else": { "properties": { "passed": { "const": false } } }
+        }
+      ]
+    }
+  }
+}

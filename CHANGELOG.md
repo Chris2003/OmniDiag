@@ -1,5 +1,83 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+Phase 1 (Foundation) of the v1.0 roadmap.
+
+### Contract & schema
+- **Module contract v1.** Every scanner manifest now declares a stable `Id`
+  (`<group>.<kebab-name>`, e.g. `network.dns-resolver`), a `Group` (one of `system`,
+  `performance`, `services`, `startup`, `events`, `reliability`, `storage`, `network`, `updates`,
+  `security`, `extras`), and `NetworkAccess` (`None` / `LocalNetwork` / `Internet`); every repair
+  declares `Id` (`repair.<kebab-name>`) and `NetworkAccess`. Registrations also expose
+  `RequiresElevation` (alias of `RequiresAdmin`), `TimeoutSec` (default 60), and
+  `SupportedArchitectures` (default `x64`, `arm64`). Older manifests load with derived defaults;
+  invalid values and duplicate Ids are logged and the plugin is skipped. The engine stamps
+  `ModuleId`, `Group`, and `SkippedReason` on each result.
+- **Report schema v1.** `schemas/omnidiag-report.v1.json` (JSON Schema 2020-12) and
+  `ConvertTo-OmniReportV1` / `ConvertFrom-OmniReportV1`: a versioned projection of the session
+  with `schemaVersion`, ISO-8601 UTC timestamps, and the v1 severity scale (Pass and Information
+  → Info with `passed`, Warning → Warning, Error and Critical → Critical; `severityNative` kept).
+  Output is deterministic and ASCII-only (`ConvertTo-OmniJsonText`), identical on PowerShell 5.1
+  and 7, and covered by a golden-file test. See `docs/SCHEMA.md`.
+- **Breaking for JSON consumers:** `Export-OmniJsonReport`, `Export-OmniReport -Format Json`, and
+  the report package's `data.json` now write schema v1 instead of the raw session. Saved sessions
+  in `OmniDiagData\sessions` keep the native format through the new `Save-OmniSession` (used by
+  `OmniDiag.ps1` and the GUI). `Import-OmniSession` reads native sessions, v1 reports, and both
+  kinds of package.
+- **Markdown reports:** `ConvertTo-OmniMarkdownReport` / `Export-OmniMarkdownReport`, and `Md` in
+  `Export-OmniReport` and `OmniDiag.ps1 -ReportFormat`.
+- **Exit codes:** `Get-OmniExitCodeTable`, `Get-OmniExitCode`, `Get-OmniRepairExitCode`.
+  `OmniDiag.ps1` now exits 0/1/2/3/4/5 from the scan, 10 for conflicting switches, 11/12 after a
+  failed or reboot-pending repair, and 20 on an internal error (it still writes the session object
+  first, and scratch cleanup still runs).
+
+### CLI
+- **`omnidiag` command.** `OmniDiag.cmd` doubles as `omnidiag`: a subcommand or `--option` goes to
+  the new router (`src/Cli/omnidiag.ps1` → `Invoke-OmniDiagCli`), anything else to the classic
+  console. Same portable environment; `%ERRORLEVEL%` is propagated; it never pauses with
+  arguments.
+- Commands: `list [modules|groups|repairs|plans]`, `scan [--group] [--module] [--profile |
+  --workflow] [--range]`, `report [--output <dir>]`, `version`, `help`. Global options:
+  `--format json|csv|md|html|pdf`, `--output`, `--verbose` (Debug entries in the local log),
+  `--quiet`, `--no-color`, `--help`. Data goes to stdout only with `--format` and no `--output`;
+  progress and status go to stderr. `list --format json` emits a versioned document
+  (`schemas/omnidiag-list.v1.json`). Unknown commands or options print usage on stderr and exit 10.
+- Scanners that need network access run from the CLI only when named with `--module`.
+- `Invoke-OmniDiag -LogLevel`; module version 0.5.0. The portable package and `install.ps1` now
+  ship the `schemas` folder. See `docs/CLI.md`.
+
+### CI & hygiene
+- **CI pipeline.** Lint job (PSScriptAnalyzer, 0 errors required). Tests on Windows pwsh 7,
+  Windows PowerShell 5.1, Ubuntu pwsh, and Windows 11 ARM64 (ARM64 doesn't block merges yet).
+  Coverage report from the Windows pwsh leg. Portable-package job uploads the zip and
+  `.sha256` as an artifact. Dependency review runs on pull requests. Every action is pinned to
+  a commit SHA, and Dependabot checks GitHub Actions weekly.
+- **`build/Invoke-Tests.ps1`.** One test entry point for CI and local runs (Pester 5.5+,
+  Windows PowerShell 5.1 and PowerShell 7). It points `OMNIDIAG_DATA` at a throwaway folder
+  so tests stop writing `OmniDiagData` into the repository. `-Coverage` writes a JaCoCo report
+  and prints coverage for Core, Repair, and Reporting. `-CoverageTarget` only reports unless
+  `-EnforceCoverage` is given.
+- **`build/Invoke-Lint.ps1` + `PSScriptAnalyzerSettings.psd1`.** Runs the default rules and
+  prints counts by severity and rule. Fails on any error, or on any warning with
+  `-FailOnWarning`. Retries files when PSScriptAnalyzer itself crashes intermittently.
+  Write-Host is allowed only in the console presentation layers.
+- **Static no-network test** (`Tests/NoNetwork.Tests.ps1`). Walks the AST of every product
+  script for network-capable cmdlets and .NET types. It fails on usage outside an explicit
+  allowlist and on stale allowlist entries, and a self-test proves the detector catches each
+  pattern. Outside `src`, only `install.ps1` may download.
+- **Fixed:** `.reg` backup header stripping on Windows PowerShell 5.1. A literal U+FEFF in a
+  BOM-less file was read as three ANSI characters; the regex now uses `﻿` and the file
+  is ASCII-only.
+- **Fixed:** PDF reports now show `-BrandLogo` for JPEG files, embedded natively as a
+  DCTDecode image. Other formats are skipped with a warning; the HTML report still shows any
+  format. Removed the unused `-TimeoutSeconds` parameter from `Export-OmniPdfReport`.
+- Lint fixes: no assignment to the automatic `$matches` (WiFi Networks), no unused `$log`
+  (Reliability), and a singular noun for an internal PDF helper. `OmniDiagGui.psm1` is now
+  ASCII-only.
+- Removed the stale committed `dist/` package, and `dist/` is now git-ignored. Fixed stale
+  header comments and added the missing 0.4.0/0.4.1 compare links.
+
 ## 0.4.1 — architecture review fixes
 
 From a four-reviewer swarm review against `docs/ARCHITECTURE.md` (plugin contracts, core
@@ -424,7 +502,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - GitHub Actions CI: PSScriptAnalyzer lint + Pester tests on `windows-latest`.
 - Project documentation and governance files.
 
-[Unreleased]: https://github.com/Chris2003/OmniDiag/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/Chris2003/OmniDiag/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Chris2003/OmniDiag/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/Chris2003/OmniDiag/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Chris2003/OmniDiag/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Chris2003/OmniDiag/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Chris2003/OmniDiag/compare/v0.2.0...v0.3.0

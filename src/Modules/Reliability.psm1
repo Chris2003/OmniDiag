@@ -25,6 +25,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Reliability'
+        Id            = 'reliability.reliability'
+        Group         = 'reliability'
+        NetworkAccess = 'None'
         Category      = 'Reliability'
         Description   = 'Application crashes/hangs and unexpected shutdowns over time.'
         RequiresAdmin = $false
@@ -43,7 +46,6 @@ function Invoke-OmniModuleScan {
 
     $result = New-OmniResult -ModuleName 'Reliability' -Category 'Reliability' `
         -RequiresAdmin $false -HadAdmin $Context.IsAdmin
-    $log = $Context.Logger
 
     $start = $Context.TimeRange.Start
     $end   = $Context.TimeRange.End

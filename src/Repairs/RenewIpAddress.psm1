@@ -12,6 +12,8 @@ if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Release / Renew IP Address'
+        Id            = 'repair.release-renew-ip-address'
+        NetworkAccess = 'LocalNetwork'   # DHCP release/renew talks to the local DHCP server
         Category      = 'Network'
         Description   = 'Releases and renews the DHCP lease to recover from a bad or stale address.'
         RequiresAdmin = $false

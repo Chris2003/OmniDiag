@@ -8,7 +8,41 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every third-party action is pinned to a full commit SHA (version in the comment).
+# Dependabot (.github/dependabot.yml) proposes updates weekly.
+
 jobs:
+  lint:
+    name: Lint (PSScriptAnalyzer)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install PSScriptAnalyzer
+        run: |
+          # PowerShell Gallery lookups occasionally fail on hosted runners; retry before failing.
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              Install-Module PSScriptAnalyzer -MinimumVersion 1.21.0 -Scope CurrentUser -Force -ErrorAction Stop
+              break
+            } catch {
+              if ($attempt -eq 3) { throw }
+              Write-Warning "Install-Module PSScriptAnalyzer failed (attempt $attempt): $($_.Exception.Message)"
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+      - name: Run PSScriptAnalyzer (0 errors required)
+        run: ./build/Invoke-Lint.ps1
+
   test:
     name: Pester (${{ matrix.os }}, ${{ matrix.shell }})
     strategy:
@@ -17,17 +51,27 @@ jobs:
         include:
           - os: windows-latest
             shell: pwsh
+            coverage: true
           # Windows PowerShell 5.1 is a primary supported host (STA GUI, JSON dates, StrictMode).
           - os: windows-latest
             shell: powershell
           - os: ubuntu-latest
             shell: pwsh
+          # Free Windows ARM64 runner (public repositories only). Non-blocking until the
+          # ARM64 leg has a green history; flip experimental to false to make it gating.
+          - os: windows-11-arm
+            shell: pwsh
+            experimental: true
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental == true }}
+    timeout-minutes: 45
     defaults:
       run:
         shell: ${{ matrix.shell }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install Pester
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -46,6 +90,68 @@ jobs:
             }
           }
       - name: Run tests
+        # Includes the static no-network test (Tests/NoNetwork.Tests.ps1).
         run: |
-          Import-Module Pester -MinimumVersion 5.5.0
-          Invoke-Pester -Path ./Tests -CI
+          $params = @{ TestResultPath = 'test-results/testResults.xml' }
+          if ('${{ matrix.coverage }}' -eq 'true') {
+            # Phase 1: coverage is reported, not enforced (no -EnforceCoverage).
+            $params.Coverage = $true
+            $params.CoverageOutputPath = 'test-results/coverage.xml'
+            $params.CoverageTarget = 80
+          }
+          ./build/Invoke-Tests.ps1 @params
+          exit $LASTEXITCODE
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.shell }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  package:
+    name: Portable package
+    needs: [lint, test]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build portable zip
+        run: |
+          $result = ./build/Build-Portable.ps1 -OutputDirectory dist
+          "### Portable package`n`n| Version | Size (KB) | SHA256 |`n|---|---:|---|`n| $($result.Version) | $($result.SizeKB) | ``$($result.Sha256)`` |" |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+      - name: Upload package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omnidiag-portable
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    # Needs "Dependency graph" enabled in the repository's security settings; non-blocking
+    # until it is, so a settings gap can't fail every pull request.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate

@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Startup Performance'
+        Id            = 'performance.startup-performance'
+        Group         = 'performance'
+        NetworkAccess = 'None'
         Category      = 'Performance'
         Description   = 'Boot time, uptime, autostart item count, and boot duration.'
         RequiresAdmin = $false

@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Console presentation for OmniDiag (Milestone 1 runner).
+    Console presentation for OmniDiag scans.
 
 .DESCRIPTION
-    Renders the dashboard summary and a live progress callback to the host. This
-    is the interim front-end until the WPF GUI lands (Milestone 5); the full
-    HTML/JSON/CSV reporting engine arrives in Milestone 4. Kept deliberately
+    Renders the dashboard summary and a live progress callback to the host for the
+    console front end (OmniDiag.ps1). The WPF GUI (src/UI) and the report exporters
+    (src/Reporting) are separate presentation layers. Kept deliberately
     presentation-only so it has no dependency on how a session was produced.
 #>
 
