@@ -112,6 +112,15 @@
 
 .EXAMPLE
     .\OmniDiag.ps1 -Gui
+
+.NOTES
+    Exit codes (see docs/CLI.md): 0 no warnings or critical findings, 1 warnings,
+    2 critical findings, 3 a module failed, 4 the requested -IncludeModule scanners
+    all need elevation, 5 cancelled, 10 conflicting arguments, 11 a repair failed,
+    12 a repair needs a reboot, 20 internal error. The session object is still
+    written to the pipeline first, so '$s = .\OmniDiag.ps1' keeps working.
+    Parameter-binding failures (e.g. an invalid -Range value) are reported by
+    PowerShell itself before this script runs and exit with 1.
 #>
 [CmdletBinding()]
 param(
@@ -143,7 +152,7 @@ param(
 
     # Reporting
     [switch] $Report,
-    [ValidateSet('Html', 'Json', 'Csv', 'Pdf', 'Zip')]
+    [ValidateSet('Html', 'Json', 'Csv', 'Md', 'Pdf', 'Zip')]
     [string[]] $ReportFormat = @('Html', 'Json', 'Csv'),
     [string] $ReportPath,
     [string] $BrandName,
@@ -162,8 +171,21 @@ $ErrorActionPreference = 'Stop'
 
 # --- Host validation -------------------------------------------------------
 if ($PSVersionTable.PSVersion.Major -lt 5) {
-    Write-Error 'OmniDiag requires Windows PowerShell 5.1 or PowerShell 7+.'
-    exit 1
+    [Console]::Error.WriteLine('OmniDiag requires Windows PowerShell 5.1 or PowerShell 7+.')
+    exit 20
+}
+
+# --- Argument checks (exit 10) -------------------------------------------------
+function Exit-OmniUsageError {
+    param([string] $Message)
+    [Console]::Error.WriteLine("OmniDiag: $Message")
+    [Console]::Error.WriteLine("Run 'Get-Help $PSCommandPath -Detailed' for usage.")
+    exit 10
+}
+if ($Profile -and $Workflow) { Exit-OmniUsageError 'Choose either -Profile or -Workflow, not both.' }
+if (($Profile -or $Workflow) -and $IncludeModule) { Exit-OmniUsageError 'Do not combine -Profile or -Workflow with -IncludeModule. Use one selection method.' }
+if ($FromSession -and ($Profile -or $Workflow -or $IncludeModule -or $IncludeCategory -or $ExcludeCategory)) {
+    Exit-OmniUsageError '-FromSession loads a saved session; it cannot be combined with scan selections (-Profile, -Workflow, -IncludeModule, -IncludeCategory, -ExcludeCategory).'
 }
 
 $isWindowsHost = $true
@@ -175,11 +197,15 @@ if (-not $isWindowsHost) {
 # --- Import module ---------------------------------------------------------
 $manifest = Join-Path $PSScriptRoot 'src/OmniDiag.psd1'
 if (-not (Test-Path -LiteralPath $manifest)) {
-    Write-Error "OmniDiag module not found at: $manifest"
-    exit 1
+    [Console]::Error.WriteLine("OmniDiag module not found at: $manifest")
+    exit 20
 }
 Import-Module $manifest -Force -DisableNameChecking
 
+if ($Gui -and -not $isWindowsHost) { Exit-OmniUsageError 'The GUI requires Windows (WPF). Use the console mode on this OS.' }
+
+$exitCode = 0
+$session = $null
 try {
     # --- Portable data location --------------------------------------------------
     $dataRoot = Get-OmniDataRoot
@@ -214,10 +240,6 @@ try {
     }
 
     if ($Gui) {
-        if (-not $isWindowsHost) {
-            Write-Error 'The GUI requires Windows (WPF). Use the console mode on this OS.'
-            exit 1
-        }
         Write-Host 'Launching OmniDiag GUI...' -ForegroundColor Cyan
         Show-OmniDiagWindow
         return
@@ -245,8 +267,8 @@ try {
         Write-Host ("Structured log written to: {0}" -f $session.LogPath) -ForegroundColor DarkGray
 
         # Keep a snapshot with the tool so later runs can compare (-CompareWith Last) or chat (-FromSession Last).
-        $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-        $savedPath = Export-OmniJsonReport -Session $session -Path (Get-OmniDataPath -Kind Sessions -ChildPath "session-$stamp.json")
+        # Native session format; the public JSON report (schema v1) is written by -Report.
+        $savedPath = Save-OmniSession -Session $session
         Write-Host ("Session saved to: {0} (local only; may contain user, device, and domain names - delete OmniDiagData to remove)" -f $savedPath) -ForegroundColor DarkGray
     }
 
@@ -361,16 +383,29 @@ try {
         }
     }
 
+    # --- Exit code from the scan (0-5; see Get-OmniExitCodeTable) -------------------
+    $exitCode = Get-OmniExitCode -Session $session -ExplicitSelection:([bool]$IncludeModule)
+
     # --- Repair Center ---------------------------------------------------------
     if ($Repair -or $RepairDryRun) {
-        Invoke-OmniRepairConsole -Session $session -DryRun:$RepairDryRun -AllowWithoutRestorePoint:$AllowRepairWithoutRestorePoint | Out-Null
+        $repairSession = @(Invoke-OmniRepairConsole -Session $session -DryRun:$RepairDryRun -AllowWithoutRestorePoint:$AllowRepairWithoutRestorePoint) |
+            Where-Object { $_ -and $_.PSObject.Properties['Results'] } | Select-Object -Last 1
+        # A failed repair (11) or a pending reboot (12) outranks the scan's code.
+        $repairCode = Get-OmniRepairExitCode -RepairSession $repairSession
+        if ($repairCode -ne 0) { $exitCode = $repairCode }
     }
 
+} catch {
+    [Console]::Error.WriteLine("OmniDiag: internal error: $($_.Exception.Message)")
+    Write-Verbose $_.ScriptStackTrace
+    $exitCode = 20
 } finally {
     # Remove OmniDiag's scratch files on every exit path (errors, GUI close, Ctrl+C);
     # logs, reports, and saved sessions stay in OmniDiagData.
     Clear-OmniTempData
 }
 
-# Make the session available to the caller for scripting/automation.
-$session
+# Make the session available to the caller for scripting/automation, then report
+# the outcome as the process exit code.
+if ($null -ne $session) { $session }
+exit $exitCode

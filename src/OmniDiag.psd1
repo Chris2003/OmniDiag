@@ -3,7 +3,7 @@
     # OmniDiag module manifest
     # ---------------------------------------------------------------------
     RootModule        = 'OmniDiag.psm1'
-    ModuleVersion     = '0.4.1'
+    ModuleVersion     = '0.5.0'
     GUID              = 'b6e9d0c2-7a4d-4f3e-9c1a-0d2f5a8e10b4'
     Author            = 'OmniDiag Contributors'
     CompanyName       = 'OmniDiag'
@@ -26,10 +26,13 @@
         'Core/HealthScore.psm1',
         'Core/RegistryScan.psm1',
         'Core/Engine.psm1',
+        'Core/ExitCodes.psm1',
         'Repair/RepairModels.psm1',
         'Repair/RepairRegistry.psm1',
         'Repair/RepairEngine.psm1',
+        'Reporting/ReportV1.psm1',
         'Reporting/Json.psm1',
+        'Reporting/Markdown.psm1',
         'Reporting/Csv.psm1',
         'Reporting/Html.psm1',
         'Reporting/Pdf.psm1',
@@ -37,6 +40,7 @@
         'Reporting/Report.psm1',
         'Cli/OmniConsole.psm1',
         'Cli/OmniRepairConsole.psm1',
+        'Cli/Router.psm1',
         'UI/OmniDiagGui.psm1'
     )
 
@@ -51,6 +55,7 @@
         # Runbooks, saved-session search, and before/after comparison
         'Get-OmniRunbook', 'Find-OmniRunbook', 'Get-OmniDefaultRunbookPath',
         'Get-OmniSessionFinding', 'Import-OmniSession', 'Search-OmniEvidence', 'Compare-OmniSession',
+        'Save-OmniSession',
         # Models
         'New-OmniFinding', 'New-OmniResult', 'Add-OmniFinding', 'Set-OmniResultMetric',
         'Complete-OmniResult', 'Get-OmniTimeRange', 'Get-OmniSeverityRank', 'Get-OmniSeverityNames',
@@ -59,6 +64,11 @@
         # Registry / engine / scoring
         'Test-OmniIsAdministrator', 'New-OmniContext', 'Get-OmniModule',
         'Invoke-OmniSession', 'Get-OmniHealthScore',
+        # Module contract v1 (ids, groups, network access) - shared by scanners and repairs
+        'Get-OmniGroupNames', 'Get-OmniGroup', 'Get-OmniNetworkAccessNames', 'ConvertTo-OmniKebabCase',
+        'Resolve-OmniModuleIdentity', 'Resolve-OmniPluginContract',
+        # Exit codes (v1)
+        'Get-OmniExitCodeTable', 'Get-OmniExitCodeValue', 'Get-OmniExitCode', 'Get-OmniRepairExitCode',
         # Registry scan/backup/remove (shared by the Registry Health scanner and the
         # Clean Invalid Registry Entries repair; exported so both resolve them globally).
         'Get-OmniInvalidRegistryEntry', 'Export-OmniRegistryBackup', 'Remove-OmniRegistryEntry',
@@ -80,6 +90,12 @@
         'Export-OmniCsvReport', 'Export-OmniEventCsvReport', 'Export-OmniReportPackage',
         'Export-OmniPdfReport',
         'ConvertTo-OmniFindingTable', 'ConvertTo-OmniEventTable',
+        'Export-OmniMarkdownReport', 'ConvertTo-OmniMarkdownReport',
+        # Report schema v1 (versioned JSON projection + deterministic JSON writer)
+        'Get-OmniReportSchemaVersion', 'ConvertTo-OmniReportV1', 'ConvertFrom-OmniReportV1',
+        'ConvertTo-OmniJsonText', 'ConvertTo-OmniPlainData', 'ConvertTo-OmniIsoTimestamp', 'ConvertTo-OmniV1Severity',
+        # CLI router (omnidiag list | scan | report | version | help)
+        'Invoke-OmniDiagCli', 'Get-OmniCliUsage',
         # Shared reporting helper (used cross-module by the HTML exporter, so it
         # must be globally resolvable, not just private to Json.psm1).
         'Write-OmniTextFile',
@@ -96,7 +112,7 @@
             Tags         = @('Windows', 'Diagnostics', 'IT', 'Sysadmin', 'Troubleshooting', 'EventLog')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/Chris2003/OmniDiag'
-            ReleaseNotes = 'Fully portable (zero-footprint) operation, multi-turn local AI over saved findings and approved runbooks, local evidence search, and before/after session comparison.'
+            ReleaseNotes = '0.5.0: module contract v1 (stable Id, Group, NetworkAccess, TimeoutSec, SupportedArchitectures on every scanner and repair), versioned JSON report schema v1 (schemas/omnidiag-report.v1.json) with a Markdown exporter, documented exit codes, and the omnidiag CLI router (list, scan, report, version, help).'
         }
     }
 }

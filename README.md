@@ -200,6 +200,29 @@ Start-Process pwsh -Verb RunAs -ArgumentList '-File', "$PWD\OmniDiag.ps1"
 .\OmniDiag.ps1 -Repair -RepairDryRun
 ```
 
+### The `omnidiag` command (0.5.0)
+
+`OmniDiag.cmd` doubles as the `omnidiag` command (Windows file names are case-insensitive).
+A subcommand or `--option` as the first argument goes to the CLI router; no arguments or a
+PowerShell-style `-Switch` keeps the classic console above.
+
+```bat
+omnidiag list                               :: scanners with their ids, groups, network access
+omnidiag list groups --format json          :: versioned JSON document
+omnidiag scan --group network               :: human summary; progress on stderr
+omnidiag scan --module storage.disk --format json > disk.json
+omnidiag scan --profile HelpDesk --format md --output triage.md
+omnidiag report --output C:\Reports         :: HTML + JSON (schema v1), local-only scanners
+omnidiag version
+echo %ERRORLEVEL%                           :: 0 ok, 1 warnings, 2 critical, 3 partial, ...
+```
+
+Scanners that need network access (`network.network`, `network.dns-resolver`,
+`extras.active-directory`) run only when named with `--module`. JSON output follows
+[schemas/omnidiag-report.v1.json](schemas/omnidiag-report.v1.json). See
+[docs/CLI.md](docs/CLI.md) for every option and exit code and [docs/SCHEMA.md](docs/SCHEMA.md)
+for the report format. `OmniDiag.ps1` sets the same exit codes.
+
 > **Repair Center:** repairs are always opt-in and confirmed per action. Each shows its
 > risk (Safe / Moderate / Destructive) and whether it needs elevation or a reboot, and a
 > System Restore point is created before system-altering repairs. Run elevated for the
@@ -222,7 +245,11 @@ $session.Summary.Score          # 0-100 overall health score
 $session.Results                # per-module results & findings
 
 # Generate reports from a session (defaults to OmniDiagData\reports next to the tool)
-Export-OmniReport -Session $session -Format Html,Json,Csv,Zip
+Export-OmniReport -Session $session -Format Html,Json,Csv,Md,Zip
+
+# The versioned JSON report (schema v1) and the matching exit code, for other tools
+ConvertTo-OmniReportV1 -Session $session | ConvertTo-OmniJsonText
+Get-OmniExitCode -Session $session
 ```
 
 ### Saved sessions, runbooks, search, and before/after comparison

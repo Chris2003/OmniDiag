@@ -25,6 +25,8 @@ if (-not (Get-Command Get-OmniInvalidRegistryEntry -ErrorAction SilentlyContinue
 function Get-OmniRepairManifest {
     @{
         Name          = 'Clean Invalid Registry Entries'
+        Id            = 'repair.clean-invalid-registry-entries'
+        NetworkAccess = 'None'
         Category      = 'Cleanup'
         Description   = 'Finds and removes invalid/obsolete registry entries (broken startup, dead App Paths, orphaned file associations, uninstall leftovers, missing shared-DLL/sound/font references). Exports a .reg backup first.'
         RequiresAdmin = $true

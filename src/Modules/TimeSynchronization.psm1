@@ -6,7 +6,7 @@ if (-not (Get-Command New-OmniFinding -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='Time Synchronization'; Category='Identity'; Description='Windows Time service, source, synchronization, and NTP policy posture.'; RequiresAdmin=$false; Order=480; Enabled=$true }
+    @{ Name='Time Synchronization'; Id='extras.time-synchronization'; Group='extras'; NetworkAccess='None'; Category='Identity'; Description='Windows Time service, source, synchronization, and NTP policy posture.'; RequiresAdmin=$false; Order=480; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {

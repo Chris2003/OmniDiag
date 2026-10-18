@@ -6,7 +6,7 @@ if (-not (Get-Command New-OmniFinding -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='VPN'; Category='Network'; Description='Windows VPN profiles, connection state, adapters, and recent RasClient failures.'; RequiresAdmin=$false; Order=470; Enabled=$true }
+    @{ Name='VPN'; Id='network.vpn'; Group='network'; NetworkAccess='None'; Category='Network'; Description='Windows VPN profiles, connection state, adapters, and recent RasClient failures.'; RequiresAdmin=$false; Order=470; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {

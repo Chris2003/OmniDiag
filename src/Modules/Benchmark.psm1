@@ -26,6 +26,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Benchmark'
+        Id            = 'extras.benchmark'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'Performance'
         Description   = 'Quick bounded CPU and disk micro-benchmark.'
         RequiresAdmin = $false

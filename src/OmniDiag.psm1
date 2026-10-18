@@ -65,6 +65,10 @@ function Invoke-OmniDiag {
     .PARAMETER Quiet
         Suppress console logging from the logger.
 
+    .PARAMETER LogLevel
+        Lowest level written to the structured log (Debug, Info, Warn, Error).
+        Default Info; the CLI's --verbose uses Debug.
+
     .EXAMPLE
         $session = Invoke-OmniDiag -Range Last7Days
     #>
@@ -84,7 +88,9 @@ function Invoke-OmniDiag {
         [string] $LogPath,
         [System.Threading.CancellationToken] $CancellationToken = ([System.Threading.CancellationToken]::None),
         [scriptblock] $ProgressCallback,
-        [switch] $Quiet
+        [switch] $Quiet,
+        [ValidateSet('Debug', 'Info', 'Warn', 'Error')]
+        [string] $LogLevel = 'Info'
     )
 
     if ($Profile -and $Workflow) { throw 'Choose either -Profile or -Workflow, not both.' }
@@ -100,7 +106,7 @@ function Invoke-OmniDiag {
         $LogPath = Get-OmniDataPath -Kind Logs -ChildPath "omnidiag-$stamp.jsonl"
     }
 
-    $logger = New-OmniLogger -Path $LogPath -MinimumLevel Info -Console:(-not $Quiet)
+    $logger = New-OmniLogger -Path $LogPath -MinimumLevel $LogLevel -Console:(-not $Quiet)
     $logger.Info("OmniDiag $(Get-OmniVersion) starting.", 'OmniDiag')
 
     $timeRange = Get-OmniTimeRange -Preset $Range

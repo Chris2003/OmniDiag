@@ -63,6 +63,7 @@ $include = @(
     'OmniDiag-GUI.cmd',
     'install.ps1',
     'src',
+    'schemas',
     'docs',
     'runbooks',
     'README.md',

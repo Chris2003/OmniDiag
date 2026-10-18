@@ -28,6 +28,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Windows Health'
+        Id            = 'updates.windows-health'
+        Group         = 'updates'
+        NetworkAccess = 'None'
         Category      = 'Health'
         Description   = 'Pending reboot, device errors, service state, and update health.'
         RequiresAdmin = $false

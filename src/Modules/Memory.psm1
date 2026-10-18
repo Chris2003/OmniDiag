@@ -22,6 +22,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Memory'
+        Id            = 'performance.memory'
+        Group         = 'performance'
+        NetworkAccess = 'None'
         Category      = 'Performance'
         Description   = 'Physical memory usage and pagefile utilization.'
         RequiresAdmin = $false

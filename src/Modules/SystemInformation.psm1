@@ -25,6 +25,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'System Information'
+        Id            = 'system.system-information'
+        Group         = 'system'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Hardware, firmware, and operating system inventory.'
         RequiresAdmin = $false

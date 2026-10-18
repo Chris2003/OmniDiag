@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Network Shares'
+        Id            = 'network.network-shares'
+        Group         = 'network'
+        NetworkAccess = 'None'
         Category      = 'Network'
         Description   = 'Enumerates SMB shares and flags overly permissive access.'
         RequiresAdmin = $false

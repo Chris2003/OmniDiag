@@ -12,6 +12,8 @@ if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Run System File Checker (SFC)'
+        Id            = 'repair.run-system-file-checker-sfc'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Scans protected OS files and repairs corrupted ones. Can take several minutes.'
         RequiresAdmin = $true

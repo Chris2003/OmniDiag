@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Scheduled Tasks'
+        Id            = 'startup.scheduled-tasks'
+        Group         = 'startup'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Enabled and third-party scheduled task inventory.'
         RequiresAdmin = $false

@@ -20,9 +20,9 @@ editing the engine.
 | **Repair core** | `src/Repair/` | Repair models + step runner, plugin registry/discovery, restore-point helper, and the repair execution engine. The "fix" counterpart to Core. |
 | **Repairs** | `src/Repairs/` | Repair plugins. One `.psm1` per repair. Discovered at runtime, exactly like diagnostic modules. |
 | **Event Log subsystem** | `src/EventLog/` | Knowledge base (channels + Event-ID translation catalog) and the analysis pipeline (collection, grouping, timeline, finding/pattern generation) used by the Event Logs module. Not plugins; imported by the module. |
-| **Reporting** | `src/Reporting/` | HTML / JSON / CSV / **PDF** / ZIP exporters + `Export-OmniReport` coordinator. PDF is generated **natively** (`Pdf.psm1`, standard PDF fonts) — no browser or external dependency. Consume a session; emit no side effects beyond writing files. |
+| **Reporting** | `src/Reporting/` | HTML / JSON / CSV / Markdown / **PDF** / ZIP exporters + `Export-OmniReport` coordinator. JSON is the versioned **report schema v1** (`ReportV1.psm1`: `ConvertTo-OmniReportV1` / `ConvertFrom-OmniReportV1` and the deterministic `ConvertTo-OmniJsonText` writer; see [SCHEMA.md](SCHEMA.md)). PDF is generated **natively** (`Pdf.psm1`, standard PDF fonts) — no browser or external dependency. Consume a session; emit no side effects beyond writing files. |
 | **UI** | `src/UI/` | WPF front-end: runtime-loaded XAML (`MainWindow.xaml`) + `Show-OmniDiagWindow`. Left-nav panels: **Dashboard** (health score, a DxDiag-style System Information panel via `Get-OmniSystemInfo`, recommendations, module results), **All Findings**, **Diagnostics** (toggle scanners on/off, or run one individually), **Repair Center**, **Local AI** (Ollama readiness + single-question analysis, run in a background runspace). Scans run in a background runspace; a DispatcherTimer polls a synchronized hashtable for progress; Cancel drives the engine's CancellationToken. Report export and per-scanner selection are wired here. STA-hosted when launched from MTA (PowerShell 7). |
-| **CLI** | `src/Cli/` | Console presentation (dashboard + progress). |
+| **CLI** | `src/Cli/` | Console presentation (dashboard + progress) and the `omnidiag` command-line router (`Router.psm1` / `omnidiag.ps1`, GNU-style arguments; see [CLI.md](CLI.md)). Exit codes come from `Core/ExitCodes.psm1`. |
 
 ## Core building blocks
 
@@ -59,11 +59,15 @@ convention-based functions:
 function Get-OmniModuleManifest {
     @{
         Name          = 'My Module'   # required, unique
+        Id            = 'network.my-module'  # contract v1: stable, unique '<group>.<kebab-name>'
+        Group         = 'network'     # contract v1: one of the v1.0 groups or 'extras'
+        NetworkAccess = 'None'        # contract v1: None | LocalNetwork | Internet
         Category      = 'Network'     # required, dashboard grouping
         Description   = 'What it checks.'
-        RequiresAdmin = $false        # engine auto-skips if not elevated
+        RequiresAdmin = $false        # engine auto-skips if not elevated (alias: RequiresElevation)
         Order         = 50            # lower runs first
         Enabled       = $true
+        # Optional (contract v1): TimeoutSec = 60; SupportedArchitectures = @('x64', 'arm64')
     }
 }
 
@@ -183,9 +187,13 @@ STA runspace while a DispatcherTimer polls progress on the UI thread.
 
 ## v1.0 target
 
-The sections above describe OmniDiag as it is (0.4.1). This section is the agreed direction for
+The sections above describe OmniDiag as it is. This section is the agreed direction for
 v1.0; the delivery plan is [ROADMAP.md](ROADMAP.md) and the starting point is
 [STATUS.md](STATUS.md). Items marked *(decision)* follow the owner decisions approved on 2026-10-18 (listed in the roadmap).
+
+**Implemented in 0.5.0 (Phase 1):** module contract v1, report schema v1, the exit codes, and
+the CLI router with `list`, `scan`, `report`, `version`, and `help` — each subsection below says
+what shipped and what is still to come.
 
 ### Stack decision
 
@@ -193,7 +201,7 @@ Keep PowerShell (Windows PowerShell 5.1 + PowerShell 7) and WPF. How the v1.0 re
 
 | Requirement | Approach in this stack |
 |---|---|
-| `omnidiag` command with subcommands | `omnidiag.cmd` shim → `src/Cli/Router.psm1` (GNU-style arguments). Optional tiny signed `omnidiag.exe` stub (.NET Framework 4.8) only if winget aliases or a signed executable entry point require it *(decision)* |
+| `omnidiag` command with subcommands | `omnidiag` → `OmniDiag.cmd` (one file: Windows names are case-insensitive, so a separate `omnidiag.cmd` would collide with it) → `src/Cli/omnidiag.ps1` → `src/Cli/Router.psm1` (GNU-style arguments) *(0.5.0)*. Optional tiny signed `omnidiag.exe` stub (.NET Framework 4.8) only if winget aliases or a signed executable entry point require it *(decision)* |
 | ARM64 | Windows PowerShell 5.1 + WPF run natively on Windows 11 ARM64 (.NET Framework 4.8.1); PowerShell 7 ships win-arm64. Scanners report unavailable data as "not available" |
 | Full report < 60 s | Runspace-pool executor in the engine (the plugin contract already allows it), per-module timeouts, bounded event queries |
 | GUI startup < 2 s | Manifest-only plugin discovery, deferred tab construction, no CIM calls before first paint |
@@ -204,7 +212,7 @@ Keep PowerShell (Windows PowerShell 5.1 + PowerShell 7) and WPF. How the v1.0 re
 ### Layers
 
 ```text
-omnidiag.cmd / OmniDiag-GUI.cmd ─┐
+OmniDiag.cmd / OmniDiag-GUI.cmd ─┐
 OmniDiag.ps1 (compat front end) ─┼─► CLI router ─► public cmdlets (Get-OmniDiag*, Invoke-OmniDiag*)
 WPF GUI ─────────────────────────┘                     │
                                                        ▼
@@ -215,7 +223,7 @@ WPF GUI ────────────────────────
         Reporting: JSON v1 · HTML · CSV · Markdown · PDF · bundle (optionally redacted)
 ```
 
-### Module contract v1
+### Module contract v1 *(implemented in 0.5.0)*
 
 `Get-OmniModuleManifest` keeps its current fields and adds:
 
@@ -231,9 +239,27 @@ WPF GUI ────────────────────────
 Manifests without these fields still load with derived defaults. `Invoke-OmniModuleScan($Context)`
 is unchanged; it is the spec's `Run(ctx)`.
 
-### Report schema v1
+As shipped: all 49 scanners declare `Id`, `Group`, and `NetworkAccess`; all 11 repairs declare
+`Id` (`repair.<kebab-name>`) and `NetworkAccess`. `Resolve-OmniPluginContract` (Core/Registry)
+validates and normalizes the fields for both registries and derives the defaults (`Id` =
+`<group>.<kebab-name>`, `Group` = `extras`, `NetworkAccess` = `None`, `TimeoutSec` = 60,
+`SupportedArchitectures` = `x64`, `arm64`). Invalid values and duplicate Ids are contract
+violations: the plugin is logged and skipped. Registrations expose `Id`, `Group`,
+`RequiresElevation`, `NetworkAccess`, `TimeoutSec`, and `SupportedArchitectures`; the engine stamps
+`ModuleId`, `Group`, and `SkippedReason` on each result. `TimeoutSec` is recorded but not yet
+enforced (runspace-pool engine, Phase 2). The CLI already keeps non-`None` scanners out of default,
+group, and plan selections; `OmniDiag.ps1` and the GUI still run them (Phase 2:
+`--network-probes`). `Tests/Core.Contract.Tests.ps1` enforces the conventions table.
+
+### Report schema v1 *(implemented in 0.5.0)*
 
 A projection of the session at the export boundary; the in-memory session is not changed.
+As shipped (full reference: [SCHEMA.md](SCHEMA.md), schema file
+`schemas/omnidiag-report.v1.json`), the envelope also carries a `scan` object (timing, cancelled,
+time range, plan), each module carries `category`, `requiresElevation`, `error`, and `metrics`,
+and finding `evidence` is `{detail, data}`; `requiresElevation` lives on the module, not the
+finding. `Export-OmniJsonReport`, `Export-OmniReport -Format Json`, and the package `data.json`
+write v1; saved sessions (`Save-OmniSession`) stay native; `Import-OmniSession` reads both.
 
 ```text
 { schemaVersion: "1.0.0", tool: {name, version}, generatedAt, host (redactable), options,
@@ -266,7 +292,17 @@ global: --format json|csv|md|html|pdf  --output <path>  --redact  --elevated-onl
 Data goes to stdout only when `--format` is given without `--output`; status and progress go to
 stderr.
 
-### Exit codes
+*Implemented in 0.5.0:* `list`, `scan` (`--group`, `--module`, `--profile`, `--workflow`,
+`--range`), `report`, `version`, `help`, and the global `--format`, `--output`, `--verbose`,
+`--quiet`, `--no-color`, `--help`. The rest of the tree (`<group>` shorthand, `repair`,
+`compare`, `gui`, `--from-session`, `--redact`, `--elevated-only`, `--network-probes`) follows in
+Phases 2-3. Reference: [CLI.md](CLI.md).
+
+### Exit codes *(implemented in 0.5.0)*
+
+`Core/ExitCodes.psm1` holds the table as data (`Get-OmniExitCodeTable`) and derives a scan's code
+(`Get-OmniExitCode`) and a repair run's code (`Get-OmniRepairExitCode`). Both the router and
+`OmniDiag.ps1` exit with them, and `OmniDiag.cmd` propagates `%ERRORLEVEL%`.
 
 | Code | Meaning |
 |---|---|

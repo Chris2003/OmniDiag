@@ -22,6 +22,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Processes'
+        Id            = 'performance.processes'
+        Group         = 'performance'
+        NetworkAccess = 'None'
         Category      = 'Performance'
         Description   = 'Running process count and top CPU/memory consumers.'
         RequiresAdmin = $false

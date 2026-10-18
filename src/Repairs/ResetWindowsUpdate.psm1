@@ -12,6 +12,8 @@ if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Reset Windows Update'
+        Id            = 'repair.reset-windows-update'
+        NetworkAccess = 'None'
         Category      = 'Update'
         Description   = 'Stops the update services, clears the SoftwareDistribution and catroot2 caches, and restarts the services.'
         RequiresAdmin = $true

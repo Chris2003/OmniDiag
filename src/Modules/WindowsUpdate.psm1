@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Windows Update'
+        Id            = 'updates.windows-update'
+        Group         = 'updates'
+        NetworkAccess = 'None'
         Category      = 'System'
         Description   = 'Installed hotfix posture and Windows Update service state.'
         RequiresAdmin = $false

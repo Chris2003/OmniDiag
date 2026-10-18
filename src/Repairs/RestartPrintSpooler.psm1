@@ -12,6 +12,8 @@ if (-not (Get-Command New-OmniRepairResult -ErrorAction SilentlyContinue)) {
 function Get-OmniRepairManifest {
     @{
         Name          = 'Restart Print Spooler'
+        Id            = 'repair.restart-print-spooler'
+        NetworkAccess = 'None'
         Category      = 'Services'
         Description   = 'Restarts the Print Spooler service to clear stuck print jobs and spooler faults.'
         RequiresAdmin = $true

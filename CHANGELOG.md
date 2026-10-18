@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+Phase 1 (Foundation) of the v1.0 roadmap.
+
+### Contract & schema
+- **Module contract v1.** Every scanner manifest now declares a stable `Id`
+  (`<group>.<kebab-name>`, e.g. `network.dns-resolver`), a `Group` (one of `system`,
+  `performance`, `services`, `startup`, `events`, `reliability`, `storage`, `network`, `updates`,
+  `security`, `extras`), and `NetworkAccess` (`None` / `LocalNetwork` / `Internet`); every repair
+  declares `Id` (`repair.<kebab-name>`) and `NetworkAccess`. Registrations also expose
+  `RequiresElevation` (alias of `RequiresAdmin`), `TimeoutSec` (default 60), and
+  `SupportedArchitectures` (default `x64`, `arm64`). Older manifests load with derived defaults;
+  invalid values and duplicate Ids are logged and the plugin is skipped. The engine stamps
+  `ModuleId`, `Group`, and `SkippedReason` on each result.
+- **Report schema v1.** `schemas/omnidiag-report.v1.json` (JSON Schema 2020-12) and
+  `ConvertTo-OmniReportV1` / `ConvertFrom-OmniReportV1`: a versioned projection of the session
+  with `schemaVersion`, ISO-8601 UTC timestamps, and the v1 severity scale (Pass and Information
+  → Info with `passed`, Warning → Warning, Error and Critical → Critical; `severityNative` kept).
+  Output is deterministic and ASCII-only (`ConvertTo-OmniJsonText`), identical on PowerShell 5.1
+  and 7, and covered by a golden-file test. See `docs/SCHEMA.md`.
+- **Breaking for JSON consumers:** `Export-OmniJsonReport`, `Export-OmniReport -Format Json`, and
+  the report package's `data.json` now write schema v1 instead of the raw session. Saved sessions
+  in `OmniDiagData\sessions` keep the native format through the new `Save-OmniSession` (used by
+  `OmniDiag.ps1` and the GUI). `Import-OmniSession` reads native sessions, v1 reports, and both
+  kinds of package.
+- **Markdown reports:** `ConvertTo-OmniMarkdownReport` / `Export-OmniMarkdownReport`, and `Md` in
+  `Export-OmniReport` and `OmniDiag.ps1 -ReportFormat`.
+- **Exit codes:** `Get-OmniExitCodeTable`, `Get-OmniExitCode`, `Get-OmniRepairExitCode`.
+  `OmniDiag.ps1` now exits 0/1/2/3/4/5 from the scan, 10 for conflicting switches, 11/12 after a
+  failed or reboot-pending repair, and 20 on an internal error (it still writes the session object
+  first, and scratch cleanup still runs).
+
+### CLI
+- **`omnidiag` command.** `OmniDiag.cmd` doubles as `omnidiag`: a subcommand or `--option` goes to
+  the new router (`src/Cli/omnidiag.ps1` → `Invoke-OmniDiagCli`), anything else to the classic
+  console. Same portable environment; `%ERRORLEVEL%` is propagated; it never pauses with
+  arguments.
+- Commands: `list [modules|groups|repairs|plans]`, `scan [--group] [--module] [--profile |
+  --workflow] [--range]`, `report [--output <dir>]`, `version`, `help`. Global options:
+  `--format json|csv|md|html|pdf`, `--output`, `--verbose` (Debug entries in the local log),
+  `--quiet`, `--no-color`, `--help`. Data goes to stdout only with `--format` and no `--output`;
+  progress and status go to stderr. `list --format json` emits a versioned document
+  (`schemas/omnidiag-list.v1.json`). Unknown commands or options print usage on stderr and exit 10.
+- Scanners that need network access run from the CLI only when named with `--module`.
+- `Invoke-OmniDiag -LogLevel`; module version 0.5.0. The portable package and `install.ps1` now
+  ship the `schemas` folder. See `docs/CLI.md`.
+
 ## 0.4.1 — architecture review fixes
 
 From a four-reviewer swarm review against `docs/ARCHITECTURE.md` (plugin contracts, core

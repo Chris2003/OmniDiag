@@ -23,6 +23,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'CPU'
+        Id            = 'performance.cpu'
+        Group         = 'performance'
+        NetworkAccess = 'None'
         Category      = 'Performance'
         Description   = 'Processor inventory, current load, and best-effort temperature.'
         RequiresAdmin = $false

@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Disk Usage'
+        Id            = 'storage.disk-usage'
+        Group         = 'storage'
+        NetworkAccess = 'None'
         Category      = 'Storage'
         Description   = 'Per-volume space usage and largest top-level folders.'
         RequiresAdmin = $false

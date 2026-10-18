@@ -6,7 +6,7 @@ if (-not (Get-Command New-OmniFinding -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='BitLocker'; Category='Security'; Description='Volume protection and local recovery-key escrow policy evidence.'; RequiresAdmin=$false; Order=530; Enabled=$true }
+    @{ Name='BitLocker'; Id='security.bitlocker'; Group='security'; NetworkAccess='None'; Category='Security'; Description='Volume protection and local recovery-key escrow policy evidence.'; RequiresAdmin=$false; Order=530; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {

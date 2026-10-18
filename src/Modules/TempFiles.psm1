@@ -24,6 +24,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Temp Files'
+        Id            = 'extras.temp-files'
+        Group         = 'extras'
+        NetworkAccess = 'None'
         Category      = 'Storage'
         Description   = 'Estimated reclaimable space across temp and cache locations.'
         RequiresAdmin = $false

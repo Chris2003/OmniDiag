@@ -6,7 +6,7 @@ if (-not (Get-Command New-OmniFinding -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='Proxy Configuration'; Category='Network'; Description='WinINET, WinHTTP, PAC, and process proxy configuration.'; RequiresAdmin=$false; Order=460; Enabled=$true }
+    @{ Name='Proxy Configuration'; Id='network.proxy-configuration'; Group='network'; NetworkAccess='None'; Category='Network'; Description='WinINET, WinHTTP, PAC, and process proxy configuration.'; RequiresAdmin=$false; Order=460; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {

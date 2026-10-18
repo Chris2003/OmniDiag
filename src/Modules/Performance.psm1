@@ -25,6 +25,9 @@ function Get-OmniModuleManifest {
     param()
     return @{
         Name          = 'Performance'
+        Id            = 'performance.performance'
+        Group         = 'performance'
+        NetworkAccess = 'None'
         Category      = 'Performance'
         Description   = 'Current CPU, memory, and disk pressure with top resource consumers.'
         RequiresAdmin = $false

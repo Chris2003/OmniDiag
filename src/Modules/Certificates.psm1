@@ -13,7 +13,7 @@ if (-not (Get-Command New-OmniFinding -ErrorAction SilentlyContinue)) {
 }
 
 function Get-OmniModuleManifest {
-    @{ Name='Certificates'; Category='Security'; Description='Expired and expiring local machine and user certificates.'; RequiresAdmin=$false; Order=520; Enabled=$true }
+    @{ Name='Certificates'; Id='security.certificates'; Group='security'; NetworkAccess='None'; Category='Security'; Description='Expired and expiring local machine and user certificates.'; RequiresAdmin=$false; Order=520; Enabled=$true }
 }
 
 function Invoke-OmniModuleScan {
