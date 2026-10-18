@@ -6,7 +6,22 @@ BeforeAll {
 }
 
 Describe 'Portable, zero-footprint data locations' {
-    AfterEach { Remove-Item Env:OMNIDIAG_DATA -ErrorAction SilentlyContinue; Get-OmniDataRoot -Refresh | Out-Null }
+    BeforeAll {
+        # Restore the caller's data location (the test runner isolates runs with it) and
+        # remove the default-location folder only if this file created it.
+        $script:SavedData = $env:OMNIDIAG_DATA
+        $script:RepoData = Join-Path $script:Root 'OmniDiagData'
+        $script:RepoDataExisted = Test-Path -LiteralPath $script:RepoData
+    }
+    AfterEach {
+        if ($null -ne $script:SavedData) { $env:OMNIDIAG_DATA = $script:SavedData } else { Remove-Item Env:OMNIDIAG_DATA -ErrorAction SilentlyContinue }
+        Get-OmniDataRoot -Refresh | Out-Null
+    }
+    AfterAll {
+        if (-not $script:RepoDataExisted -and (Test-Path -LiteralPath $script:RepoData)) {
+            Remove-Item -LiteralPath $script:RepoData -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 
     It 'keeps data in OmniDiagData next to the tool by default' {
         Remove-Item Env:OMNIDIAG_DATA -ErrorAction SilentlyContinue
