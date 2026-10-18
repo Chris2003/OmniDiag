@@ -495,9 +495,15 @@ function Export-OmniPdfReport {
 
     # --- Footer / privacy ----------------------------------------------------
     Add-OmniPdfRule -Doc $doc
-    Add-OmniPdfParagraph -Doc $doc -Size 8 -Rgb $muted -Text (
+    $privacy = if ($Session.PSObject.Properties['Redacted'] -and $Session.Redacted) {
+        'Redacted report: OmniDiag runs entirely on the local machine and uploads nothing. Host, user, and ' +
+        'domain names, SIDs, profile paths, and IP/MAC addresses were replaced with stable pseudonyms ' +
+        '(HOST-1, USER-1, IP-1, ...). Free text that cannot be derived from the session may remain; review before sharing.'
+    } else {
         'Privacy: OmniDiag runs entirely on the local machine and uploads nothing. This report may ' +
-        'contain usernames, device names, file paths, and domain information. Review before sharing.')
+        'contain usernames, device names, file paths, and domain information. Review before sharing.'
+    }
+    Add-OmniPdfParagraph -Doc $doc -Size 8 -Rgb $muted -Text $privacy
 
     [System.IO.File]::WriteAllBytes(($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)), (ConvertTo-OmniPdfBinary -Doc $doc))
     return $Path

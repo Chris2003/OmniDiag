@@ -294,7 +294,7 @@ finding. `Export-OmniJsonReport`, `Export-OmniReport -Format Json`, and the pack
 write v1; saved sessions (`Save-OmniSession`) stay native; `Import-OmniSession` reads both.
 
 ```text
-{ schemaVersion: "1.0.0", tool: {name, version}, generatedAt, host (redactable), options,
+{ schemaVersion: "1.1.0", tool: {name, version}, generatedAt, host (redactable), options,
   summary: {healthScore, grade, counts},
   modules: [ {id, name, group, status, skippedReason, startedAt, durationMs,
               findings: [ {id, moduleId, title, severity, severityNative, passed, component,
@@ -357,7 +357,7 @@ and `Get-OmniDiag<Group>` (`src/Core/Groups.psm1`; findings in the report-v1 sha
 identifiers from the context (computer, user, domain, FQDN, profile path, user SIDs) and matches
 IPv4, IPv6, and MAC addresses. It replaces each with a stable pseudonym per bundle (`HOST-1`,
 `USER-1`, `IP-1`), so findings still correlate. It walks every string in the object graph and in
-file names. An optional mapping file stays local.
+file names. An optional mapping file stays local. *(Implemented in Phase 3; see [REDACTION.md](REDACTION.md).)*
 
 ### No-network enforcement
 

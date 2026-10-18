@@ -207,7 +207,7 @@ Describe 'scan --format json over the built-in scanners' {
         $code | Should -BeIn @(0, 1, 2, 3)
         $text = $out.ToString()
         $doc = $text | ConvertFrom-Json
-        $doc.schemaVersion | Should -Be '1.0.0'
+        $doc.schemaVersion | Should -Be '1.1.0'
         $expected = @(Get-OmniModule -Path (Join-Path $script:Root 'src/Modules') -Logger (New-OmniLogger -MinimumLevel Error) |
             Where-Object { $_.Enabled })
         @($doc.modules).Count | Should -Be $expected.Count

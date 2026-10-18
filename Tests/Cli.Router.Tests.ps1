@@ -148,7 +148,7 @@ Describe 'omnidiag help / version' {
         $j = (Invoke-Cli -Arguments @('--version', '--format', 'json')).Out | ConvertFrom-Json
         $j.kind | Should -Be 'version'
         $j.tool.version | Should -Be ([string](Get-OmniVersion))
-        $j.reportSchemaVersion | Should -Be '1.0.0'
+        $j.reportSchemaVersion | Should -Be '1.1.0'
     }
 }
 
@@ -229,7 +229,7 @@ Describe 'omnidiag scan' {
         $r = Invoke-Cli -Arguments @('scan', '--module', 'system.fake-pass', '--format', 'json')
         $r.Code | Should -Be 0
         $doc = $r.Out | ConvertFrom-Json
-        $doc.schemaVersion | Should -Be '1.0.0'
+        $doc.schemaVersion | Should -Be '1.1.0'
         @($doc.modules).Count | Should -Be 1
         $doc.modules[0].id | Should -Be 'system.fake-pass'
         $doc.options.modules | Should -Be @('system.fake-pass')

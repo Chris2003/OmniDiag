@@ -136,7 +136,11 @@ function ConvertTo-OmniMarkdownReport {
     }
 
     [void]$sb.Append('---').Append($nl).Append($nl)
-    [void]$sb.Append('_Privacy notice: generated locally by OmniDiag; nothing was uploaded. This report may contain user, device, domain, and path names - review before sharing._').Append($nl)
+    if ($v1.options.Contains('redacted') -and $v1.options['redacted']) {
+        [void]$sb.Append('_Redacted report: generated locally by OmniDiag; nothing was uploaded. Host, user, and domain names, SIDs, profile paths, and IP/MAC addresses were replaced with stable pseudonyms (HOST-1, USER-1, IP-1, ...). Free text that cannot be derived from the session may remain - review before sharing._').Append($nl)
+    } else {
+        [void]$sb.Append('_Privacy notice: generated locally by OmniDiag; nothing was uploaded. This report may contain user, device, domain, and path names - review before sharing._').Append($nl)
+    }
     return $sb.ToString()
 }
 

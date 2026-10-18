@@ -34,8 +34,8 @@ BeforeAll {
 Describe 'ConvertTo-OmniReportV1 envelope' {
     It 'emits the v1 top-level properties in a fixed order' {
         @($script:V1.Keys) | Should -Be @('schemaVersion', 'tool', 'generatedAt', 'host', 'options', 'scan', 'summary', 'modules')
-        $script:V1.schemaVersion | Should -Be '1.0.0'
-        (Get-OmniReportSchemaVersion) | Should -Be '1.0.0'
+        $script:V1.schemaVersion | Should -Be '1.1.0'
+        (Get-OmniReportSchemaVersion) | Should -Be '1.1.0'
         $script:V1.tool.name | Should -Be 'OmniDiag'
         $script:V1.tool.version | Should -Be ([string](Get-OmniVersion))
     }
@@ -228,7 +228,7 @@ Describe 'ConvertFrom-OmniReportV1 round trip' {
     }
 
     It 'rejects other major versions and documents without schemaVersion' {
-        { ConvertFrom-OmniReportV1 -Report ($script:Json -replace '"schemaVersion": "1.0.0"', '"schemaVersion": "2.0.0"') } | Should -Throw '*Unsupported*'
+        { ConvertFrom-OmniReportV1 -Report ($script:Json -replace '"schemaVersion": "1.1.0"', '"schemaVersion": "2.0.0"') } | Should -Throw '*Unsupported*'
         { ConvertFrom-OmniReportV1 -Report '{"hello":1}' } | Should -Throw '*schemaVersion*'
     }
 }
@@ -239,7 +239,7 @@ Describe 'Saved sessions and report files' {
         Export-OmniJsonReport -Session $script:Session -Path $path | Out-Null
         $loaded = Import-OmniSession -Path $path
         $loaded.SourcePath | Should -Be (Get-Item $path).FullName
-        $loaded.SchemaVersion | Should -Be '1.0.0'
+        $loaded.SchemaVersion | Should -Be '1.1.0'
         $loaded.Summary.Score | Should -Be $script:Session.Summary.Score
     }
 
@@ -264,7 +264,7 @@ Describe 'Saved sessions and report files' {
         Export-OmniReportPackage -Session $script:Session -Path $zip | Out-Null
         $extract = Join-Path $TestDrive 'pkg'
         Expand-Archive -LiteralPath $zip -DestinationPath $extract
-        (Get-Content -LiteralPath (Join-Path $extract 'data.json') -Raw | ConvertFrom-Json).schemaVersion | Should -Be '1.0.0'
+        (Get-Content -LiteralPath (Join-Path $extract 'data.json') -Raw | ConvertFrom-Json).schemaVersion | Should -Be '1.1.0'
         $loaded = Import-OmniSession -Path $zip
         $loaded.Summary.Score | Should -Be $script:Session.Summary.Score
         @($loaded.Results).Count | Should -Be 5

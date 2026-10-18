@@ -20,11 +20,12 @@ internal format (`Save-OmniSession`). `Import-OmniSession` reads both: a file wi
 
 ```text
 {
-  schemaVersion: "1.0.0",
+  schemaVersion: "1.1.0",
   tool:        { name: "OmniDiag", version },
   generatedAt: ISO-8601 UTC,
   host:        { computerName, userName, isAdmin, psVersion },
-  options:     { ...free-form run options, keys sorted... },
+  options:     { ...free-form run options, keys sorted...,
+                 redacted: true                // only on redacted reports (1.1.0) },
   scan:        { startedAt, finishedAt, durationMs, cancelled,
                  timeRange: { preset, label, start, end } | null,
                  plan: { type, name } | null },
@@ -67,8 +68,10 @@ Notes:
   findings.
 * **healthScore / grade** are `null` when no module completed (for example a scan cancelled
   before the first module finished).
-* **host** contains identifying information. Review a report before sharing it (redaction
-  arrives in Phase 3).
+* **host** contains identifying information. Review a report before sharing it, or export it
+  redacted (`Export-OmniReport -Redact`, `omnidiag report --redact`): identifiers become stable
+  pseudonyms (`HOST-1`, `USER-1`, `IP-1`, ...) and `options.redacted` is `true`. See
+  [REDACTION.md](REDACTION.md).
 * **metrics** and **evidence.data** are free-form and module-specific; they are not covered
   by compatibility guarantees beyond being valid JSON.
 
@@ -113,3 +116,10 @@ PowerShell 7 for the same input:
 OmniDiag reads any `1.x` document (`Import-OmniSession`, `ConvertFrom-OmniReportV1`) and
 refuses other major versions with a clear error. Every change is covered by the golden-file
 test, which must be regenerated deliberately (see the header of `ReportFixture.ps1`).
+
+## Version history
+
+| Version | OmniDiag | Change |
+|---|---|---|
+| 1.0.0 | 0.5.0 | First published schema. |
+| 1.1.0 | 0.8.0 | Additive: optional boolean `options.redacted` (redacted reports). |
