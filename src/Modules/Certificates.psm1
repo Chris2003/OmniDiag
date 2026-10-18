@@ -27,13 +27,19 @@ function Invoke-OmniModuleScan {
         return (Complete-OmniResult -Result $result)
     }
 
+    # Read the stores directly (read-only, existing stores only) instead of through the Cert:
+    # provider: enumerating Cert:\ makes Windows fetch revocation data from crl.microsoft.com,
+    # which a default scan must never do (caught by build/Test-NoNetworkRuntime.ps1). Only
+    # expiry dates are read, so no chain is built and no revocation check runs.
     $certificates = @()
-    foreach ($store in @('Cert:\LocalMachine\My','Cert:\CurrentUser\My')) {
+    foreach ($location in @('LocalMachine', 'CurrentUser')) {
+        $store = $null
         try {
-            if (Test-Path -LiteralPath $store) {
-                $certificates += @(Get-ChildItem -LiteralPath $store -ErrorAction Stop | Where-Object { $_.NotAfter })
-            }
-        } catch { $Context.Logger.Debug("Certificate store '$store' failed: $($_.Exception.Message)", 'Certificates') }
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new('My', [System.Security.Cryptography.X509Certificates.StoreLocation]$location)
+            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]'ReadOnly, OpenExistingOnly')
+            $certificates += @($store.Certificates | Where-Object { $_.NotAfter })
+        } catch { $Context.Logger.Debug("Certificate store '$location\My' failed: $($_.Exception.Message)", 'Certificates') }
+        finally { if ($store) { $store.Close() } }
     }
 
     $now = Get-Date
