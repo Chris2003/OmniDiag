@@ -151,6 +151,7 @@ function Group-OmniEventRecord {
             ProviderName   = $first.ProviderName
             Id             = $first.Id
             Severity       = $severity
+            EventLevel     = $first.Severity   # level-derived severity (part of the grouping key)
             SeverityRank   = (Get-OmniSeverityRank $severity)
             Category       = if ($meaning) { $meaning.Category } else { 'General' }
             Title          = if ($meaning) { $meaning.Title } else { "Event ID $($first.Id) from $($first.ProviderName)" }
@@ -211,6 +212,10 @@ function New-OmniEventFinding {
         view misses (e.g. many failed logons => possible brute force; many service
         crashes => flapping service; repeated unexpected shutdowns).
 
+        Finding Ids are stable and carry no live values: per-group findings use
+        'events.group.<provider>-<event id>-<event level>' (the grouping key, so identical
+        events always map to one finding), patterns use 'events.pattern.<name>'.
+
     .PARAMETER Group
         Output of Group-OmniEventRecord.
 
@@ -238,7 +243,7 @@ function New-OmniEventFinding {
     if ($failedLogons) {
         $total = ($failedLogons | Measure-Object -Property Count -Sum).Sum
         if ($total -ge 10) {
-            $findings.Add((New-OmniFinding -Title "$total failed logon attempts detected" -Severity 'Critical' `
+            $findings.Add((New-OmniFinding -Id 'events.pattern.failed-logons' -Title "$total failed logon attempts detected" -Severity 'Critical' `
                 -Component 'Event Logs/Authentication' `
                 -Detail "Security event 4625 occurred $total time(s) in the selected window." `
                 -LikelyCause 'A high volume of failed logons can indicate a brute-force attempt or a broken stored credential.' `
@@ -252,7 +257,7 @@ function New-OmniEventFinding {
     if ($serviceCrashes) {
         $total = ($serviceCrashes | Measure-Object -Property Count -Sum).Sum
         if ($total -ge $RecurringThreshold) {
-            $findings.Add((New-OmniFinding -Title "Repeated service crashes ($total)" -Severity 'Error' `
+            $findings.Add((New-OmniFinding -Id 'events.pattern.service-crashes' -Title "Repeated service crashes ($total)" -Severity 'Error' `
                 -Component 'Event Logs/Service' `
                 -Detail "Service Control Manager reported $total unexpected service terminations." `
                 -LikelyCause 'A service is flapping - crashing and (sometimes) restarting repeatedly.' `
@@ -266,7 +271,7 @@ function New-OmniEventFinding {
     if ($unexpectedShutdowns) {
         $total = ($unexpectedShutdowns | Measure-Object -Property Count -Sum).Sum
         if ($total -ge 2) {
-            $findings.Add((New-OmniFinding -Title "$total unexpected shutdowns" -Severity 'Critical' `
+            $findings.Add((New-OmniFinding -Id 'events.pattern.unexpected-shutdowns' -Title "$total unexpected shutdowns" -Severity 'Critical' `
                 -Component 'Event Logs/Power' `
                 -Detail "The system recorded $total unexpected shutdown/power-loss events." `
                 -LikelyCause 'Recurring power loss or hard crashes - power supply, overheating, or a faulting driver.' `
@@ -286,7 +291,10 @@ function New-OmniEventFinding {
         $countSuffix = if ($g.Count -gt 1) { " (x$($g.Count))" } else { '' }
         $detail = "{0} - Event ID {1} from {2}. First seen {3:yyyy-MM-dd HH:mm}, last seen {4:yyyy-MM-dd HH:mm}. Sample: {5}" -f `
             $g.Channel, $g.Id, $g.ProviderName, $g.FirstSeen, $g.LastSeen, $g.SampleMessage
-        $findings.Add((New-OmniFinding -Title ("$($g.Title)$countSuffix") -Severity $g.Severity `
+        # Stable Id: provider + event id + event level (the grouping key), never the count.
+        $level = if ($g.PSObject.Properties['EventLevel']) { $g.EventLevel } else { $g.Severity }
+        $groupId = 'events.group.' + (("{0}-{1}-{2}" -f $g.ProviderName, $g.Id, $level).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+        $findings.Add((New-OmniFinding -Id $groupId -Title ("$($g.Title)$countSuffix") -Severity $g.Severity `
             -Component "Event Logs/$($g.Category)" `
             -Detail $detail `
             -LikelyCause $g.LikelyCause `
