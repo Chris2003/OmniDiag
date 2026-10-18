@@ -170,7 +170,9 @@ function Invoke-OmniModuleScan {
     param([Parameter(Mandatory)][pscustomobject] $Context)
     $result = New-OmniResult -ModuleName 'Proxy Configuration' -Category 'Network' -HadAdmin $Context.IsAdmin
 
-    $environmentProxy = (@($env:HTTP_PROXY, $env:HTTPS_PROXY, $env:ALL_PROXY) | Where-Object { $_ }) -join '; '
+    # Proxy URLs often embed credentials (http://user:password@proxy:8080); they are
+    # scrubbed before they become evidence (docs/SECURITY-REVIEW.md item 5).
+    $environmentProxy = Protect-OmniSecretText ((@($env:HTTP_PROXY, $env:HTTPS_PROXY, $env:ALL_PROXY) | Where-Object { $_ }) -join '; ')
     Set-OmniResultMetric -Result $result -Name 'EnvironmentProxy' -Value $environmentProxy
     if (-not (Test-OmniProxyWindowsHost)) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Windows proxy stores are unavailable' -Severity Information -Component 'Network/Proxy' -Detail "Process proxy variables: $environmentProxy")
@@ -181,8 +183,8 @@ function Invoke-OmniModuleScan {
     try {
         $settings = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
         if ($settings.PSObject.Properties['ProxyEnable']) { $proxyEnabled = ([int]$settings.ProxyEnable -eq 1) }
-        if ($settings.PSObject.Properties['ProxyServer']) { $proxyServer = [string]$settings.ProxyServer }
-        if ($settings.PSObject.Properties['AutoConfigURL']) { $pacUrl = [string]$settings.AutoConfigURL }
+        if ($settings.PSObject.Properties['ProxyServer']) { $proxyServer = Protect-OmniSecretText ([string]$settings.ProxyServer) }
+        if ($settings.PSObject.Properties['AutoConfigURL']) { $pacUrl = Protect-OmniSecretText ([string]$settings.AutoConfigURL) }
     } catch { $Context.Logger.Debug("WinINET proxy query failed: $($_.Exception.Message)", 'Proxy Configuration') }
     Set-OmniResultMetric -Result $result -Name 'UserProxyEnabled' -Value $proxyEnabled
     Set-OmniResultMetric -Result $result -Name 'UserProxyServer' -Value $proxyServer
