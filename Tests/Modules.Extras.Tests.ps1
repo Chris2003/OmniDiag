@@ -173,6 +173,18 @@ Describe 'Entra ID scanner' {
     }
 }
 
+# The configuration helper itself (the scanner tests below mock it in BeforeEach).
+Describe 'Time Synchronization configuration' {
+    It 'prefers the Group Policy configuration over the local one' {
+        Mock -ModuleName OmniExtTestTime Get-ItemProperty { [pscustomobject]@{ Type = 'NTP' } } -ParameterFilter { $LiteralPath -like '*Policies*' }
+        Mock -ModuleName OmniExtTestTime Get-ItemProperty { [pscustomobject]@{ Type = 'NT5DS'; NtpServer = 'time.contoso.com,0x9' } } -ParameterFilter { $LiteralPath -like '*CurrentControlSet*' }
+        $cfg = & $script:TimeMod { Get-OmniTimeConfig }
+        $cfg.Type | Should -Be 'NTP'
+        $cfg.Source | Should -Be 'Policy'
+        $cfg.NtpServer | Should -Be 'time.contoso.com,0x9'
+    }
+}
+
 Describe 'Time Synchronization scanner' {
     BeforeEach {
         Mock -ModuleName OmniExtTestTime Test-OmniTimeWindowsHost { $true }
@@ -227,15 +239,6 @@ Describe 'Time Synchronization scanner' {
         $f[0].Severity | Should -Be 'Warning'
         $f[0].Detail | Should -Match '36, 47'
         $r.Metrics['SyncFailureEventCount'] | Should -Be 2
-    }
-
-    It 'prefers the Group Policy configuration over the local one' {
-        Mock -ModuleName OmniExtTestTime Get-ItemProperty { [pscustomobject]@{ Type = 'NTP' } } -ParameterFilter { $LiteralPath -like '*Policies*' }
-        Mock -ModuleName OmniExtTestTime Get-ItemProperty { [pscustomobject]@{ Type = 'NT5DS'; NtpServer = 'time.contoso.com,0x9' } } -ParameterFilter { $LiteralPath -like '*CurrentControlSet*' }
-        $cfg = & $script:TimeMod { Get-OmniTimeConfig }
-        $cfg.Type | Should -Be 'NTP'
-        $cfg.Source | Should -Be 'Policy'
-        $cfg.NtpServer | Should -Be 'time.contoso.com,0x9'
     }
 
     It 'never runs w32tm (localized output, and /resync would contact a time server)' {
