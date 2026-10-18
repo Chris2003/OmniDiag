@@ -130,6 +130,23 @@ Describe 'Reliability scanner (bounded event counts)' {
 }
 
 # ---------------------------------------------------------------------------
+# The query helpers themselves (the scanner tests below mock them out in BeforeEach).
+Describe 'Reliability Monitor queries' {
+    It 'queries both classes with a TimeGenerated WHERE clause and caps the count' {
+        Mock -ModuleName OmniRelTestMonitor Get-CimInstance { 1..10 | ForEach-Object { New-Sample -Index 9 -Time (Get-Date) } }
+        $rows = & $script:MonMod { Get-OmniRelMonStabilityMetric -Start (Get-Date).AddDays(-7) -End (Get-Date) -MaxRecords 4 }
+        @($rows).Count | Should -Be 4
+        $null = & $script:MonMod { Get-OmniRelMonRecord -Start (Get-Date).AddDays(-7) -End (Get-Date) -MaxRecords 4 }
+        Should -Invoke -ModuleName OmniRelTestMonitor Get-CimInstance -Times 1 -Exactly -ParameterFilter {
+            $ClassName -eq 'Win32_ReliabilityStabilityMetrics' -and $Filter -match "^TimeGenerated >= '\d{14}\.\d{6}\+000' AND TimeGenerated <= "
+        }
+        Should -Invoke -ModuleName OmniRelTestMonitor Get-CimInstance -Times 1 -Exactly -ParameterFilter {
+            $ClassName -eq 'Win32_ReliabilityRecords' -and $Filter -match '^TimeGenerated >= '
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 Describe 'Reliability Monitor scanner' {
     BeforeEach {
         Mock -ModuleName OmniRelTestMonitor Test-OmniRelMonWindowsHost { $true }
@@ -142,19 +159,6 @@ Describe 'Reliability Monitor scanner' {
         $s | Should -Be '20261001123005.000000+000'
         $f = & $script:MonMod { Get-OmniRelMonTimeFilter -Start ([datetime]::new(2026, 10, 1, 0, 0, 0, [System.DateTimeKind]::Utc)) -End ([datetime]::new(2026, 10, 8, 0, 0, 0, [System.DateTimeKind]::Utc)) }
         $f | Should -Be "TimeGenerated >= '20261001000000.000000+000' AND TimeGenerated <= '20261008000000.000000+000'"
-    }
-
-    It 'queries both classes with a TimeGenerated WHERE clause and caps the count' {
-        Mock -ModuleName OmniRelTestMonitor Get-CimInstance { 1..10 | ForEach-Object { New-Sample -Index 9 -Time (Get-Date) } }
-        $rows = & $script:MonMod { Get-OmniRelMonStabilityMetric -Start (Get-Date).AddDays(-7) -End (Get-Date) -MaxRecords 4 }
-        @($rows).Count | Should -Be 4
-        $null = & $script:MonMod { Get-OmniRelMonRecord -Start (Get-Date).AddDays(-7) -End (Get-Date) -MaxRecords 4 }
-        Should -Invoke -ModuleName OmniRelTestMonitor Get-CimInstance -Times 1 -Exactly -ParameterFilter {
-            $ClassName -eq 'Win32_ReliabilityStabilityMetrics' -and $Filter -match "^TimeGenerated >= '\d{14}\.\d{6}\+000' AND TimeGenerated <= "
-        }
-        Should -Invoke -ModuleName OmniRelTestMonitor Get-CimInstance -Times 1 -Exactly -ParameterFilter {
-            $ClassName -eq 'Win32_ReliabilityRecords' -and $Filter -match '^TimeGenerated >= '
-        }
     }
 
     It 'explains that data collection is disabled when both classes are empty' {
