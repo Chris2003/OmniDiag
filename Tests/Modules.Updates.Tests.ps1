@@ -268,7 +268,9 @@ Describe 'Update History scanner: failed installs' {
     }
 }
 
-Describe 'Update History COM reader (New-Object mocked, reader real)' {
+# New-Object has a -ComObject parameter only where COM exists (Windows); elsewhere a mock
+# can't take -ComObject, so these run on the Windows CI legs only.
+Describe 'Update History COM reader (New-Object mocked, reader real)' -Skip:(-not (Get-Command New-Object).Parameters.ContainsKey('ComObject')) {
     # Get-OmniUpdateHistoryEntry is NOT mocked here; only New-Object -ComObject is. The
     # fakes are shaped like the WUA objects: IUpdateHistoryEntryCollection (Count/Item),
     # IUpdateHistoryEntry(2) (Date, Operation, ResultCode, HResult, Title,

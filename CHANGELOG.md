@@ -54,6 +54,23 @@ all new and changed findings have stable Ids without live values.
 - Time Synchronization reads registry configuration and Time-Service events instead of
   localized `w32tm` output and never contacts a time server.
 
+### Review fixes (fewer false positives)
+- Scheduled tasks: SYSTEM-at-logon tasks are Information unless the action is user-writable or
+  uses a script host; exact SYSTEM match; Edge, Google, and OneDrive updaters are listed only.
+- A user-writable startup/task target alone is Information; service non-standard install
+  location is Information.
+- Update History excludes Defender definition updates from the last-install grade
+  (`LastDefinitionUpdate` metric); KB-less finding Ids use the UpdateID.
+- Services is the single owner of stopped auto-start services (exit code 0/1077 is Information,
+  trigger-start services skipped); Drivers is the single owner of problem devices.
+- Reliability event counts are filtered by provider, and an unreadable log no longer reports a
+  Pass; stability index warns below 3 and errors below 1.
+- Time-sync failures warn only when newer than the last success; Intune MDM warns at 10+ errors;
+  WinRM is Information on Windows Server; handle threshold 20,000; uptime warns at 30 days.
+- COM objects (WScript.Shell, WUA history) are released; one shell per scan.
+- Tests: seam tests one level below the private helpers; module-scoped stubs for Windows
+  cmdlets so mocks behave the same on Windows and Linux; Windows PowerShell 5.1 fixes.
+
 ### Workflows
 - New scanners added to the relevant task workflows; QuickTriage, LoginAndIdentity,
   CloudReadiness, and SecurityPosture include the System health checks.

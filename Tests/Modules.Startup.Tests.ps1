@@ -390,7 +390,9 @@ Describe 'Scheduled Tasks scanner' {
     }
 }
 
-Describe 'Startup Folders shortcut seam (New-Object mocked, helpers real)' {
+# New-Object has a -ComObject parameter only where COM exists (Windows); elsewhere a mock
+# can't take -ComObject, so these run on the Windows CI legs only.
+Describe 'Startup Folders shortcut seam (New-Object mocked, helpers real)' -Skip:(-not (Get-Command New-Object).Parameters.ContainsKey('ComObject')) {
     # The helpers under test are NOT mocked here; only New-Object -ComObject is.
     BeforeEach {
         $script:Created = 0
