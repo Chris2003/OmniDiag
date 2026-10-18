@@ -416,6 +416,22 @@ Describe '--redact' {
         }
     }
 
+    It 'redacts the status lines on stderr (Loaded saved session, Session saved, Wrote, Log)' {
+        if (-not $script:HasRedaction) { Set-ItResult -Skipped -Because 'New-OmniRedactionContext is not available in this build'; return }
+        $machine = [System.Environment]::MachineName
+        $copy = Join-Path (Join-Path $TestDrive ("from-$machine")) "$machine-session.json"
+        New-Item -ItemType Directory -Path (Split-Path $copy -Parent) -Force | Out-Null
+        Copy-Item -LiteralPath $script:PreviousPath -Destination $copy
+        $dir = Join-Path $TestDrive 'redacted-status'
+        $r = Invoke-Cli -Arguments @('report', '--from-session', $copy, '--output', $dir, '--format', 'json', '--redact')
+        $r.Err | Should -Match 'Loaded saved session'
+        $r.Err | Should -Not -Match ([regex]::Escape($machine))
+        $r2 = Invoke-Cli -Arguments @('scan', '--group', 'storage', '--redact', '--format', 'html')
+        $r2.Err | Should -Match 'Session saved to'
+        $r2.Err | Should -Match 'Wrote '
+        $r2.Err | Should -Not -Match ([regex]::Escape($machine))
+    }
+
     It 'needs --redact for --redaction-map' {
         (Invoke-Cli -Arguments @('scan', '--redaction-map', (Join-Path $TestDrive 'map.json'))).Code | Should -Be 10
     }

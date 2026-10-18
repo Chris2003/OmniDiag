@@ -386,6 +386,17 @@ function Write-OmniCliStatus {
     if (-not $Io.Quiet) { $Io.Err.WriteLine($Message) }
 }
 
+function Write-OmniCliRedactedStatus {
+    <#
+    .SYNOPSIS
+        Internal: a status line on stderr (unless --quiet), redacted with the run's
+        redaction context when --redact is on (paths can contain user and host names).
+    #>
+    param($Io, [string] $Message, $Redaction)
+    if ($Redaction) { $Message = [string](ConvertTo-OmniRedacted -InputObject $Message -Context $Redaction) }
+    Write-OmniCliStatus $Io $Message
+}
+
 function Get-OmniCliFormat {
     <# .SYNOPSIS Internal: normalized, validated, de-duplicated --format values. #>
     param([System.Collections.Generic.List[string]] $Format)
@@ -811,7 +822,7 @@ function Write-OmniCliSessionOutput {
         # html / pdf are files: write them to OmniDiagData\reports and say where.
         $set = Export-OmniReport -Session $Session -Format @($exportName[$fmt]) -Option $Option @redactParams
         Write-OmniCliSummary -Writer $Io.Out -Session $Session -Redaction $Redaction
-        foreach ($f in $set.Files) { Write-OmniCliStatus $Io "Wrote $f" }
+        foreach ($f in $set.Files) { Write-OmniCliRedactedStatus $Io "Wrote $f" $Redaction }
         foreach ($w in $set.Warnings) { $Io.Err.WriteLine("omnidiag: warning: $w") }
         return
     }
@@ -904,6 +915,7 @@ function Invoke-OmniCliScan {
     $logger.Info("omnidiag $command (OmniDiag $(Get-OmniCliToolVersion))", 'Cli')
 
     $explicitIds = @{}
+    $statusLines = [System.Collections.Generic.List[string]]::new()
     $groups = @($o.Group | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique)
     $option = @{ command = $command; range = $range }
 
@@ -913,7 +925,7 @@ function Invoke-OmniCliScan {
             $sourcePath = Resolve-OmniSessionPath -Value $o.FromSession
             $session = Import-OmniSession -Path $sourcePath
         } catch { throw (New-OmniCliUsageError "cannot read --from-session '$($o.FromSession)': $($_.Exception.Message)") }
-        Write-OmniCliStatus $Io "Loaded saved session $sourcePath"
+        $statusLines.Add("Loaded saved session $sourcePath")
         $option = @{ command = $command; fromSession = $true }
     } else {
         $regs = @(Get-OmniModule -Path $ModulesPath -Logger $logger | Where-Object { $_.Enabled })
@@ -952,7 +964,7 @@ function Invoke-OmniCliScan {
 
         try {
             $saved = Save-OmniSession -Session $session
-            Write-OmniCliStatus $Io "Session saved to $saved (local only)"
+            $statusLines.Add("Session saved to $saved (local only)")
         } catch { $Io.Err.WriteLine("omnidiag: warning: could not save the session: $($_.Exception.Message)") }
 
         if ($groups.Count -gt 0) { $option.groups = $groups }
@@ -966,6 +978,8 @@ function Invoke-OmniCliScan {
 
     $redaction = $null
     if ($o.Redact) { $redaction = New-OmniRedactionContext -Session $session }
+    # Deferred until the redaction context exists: with --redact these paths are redacted too.
+    foreach ($line in $statusLines) { Write-OmniCliRedactedStatus $Io $line $redaction }
     $redactionMap = if ($o.RedactionMap) { Resolve-OmniCliPath $o.RedactionMap } else { $null }
 
     if ($Report) {
@@ -978,7 +992,7 @@ function Invoke-OmniCliScan {
         Write-OmniCliSessionOutput -Io $Io -Session $session -Formats $formats -Output $output -Option $option -DefaultFormats @('json', 'html') `
             -DirectoryOnly $false -Redaction $redaction -RedactionMap $redactionMap
     }
-    Write-OmniCliStatus $Io "Log: $($logger.Path)"
+    Write-OmniCliRedactedStatus $Io "Log: $($logger.Path)" $redaction
 
     return (Get-OmniExitCode -Session $session -ExplicitSelection:($explicitIds.Count -gt 0))
 }
