@@ -248,14 +248,14 @@ try {
 
     if ($Gui) {
         Write-Host 'Launching OmniDiag GUI...' -ForegroundColor Cyan
-        Show-OmniDiagWindow
+        Show-OmniDiagGui
         return
     }
 
     # --- Run (console) or load a saved session ------------------------------------
     $savedPath = $null
     if ($FromSession) {
-        $session = Import-OmniSession -Path (Resolve-OmniSavedSessionPath -Value $FromSession)
+        $session = Import-OmniDiagSession -Path (Resolve-OmniSavedSessionPath -Value $FromSession)
         $savedPath = $session.SourcePath
         Write-OmniConsoleDashboard -Session $session
         Write-Host ("Loaded saved session: {0}" -f $savedPath) -ForegroundColor DarkGray
@@ -287,7 +287,7 @@ try {
     # --- Before / after comparison ------------------------------------------------
     if ($CompareWith) {
         $beforePath = Resolve-OmniSavedSessionPath -Value $CompareWith -Exclude $savedPath
-        $comparison = Compare-OmniSession -Before $beforePath -After $session
+        $comparison = Compare-OmniDiagSession -Before $beforePath -After $session
         Write-Host ("Compared with: {0}" -f $beforePath) -ForegroundColor DarkGray
         Write-OmniSessionComparison -Comparison $comparison
     }
@@ -381,7 +381,7 @@ try {
             if ($BrandName)   { $params.BrandName = $BrandName }
             if ($BrandLogo)   { $params.BrandLogo = $BrandLogo }
             if ($BrandColor)  { $params.BrandColor = $BrandColor }
-            $reportSet = Export-OmniReport @params
+            $reportSet = Export-OmniDiagReport @params
             Write-Host ''
             Write-Host "Report(s) written to: $($reportSet.OutputDirectory)" -ForegroundColor Green
             foreach ($f in $reportSet.Files) { Write-Host "  $f" -ForegroundColor Gray }
