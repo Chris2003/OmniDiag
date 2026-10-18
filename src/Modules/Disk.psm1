@@ -74,7 +74,8 @@ function Invoke-OmniModuleScan {
                         -Detail "Physical disk '$($d.FriendlyName)' reports HealthStatus '$($d.HealthStatus)' (operational: $($d.OperationalStatus -join ', '))." `
                         -LikelyCause 'The storage subsystem reports the drive is degrading or failing.' `
                         -Confidence 80 `
-                        -Recommendation 'Back up data immediately and plan to replace the drive.')
+                        -Recommendation 'Back up data immediately and plan to replace the drive.' `
+                        -Id ("disk-health-{0}" -f $prefix.ToLowerInvariant()))
                 }
                 $i++
             }
@@ -96,7 +97,8 @@ function Invoke-OmniModuleScan {
                         -Detail "Disk '$($d.Model)' reports status '$($d.Status)'." `
                         -LikelyCause 'The drive is reporting a hardware problem.' `
                         -Confidence 75 `
-                        -Recommendation 'Back up data and plan to replace the drive.')
+                        -Recommendation 'Back up data and plan to replace the drive.' `
+                        -Id ("disk-health-{0}" -f $prefix.ToLowerInvariant()))
                 }
                 $i++
             }
@@ -117,7 +119,8 @@ function Invoke-OmniModuleScan {
                 -Detail "SMART on instance '$($s.InstanceName)' predicts imminent failure (reason code $($s.Reason))." `
                 -LikelyCause 'The drive firmware has flagged self-monitoring thresholds indicating failure.' `
                 -Confidence 90 `
-                -Recommendation 'Back up all data immediately and replace the drive as soon as possible.')
+                -Recommendation 'Back up all data immediately and replace the drive as soon as possible.' `
+                -Id (('disk-smart-predict-failure-' + "$($s.InstanceName)").ToLowerInvariant() -replace '[^a-z0-9]+', '-').TrimEnd('-'))
         }
     } catch {
         $log.Debug("SMART predict-failure query unavailable: $($_.Exception.Message)", 'Disk')
@@ -149,7 +152,8 @@ function Invoke-OmniModuleScan {
                         -Detail "Fixed volume ${letter}: has $freeGb GB free of $sizeGb GB ($freePct%)." `
                         -LikelyCause 'Disk is nearly full, which can degrade performance and block updates.' `
                         -Confidence 85 `
-                        -Recommendation 'Free up space (Disk Cleanup, remove temp/old files) or expand the volume.')
+                        -Recommendation 'Free up space (Disk Cleanup, remove temp/old files) or expand the volume.' `
+                        -Id ("disk-volume-low-space-{0}" -f $letter.ToLowerInvariant()))
                 }
             }
         } else {
@@ -169,7 +173,8 @@ function Invoke-OmniModuleScan {
                         -Detail "Fixed volume ${letter}: has $freeGb GB free of $sizeGb GB ($freePct%)." `
                         -LikelyCause 'Disk is nearly full, which can degrade performance and block updates.' `
                         -Confidence 85 `
-                        -Recommendation 'Free up space (Disk Cleanup, remove temp/old files) or expand the volume.')
+                        -Recommendation 'Free up space (Disk Cleanup, remove temp/old files) or expand the volume.' `
+                        -Id ("disk-volume-low-space-{0}" -f $letter.ToLowerInvariant()))
                 }
             }
         }

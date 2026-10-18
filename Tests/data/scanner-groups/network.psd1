@@ -8,9 +8,11 @@
         'DNS Resolver'        = @{ NetworkAccess = 'Internet' }
         'Hosts File'          = @{ NetworkAccess = 'None' }
         'IP Configuration'    = @{ NetworkAccess = 'None' }
+        'Listening Ports'     = @{ NetworkAccess = 'None' }
         'Network'             = @{ NetworkAccess = 'Internet' }
         'Network Shares'      = @{ NetworkAccess = 'None' }
         'Proxy Configuration' = @{ NetworkAccess = 'None' }
+        'Routes'              = @{ NetworkAccess = 'None' }
         'VPN'                 = @{ NetworkAccess = 'None' }
         'WiFi Networks'       = @{ NetworkAccess = 'None' }
     }

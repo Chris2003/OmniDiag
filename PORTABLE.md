@@ -121,14 +121,15 @@ remoting. **A default scan sends no network traffic.** Every item below is opt-i
 | Network scanner | ICMP ping to the default gateway and to `1.1.1.1`; DNS lookup of `www.microsoft.com` | Only with connectivity probes on |
 | DNS Resolver scanner | DNS lookup of `www.microsoft.com` through the configured resolvers | Only with connectivity probes on |
 | Active Directory scanner | Secure-channel check against the domain controller (domain-joined devices only) | Only with connectivity probes on |
+| Local Admins scanner | Name lookups of the local Administrators group members, which can query a domain controller or Microsoft Entra ID (domain- or Entra-joined devices only; on other devices the group is always listed locally) | Only with connectivity probes on |
 | Repair Center → **Repair Component Store (DISM)** | Downloads replacement files from Windows Update | Only when you run that repair |
 | Local AI (optional) | HTTP to Ollama on the loopback interface only; redirects are refused | Only when you use Local AI |
 
 Connectivity probes are off by default. Turn them on with `--network-probes` (the
 `omnidiag` command), `-NetworkProbes` (`OmniDiag.ps1`, `Invoke-OmniDiagScan`,
-`Get-OmniDiagNetwork`, `Get-OmniDiagExtras`), or the **Run connectivity probes (contacts the
+`Get-OmniDiagNetwork`, `Get-OmniDiagSecurity`, `Get-OmniDiagExtras`), or the **Run connectivity probes (contacts the
 network)** option in the GUI. Without them these scanners still check everything local
-(adapters, IP and DNS configuration, domain membership) and add an Information finding,
+(adapters, IP and DNS configuration, domain membership, the built-in Administrator account) and add an Information finding,
 "Connectivity probe not run", that says how to run the probe. From PowerShell the targets can
 be changed with `-Config @{ ProbeTargets = @{ PublicAddress = '9.9.9.9'; DnsName =
 'intranet.example' } }`.

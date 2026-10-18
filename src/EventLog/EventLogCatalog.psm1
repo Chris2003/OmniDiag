@@ -93,6 +93,12 @@ $script:OmniEventCatalog = @(
     @{ Id = 1001; Provider = '*WER-SystemErrorReporting*'; Title = 'Bug check (Blue Screen / BSOD)'; Category = 'Crash'; Severity = 'Critical'
        Cause = 'The kernel crashed and produced a bug check.'
        Recommendation = 'Note the bug-check code; analyze the memory dump (WinDbg/!analyze) and update or roll back the implicated driver.' }
+    @{ Id = 1001; Provider = '*BugCheck*'; Title = 'Bug check (Blue Screen / BSOD)'; Category = 'Crash'; Severity = 'Critical'
+       Cause = 'The kernel crashed and produced a bug check (older systems log it under the BugCheck source).'
+       Recommendation = 'Note the bug-check code; analyze the memory dump (WinDbg/!analyze) and update or roll back the implicated driver.' }
+    @{ Id = 1001; Provider = 'Windows Error Reporting'; Title = 'Windows Error Reporting fault report'; Category = 'Crash'; Severity = 'Information'
+       Cause = 'Windows Error Reporting recorded a fault bucket for a crash, hang, or kernel event (BlueScreen, LiveKernelEvent, APPCRASH).'
+       Recommendation = 'Use the event name and fault bucket in the message to correlate with the matching crash, hang, or bug check.' }
     @{ Id = 1000; Provider = '*Application Error*'; Title = 'Application crash'; Category = 'Application'; Severity = 'Error'
        Cause = 'A user-mode application terminated unexpectedly.'
        Recommendation = 'Identify the faulting module in the message; update/repair the app or its dependencies.' }
@@ -113,11 +119,20 @@ $script:OmniEventCatalog = @(
     @{ Id = 51;  Provider = '*disk*'; Title = 'Paging error on disk'; Category = 'Disk'; Severity = 'Warning'
        Cause = 'An error occurred during a paging operation.'
        Recommendation = 'Watch for further disk errors; verify SMART health.' }
+    @{ Id = 153; Provider = '*disk*'; Title = 'Disk I/O operation retried'; Category = 'Disk'; Severity = 'Warning'
+       Cause = 'The storage driver timed out an I/O request and retried it; the disk, controller, or storage path is slow or failing.'
+       Recommendation = 'Check SMART health, cabling, and controller/storage drivers; frequent retries also point to an overloaded storage subsystem.' }
     @{ Id = 55;  Provider = '*Ntfs*'; Title = 'File system corruption detected'; Category = 'Disk'; Severity = 'Critical'
        Cause = 'NTFS detected structural corruption on a volume.'
        Recommendation = 'Run chkdsk on the affected volume; back up data first.' }
-    @{ Id = 98;  Provider = '*Ntfs*'; Title = 'Volume needs checking'; Category = 'Disk'; Severity = 'Warning'
-       Cause = 'NTFS flagged a volume for verification.'; Recommendation = 'Schedule chkdsk on the volume.' }
+    # 98 is logged both as Information ("volume is healthy") and at Warning/Error level
+    # ("needs chkdsk"), so it keeps the event's own level (no Severity override).
+    @{ Id = 98;  Provider = '*Ntfs*'; Title = 'NTFS volume health check'; Category = 'Disk'; Severity = $null
+       Cause = 'NTFS reported the health of a volume; at Warning or Error level the volume needs checking.'
+       Recommendation = 'If logged as a warning or error, schedule chkdsk on the volume (back up first).' }
+    @{ Id = 137; Provider = '*Ntfs*'; Title = 'NTFS transaction resource manager failed to start'; Category = 'Disk'; Severity = 'Error'
+       Cause = 'The default transaction resource manager on a volume hit a non-retryable error, often after metadata corruption or a snapshot/backup problem.'
+       Recommendation = 'Run chkdsk on the affected volume (back up first) and check recent backup or snapshot activity on it.' }
     @{ Id = 140; Provider = '*Ntfs*'; Title = 'Volume write failure'; Category = 'Disk'; Severity = 'Error'
        Cause = 'The system failed to flush data to a volume.'
        Recommendation = 'Check the disk and connection; verify SMART health.' }

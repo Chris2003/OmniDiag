@@ -6,5 +6,6 @@
         'Disk'       = @{ NetworkAccess = 'None' }
         'Disk Usage' = @{ NetworkAccess = 'None' }
         'Storage'    = @{ NetworkAccess = 'None' }
+        'TRIM'       = @{ NetworkAccess = 'None' }
     }
 }

@@ -76,7 +76,7 @@ function Invoke-OmniModuleScan {
             Set-OmniResultMetric -Result $result -Name 'UserShares' `
                 -Value (@($userShares | ForEach-Object { "{0} -> {1}" -f $_.Name, $_.Path }))
 
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'network-shares-user-shares' `
                 -Title ("{0} user share(s) present" -f $userShares.Count) `
                 -Severity 'Information' -Component 'Network/Shares' `
                 -Detail ('Shares: ' + ((@($userShares | ForEach-Object { "{0} ({1})" -f $_.Name, $_.Path }) -join '; '))) `
@@ -86,12 +86,19 @@ function Invoke-OmniModuleScan {
         $log.Warn("Failed summarizing user shares: $($_.Exception.Message)", 'Network Shares')
     }
 
-    # Best-effort: flag shares granting Everyone Full/Change.
+    # Best-effort: flag shares granting Everyone Full/Change. Get-SmbShareAccess reports the
+    # account by name, which is translated on localized Windows ("Jeder", "Tout le monde"),
+    # so also accept the local name of the well-known Everyone SID (S-1-1-0). Well-known SIDs
+    # are translated locally by the LSA; no domain controller is contacted.
+    $everyoneNames = @('Everyone')
+    try {
+        $everyoneNames += ([System.Security.Principal.SecurityIdentifier]'S-1-1-0').Translate([System.Security.Principal.NTAccount]).Value
+    } catch { $log.Debug("Everyone SID translation failed: $($_.Exception.Message)", 'Network Shares') }
     foreach ($s in $userShares) {
         try {
             $access = Get-SmbShareAccess -Name $s.Name -ErrorAction Stop
             $everyoneRw = @($access | Where-Object {
-                $_.AccountName -match '(?i)\bEveryone\b' -and
+                (($everyoneNames -contains [string]$_.AccountName) -or ([string]$_.AccountName -match '(?i)\bEveryone\b')) -and
                 $_.AccessControlType -eq 'Allow' -and
                 ($_.AccessRight -eq 'Full' -or $_.AccessRight -eq 'Change')
             })

@@ -3,9 +3,13 @@
     OmniDiag diagnostic module: System Health.
 
 .DESCRIPTION
-    Detects a pending reboot by inspecting the well-known servicing / Windows
-    Update / Session Manager markers, and records the timestamp of the newest CBS
-    log if present. Does NOT run SFC or DISM. Fails soft; never throws.
+    Records servicing log freshness: the last write time of the Component-Based
+    Servicing log (%SystemRoot%\Logs\CBS\CBS.log). Read-only; does NOT run SFC or
+    DISM. Fails soft; never throws.
+
+    Pending reboot is reported by one authoritative check, the Windows Health scanner
+    (updates.windows-health, finding 'windows-health-pending-reboot'); this scanner no
+    longer raises its own copy of that finding.
 
     Contract:
         Get-OmniModuleManifest -> module metadata
@@ -28,7 +32,7 @@ function Get-OmniModuleManifest {
         Group         = 'updates'
         NetworkAccess = 'None'
         Category      = 'System'
-        Description   = 'Pending-reboot detection and servicing log freshness.'
+        Description   = 'Servicing (CBS) log freshness; pending reboot is reported by Windows Health.'
         RequiresAdmin = $false
         Order         = 200
         Enabled       = $true
@@ -47,57 +51,32 @@ function Invoke-OmniModuleScan {
         -RequiresAdmin $false -HadAdmin $Context.IsAdmin
     $log = $Context.Logger
 
-    # --- Pending reboot detection -----------------------------------------
-    $reasons = @()
-
-    try {
-        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') {
-            $reasons += 'Component Based Servicing'
-        }
-    } catch { $log.Debug("CBS reboot check failed: $($_.Exception.Message)", 'System Health') }
-
-    try {
-        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') {
-            $reasons += 'Windows Update'
-        }
-    } catch { $log.Debug("WU reboot check failed: $($_.Exception.Message)", 'System Health') }
-
-    try {
-        $sm = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction Stop
-        if ($sm.PSObject.Properties['PendingFileRenameOperations'] -and $sm.PendingFileRenameOperations) {
-            $reasons += 'Pending file rename operations'
-        }
-    } catch { $log.Debug("Session Manager reboot check failed: $($_.Exception.Message)", 'System Health') }
-
-    $pending = ($reasons.Count -gt 0)
-    Set-OmniResultMetric -Result $result -Name 'PendingReboot' -Value $pending
-    Set-OmniResultMetric -Result $result -Name 'PendingRebootReasons' -Value ($reasons -join '; ')
-
-    if ($pending) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
-            -Title 'A system reboot is pending' -Severity 'Warning' -Component 'System/Servicing' `
-            -Detail ("Pending reboot markers found: {0}." -f ($reasons -join ', ')) `
-            -LikelyCause 'Updates or servicing operations require a restart to complete.' `
-            -Confidence 85 `
-            -Recommendation 'Restart the device to finish applying pending changes.')
-    }
+    # Pending reboot: reported by Windows Health (updates.windows-health) only.
+    Set-OmniResultMetric -Result $result -Name 'PendingRebootCheckedBy' -Value 'updates.windows-health'
 
     # --- CBS log freshness ------------------------------------------------
+    $cbsFound = $false
     try {
-        $cbsPath = 'C:\Windows\Logs\CBS\CBS.log'
-        if (Test-Path $cbsPath) {
-            $cbs = Get-Item -Path $cbsPath -ErrorAction Stop
+        $winDir = if ($env:SystemRoot) { $env:SystemRoot } else { 'C:\Windows' }
+        $cbsPath = Join-Path $winDir 'Logs\CBS\CBS.log'
+        if (Test-Path -LiteralPath $cbsPath) {
+            $cbs = Get-Item -LiteralPath $cbsPath -ErrorAction Stop
             Set-OmniResultMetric -Result $result -Name 'CBSLogLastWrite' -Value $cbs.LastWriteTime
+            $cbsFound = $true
         }
     } catch {
         $log.Debug("CBS log read failed: $($_.Exception.Message)", 'System Health')
     }
 
-    # Always record at least one positive finding when nothing is wrong.
-    if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding `
-            -Title 'No pending reboot detected' -Severity 'Pass' -Component 'System/Servicing' `
-            -Detail 'No servicing, Windows Update, or file-rename reboot markers were present.')
+    # Always record one finding.
+    if ($cbsFound) {
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'system-health-servicing-log' `
+            -Title 'Servicing log collected' -Severity 'Pass' -Component 'System/Servicing' `
+            -Detail 'The Component-Based Servicing log timestamp was recorded. Pending reboot is reported by the Windows Health scanner.')
+    } else {
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'system-health-servicing-log-not-found' `
+            -Title 'Servicing log not found' -Severity 'Information' -Component 'System/Servicing' `
+            -Detail 'The Component-Based Servicing log (Logs\CBS\CBS.log) was not found or could not be read. Pending reboot is reported by the Windows Health scanner.')
     }
 
     return (Complete-OmniResult -Result $result)

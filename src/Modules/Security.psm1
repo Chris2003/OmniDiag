@@ -4,8 +4,11 @@
 
 .DESCRIPTION
     Reviews baseline endpoint security posture: Microsoft Defender real-time
-    protection and signature freshness, Windows Firewall profile state, and UAC.
-    Emits metrics for each and warns on any weakened setting.
+    protection and signature freshness, Windows Firewall profile state, and UAC
+    (EnableLUA, ConsentPromptBehaviorAdmin, PromptOnSecureDesktop under
+    HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System; registry values,
+    so the result does not depend on the display language). Emits metrics for each and
+    warns on any weakened setting.
 
     Contract:
         Get-OmniModuleManifest -> module metadata
@@ -28,14 +31,43 @@ function Get-OmniModuleManifest {
         Group         = 'security'
         NetworkAccess = 'None'
         Category      = 'Security'
-        Description   = 'Checks Defender, firewall profiles, and UAC posture.'
+        Description   = 'Checks Defender, firewall profiles, and UAC posture (EnableLUA, admin prompt behavior, secure desktop).'
         RequiresAdmin = $false
         Order         = 500
         Enabled       = $true
     }
 }
 
+function Get-OmniUacPolicy {
+    <#
+    .SYNOPSIS
+        Internal: reads the UAC policy values from the registry.
+
+    .DESCRIPTION
+        Returns EnableLUA, ConsentPromptBehaviorAdmin, and PromptOnSecureDesktop from
+        HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System ($null for a
+        missing value; Windows then uses the default: 1, 5, 1). Throws when the key
+        cannot be read.
+    #>
+    [OutputType([pscustomobject])]
+    param()
+    $key = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -ErrorAction Stop
+    $read = { param($n) if ($key.PSObject.Properties[$n]) { [int]$key.$n } else { $null } }
+    return [pscustomobject]@{
+        EnableLUA                  = & $read 'EnableLUA'
+        ConsentPromptBehaviorAdmin = & $read 'ConsentPromptBehaviorAdmin'
+        PromptOnSecureDesktop      = & $read 'PromptOnSecureDesktop'
+    }
+}
+
 function Invoke-OmniModuleScan {
+    <#
+    .SYNOPSIS
+        Runs the baseline security check and returns an OmniDiag.Result.
+
+    .PARAMETER Context
+        The scan context (Logger, IsAdmin, ...).
+    #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
@@ -78,7 +110,7 @@ function Invoke-OmniModuleScan {
         }
 
         if ($sigAge -gt 7) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'security-defender-signatures-outdated' `
                 -Title ("Antivirus signatures are {0} days old" -f $sigAge) -Severity 'Warning' -Component 'Security/Defender' `
                 -Detail "Defender signature definitions have not been updated in $sigAge days." `
                 -LikelyCause 'Update failures, no internet connectivity, or a paused update service.' `
@@ -110,12 +142,16 @@ function Invoke-OmniModuleScan {
         Set-OmniResultMetric -Result $result -Name 'FirewallStatus' -Value 'Unknown'
     }
 
-    # --- UAC (EnableLUA) --------------------------------------------------
+    # --- UAC (registry policy values) ------------------------------------
     try {
-        $uacKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
-        $enableLua = (Get-ItemProperty -Path $uacKey -Name 'EnableLUA' -ErrorAction Stop).EnableLUA
-        $uacOn = ([int]$enableLua -eq 1)
+        $uac = Get-OmniUacPolicy
+        # A missing value means the Windows default: EnableLUA 1, ConsentPromptBehaviorAdmin 5, PromptOnSecureDesktop 1.
+        $uacOn = ($null -eq $uac.EnableLUA -or [int]$uac.EnableLUA -ne 0)
+        $consentAdmin = if ($null -eq $uac.ConsentPromptBehaviorAdmin) { 5 } else { [int]$uac.ConsentPromptBehaviorAdmin }
+        $secureDesktop = ($null -eq $uac.PromptOnSecureDesktop -or [int]$uac.PromptOnSecureDesktop -ne 0)
         Set-OmniResultMetric -Result $result -Name 'UACEnabled' -Value $uacOn
+        Set-OmniResultMetric -Result $result -Name 'UACConsentPromptBehaviorAdmin' -Value $consentAdmin
+        Set-OmniResultMetric -Result $result -Name 'UACPromptOnSecureDesktop' -Value $secureDesktop
         if (-not $uacOn) {
             Add-OmniFinding -Result $result -Finding (New-OmniFinding `
                 -Title 'User Account Control (UAC) is disabled' -Severity 'Warning' -Component 'Security/UAC' `
@@ -123,6 +159,23 @@ function Invoke-OmniModuleScan {
                 -LikelyCause 'UAC turned off manually or by policy.' `
                 -Confidence 80 `
                 -Recommendation 'Re-enable UAC (EnableLUA = 1) to protect against silent privilege escalation.')
+        } else {
+            if ($consentAdmin -eq 0) {
+                Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'security-uac-elevate-without-prompting' `
+                    -Title 'UAC elevates administrators without prompting' -Severity 'Warning' -Component 'Security/UAC' `
+                    -Detail 'ConsentPromptBehaviorAdmin is 0 (Elevate without prompting): any program an administrator starts can gain full rights silently.' `
+                    -LikelyCause 'The "Behavior of the elevation prompt for administrators in Admin Approval Mode" policy was relaxed manually or by policy.' `
+                    -Confidence 85 `
+                    -Recommendation 'Set ConsentPromptBehaviorAdmin to 5 (default, prompt for consent for non-Windows binaries) or to 2 / 1 (prompt on the secure desktop).')
+            }
+            if (-not $secureDesktop) {
+                Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'security-uac-secure-desktop-disabled' `
+                    -Title 'UAC prompts do not use the secure desktop' -Severity 'Warning' -Component 'Security/UAC' `
+                    -Detail 'PromptOnSecureDesktop is 0: elevation prompts appear on the interactive desktop, where other programs running as the user can interact with them.' `
+                    -LikelyCause 'The "Switch to the secure desktop when prompting for elevation" policy was disabled, often to work around remote-support tools.' `
+                    -Confidence 80 `
+                    -Recommendation 'Set PromptOnSecureDesktop to 1 (default) unless a documented remote-support requirement needs otherwise.')
+            }
         }
     } catch {
         $log.Debug("UAC registry read failed: $($_.Exception.Message)", 'Security')

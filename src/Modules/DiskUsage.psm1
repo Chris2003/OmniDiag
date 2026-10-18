@@ -90,7 +90,8 @@ function Invoke-OmniModuleScan {
                     -Detail "Drive $($v.Letter): uses $usedGb GB of $totalGb GB ($usedPct%), leaving $freeGb GB free." `
                     -LikelyCause 'The drive is running out of space.' `
                     -Confidence 85 `
-                    -Recommendation 'Remove unneeded files, run Disk Cleanup/Storage Sense, or expand the volume.')
+                    -Recommendation 'Remove unneeded files, run Disk Cleanup/Storage Sense, or expand the volume.' `
+                    -Id ("disk-usage-drive-full-{0}" -f "$($v.Letter)".ToLowerInvariant()))
             }
         }
     } catch {

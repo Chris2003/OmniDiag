@@ -22,9 +22,19 @@ function Invoke-OmniModuleScan {
             $vpnAdapters = @(Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceDescription -match 'VPN|TAP|TUN|WireGuard|AnyConnect|GlobalProtect|Fortinet|Pulse|Juniper' })
         }
     } catch { $Context.Logger.Debug("VPN adapter query failed: $($_.Exception.Message)", 'VPN') }
+    # Bounded event query: the scan's time range (default: last 7 days, never more than
+    # 30 days) and at most $maxEvents events, newest first.
+    $maxEvents = 200
+    $end = Get-Date; $start = $end.AddDays(-7)
+    $rangeProp = $Context.PSObject.Properties['TimeRange']
+    if ($rangeProp -and $rangeProp.Value) {
+        if ($rangeProp.Value.PSObject.Properties['End'] -and $rangeProp.Value.End) { $end = [datetime]$rangeProp.Value.End }
+        if ($rangeProp.Value.PSObject.Properties['Start'] -and $rangeProp.Value.Start) { $start = [datetime]$rangeProp.Value.Start }
+    }
+    if ($start -lt $end.AddDays(-30)) { $start = $end.AddDays(-30) }
     try {
         if ((Get-Command Get-WinEvent -ErrorAction SilentlyContinue) -and (Get-WinEvent -ListLog 'Microsoft-Windows-RasClient/Operational' -ErrorAction SilentlyContinue)) {
-            $failureCount = @(Get-WinEvent -FilterHashtable @{ LogName='Microsoft-Windows-RasClient/Operational'; Level=2; StartTime=$Context.TimeRange.Start; EndTime=$Context.TimeRange.End } -ErrorAction SilentlyContinue).Count
+            $failureCount = @(Get-WinEvent -FilterHashtable @{ LogName='Microsoft-Windows-RasClient/Operational'; Level=2; StartTime=$start; EndTime=$end } -MaxEvents $maxEvents -ErrorAction SilentlyContinue).Count
         }
     } catch { $Context.Logger.Debug("RasClient event query failed: $($_.Exception.Message)", 'VPN') }
 
@@ -33,8 +43,10 @@ function Invoke-OmniModuleScan {
     Set-OmniResultMetric -Result $result -Name 'ConnectedProfiles' -Value ($connectedNames -join ', ')
     Set-OmniResultMetric -Result $result -Name 'DetectedAdapterCount' -Value $vpnAdapters.Count
     Set-OmniResultMetric -Result $result -Name 'RecentRasClientErrorCount' -Value $failureCount
+    Set-OmniResultMetric -Result $result -Name 'RasClientErrorCountCapped' -Value ($failureCount -ge $maxEvents)
     if ($failureCount -gt 0) {
-        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "$failureCount recent VPN client errors" -Severity Warning -Component 'Network/VPN' -Detail 'RasClient logged connection errors in the selected time range.' -LikelyCause 'Authentication, gateway reachability, protocol, certificate, or policy negotiation failed.' -Confidence 70 -Recommendation 'Review the newest RasClient Operational events, then correlate their error codes with DNS, proxy, certificate, and identity findings.')
+        $countText = if ($failureCount -ge $maxEvents) { "$maxEvents or more" } else { "$failureCount" }
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'network-vpn-rasclient-errors' -Title "$countText recent VPN client errors" -Severity Warning -Component 'Network/VPN' -Detail 'RasClient logged connection errors in the selected time range.' -LikelyCause 'Authentication, gateway reachability, protocol, certificate, or policy negotiation failed.' -Confidence 70 -Recommendation 'Review the newest RasClient Operational events, then correlate their error codes with DNS, proxy, certificate, and identity findings.')
     } elseif ($profiles.Count -eq 0 -and $vpnAdapters.Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'No Windows VPN configuration detected' -Severity Information -Component 'Network/VPN' -Detail 'No built-in VPN profile or recognizable VPN adapter was found.')
     } else {

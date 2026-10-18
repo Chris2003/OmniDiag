@@ -3,18 +3,20 @@
     OmniDiag diagnostic module: Windows Health.
 
 .DESCRIPTION
-    Checks overall OS servicing health: pending reboot state, Device Manager problem
-    devices, automatic services that are not running, the Windows Update service, and
-    startup program count.
+    Checks overall OS servicing health: pending reboot state (the authoritative
+    pending-reboot check of the updates group), the Windows Update service, and counts
+    (metrics only) of Device Manager problem devices, automatic services that are not
+    running, and startup programs. Per-device and per-service findings are owned by
+    the Drivers and Services scanners, so they are not duplicated here.
 
-    Deep component checks (SFC /scannow, DISM /RestoreHealth) take minutes and would
-    blow the ~2-minute scan target, so they are NOT run here - they live in the
-    Version 2 Repair Center. They can be opted into via Config ('RunSfc' / 'RunDism')
-    for a deep, elevated scan.
+    This scanner is read-only. It never runs SFC or DISM: component-store and system
+    file repair live in the Repair Center (repair.run-system-file-checker-sfc and
+    repair.repair-component-store-dism), which run only when a technician starts them.
 
-    Per-run options (via $Context.Config):
-        RunSfc    bool  Run 'sfc /verifyonly' (slow, admin). Default $false.
-        RunDism   bool  Run 'DISM /CheckHealth' (admin). Default $false.
+    Pending reboot markers read:
+        HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending
+        HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired
+        HKLM\SYSTEM\CurrentControlSet\Control\Session Manager : PendingFileRenameOperations
 #>
 
 Set-StrictMode -Version Latest
@@ -32,7 +34,7 @@ function Get-OmniModuleManifest {
         Group         = 'updates'
         NetworkAccess = 'None'
         Category      = 'Health'
-        Description   = 'Pending reboot, device errors, service state, and update health.'
+        Description   = 'Pending reboot, update service state, and device/service problem counts.'
         RequiresAdmin = $false
         Order         = 50
         Enabled       = $true
@@ -64,45 +66,34 @@ function Invoke-OmniModuleScan {
 
     $result = New-OmniResult -ModuleName 'Windows Health' -Category 'Health' -HadAdmin $Context.IsAdmin
     $log = $Context.Logger
-    $cfg = $Context.Config
 
     # --- Pending reboot ---------------------------------------------------
     $reasons = @(Test-OmniPendingReboot)
     Set-OmniResultMetric -Result $result -Name 'PendingReboot' -Value ($reasons.Count -gt 0)
+    Set-OmniResultMetric -Result $result -Name 'PendingRebootReasons' -Value ($reasons -join '; ')
     if ($reasons.Count -gt 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'A system restart is pending' -Severity 'Warning' `
             -Component 'Health/Servicing' -Detail ("Pending reboot flagged by: {0}." -f ($reasons -join ', ')) `
             -LikelyCause 'Updates or installs have staged changes that apply on restart.' -Confidence 85 `
-            -Recommendation 'Restart the device to finish applying pending changes.')
+            -Recommendation 'Restart the device to finish applying pending changes.' -Id 'windows-health-pending-reboot')
     }
 
-    # --- Device Manager problem devices ----------------------------------
+    # --- Device Manager problem devices (count only) ----------------------
+    # Per-device findings, with severities mapped from the error code, are owned by
+    # Drivers (services.drivers); this scanner only records the count.
     try {
         $bad = @(Get-CimInstance -ClassName Win32_PnPEntity -ErrorAction Stop |
             Where-Object { $_.ConfigManagerErrorCode -and $_.ConfigManagerErrorCode -ne 0 })
         Set-OmniResultMetric -Result $result -Name 'ProblemDevices' -Value $bad.Count
-        foreach ($dev in ($bad | Select-Object -First 20)) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "Device problem: $($dev.Name)" -Severity 'Warning' `
-                -Component 'Health/Devices' -Detail "Device Manager error code $($dev.ConfigManagerErrorCode) on '$($dev.Name)'." `
-                -LikelyCause 'Missing/failed driver or a disabled or malfunctioning device.' -Confidence 65 `
-                -Recommendation 'Update or reinstall the driver in Device Manager; check vendor support.' `
-                -Data @{ Name = $dev.Name; ErrorCode = $dev.ConfigManagerErrorCode })
-        }
     } catch { $log.Warn("Win32_PnPEntity query failed: $($_.Exception.Message)", 'Windows Health') }
 
-    # --- Automatic services not running ----------------------------------
+    # --- Automatic services not running (count only) ---------------------
+    # The per-service check (exit codes, trigger-start services) is owned by Services
+    # (services.services); this scanner only records the count.
     try {
         $stopped = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop |
             Where-Object { $_.StartMode -eq 'Auto' -and $_.State -ne 'Running' -and -not $_.DelayedAutoStart })
         Set-OmniResultMetric -Result $result -Name 'AutoServicesStopped' -Value $stopped.Count
-        if ($stopped.Count -gt 0) {
-            $names = ($stopped | Select-Object -First 15 | ForEach-Object { $_.DisplayName }) -join '; '
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title "$($stopped.Count) automatic service(s) not running" -Severity 'Warning' `
-                -Component 'Health/Services' -Detail "Auto-start services currently stopped: $names" `
-                -LikelyCause 'A service failed to start or was stopped.' -Confidence 55 `
-                -Recommendation 'Review the listed services; start them or investigate start failures in the System log.' `
-                -Data ($stopped | Select-Object Name, DisplayName))
-        }
     } catch { $log.Warn("Win32_Service query failed: $($_.Exception.Message)", 'Windows Health') }
 
     # --- Windows Update service state ------------------------------------
@@ -113,7 +104,7 @@ function Invoke-OmniModuleScan {
             Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Windows Update service is disabled' -Severity 'Warning' `
                 -Component 'Health/Update' -Detail 'The wuauserv service start type is Disabled.' `
                 -LikelyCause 'Update service disabled by policy, tooling, or manual change.' -Confidence 70 `
-                -Recommendation 'Re-enable Windows Update unless intentionally managed elsewhere.')
+                -Recommendation 'Re-enable Windows Update unless intentionally managed elsewhere.' -Id 'windows-health-wuauserv-disabled')
         }
     } catch { $log.Debug("Could not query wuauserv: $($_.Exception.Message)", 'Windows Health') }
 
@@ -123,29 +114,9 @@ function Invoke-OmniModuleScan {
         Set-OmniResultMetric -Result $result -Name 'StartupPrograms' -Value $startup.Count
     } catch { }
 
-    # --- Optional deep checks (opt-in; slow; admin) ----------------------
-    if (($cfg.ContainsKey('RunSfc') -and $cfg['RunSfc'])) {
-        if ($Context.IsAdmin) {
-            $log.Info('Running sfc /verifyonly (this can take several minutes)...', 'Windows Health')
-            try {
-                $sfc = & "$env:SystemRoot\System32\sfc.exe" /verifyonly 2>&1 | Out-String
-                $clean = $sfc -match 'did not find any integrity violations'
-                Set-OmniResultMetric -Result $result -Name 'SfcResult' -Value $(if ($clean) { 'No integrity violations' } else { 'Violations or unknown' })
-                if (-not $clean) {
-                    Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'SFC reported possible integrity violations' -Severity 'Warning' `
-                        -Component 'Health/Components' -Detail 'sfc /verifyonly did not report a clean result.' `
-                        -LikelyCause 'System file corruption may be present.' -Confidence 50 `
-                        -Recommendation 'Run "sfc /scannow" and "DISM /Online /Cleanup-Image /RestoreHealth" from an elevated prompt.')
-                }
-            } catch { $log.Warn("SFC failed: $($_.Exception.Message)", 'Windows Health') }
-        } else {
-            $log.Warn('RunSfc requested but not elevated; skipping.', 'Windows Health')
-        }
-    }
-
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Title 'Windows health checks passed' -Severity 'Pass' `
-            -Component 'Health' -Detail 'No pending reboot, device errors, or stopped automatic services detected.')
+            -Component 'Health' -Detail 'No pending reboot and the Windows Update service is not disabled. Device problems and stopped services are reported by Drivers and Services.')
     }
 
     return (Complete-OmniResult -Result $result)

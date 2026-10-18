@@ -3,6 +3,8 @@
 # NetworkAccess must match the manifest. Add a new scanner here (and only here).
 @{
     Scanners = @{
-        'Reliability' = @{ NetworkAccess = 'None' }
+        'Crash Dumps'         = @{ NetworkAccess = 'None' }
+        'Reliability'         = @{ NetworkAccess = 'None' }
+        'Reliability Monitor' = @{ NetworkAccess = 'None' }
     }
 }

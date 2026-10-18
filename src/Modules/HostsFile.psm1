@@ -86,7 +86,7 @@ function Invoke-OmniModuleScan {
             Set-OmniResultMetric -Result $result -Name 'BlockEntryCount' -Value ($blockEntries.Count)
             Set-OmniResultMetric -Result $result -Name 'RedirectEntryCount' -Value ($realEntries.Count)
 
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'network-hosts-file-custom-entries' `
                 -Title ("Hosts file has {0} custom entr{1}" -f $entries.Count, $(if ($entries.Count -eq 1) { 'y' } else { 'ies' })) `
                 -Severity 'Information' -Component 'Network/Hosts' `
                 -Detail ('Custom mappings: ' + ((@($entries | Select-Object -First 25 | ForEach-Object { "{0} -> {1}" -f $_.IP, $_.Host }) -join '; '))) `
@@ -100,7 +100,7 @@ function Invoke-OmniModuleScan {
     try {
         $blockCount = @($entries | Where-Object { $loopbacks -contains $_.IP }).Count
         if ($blockCount -ge 50) {
-            Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+            Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'network-hosts-file-block-list' `
                 -Title ("Large block list detected ({0} entries)" -f $blockCount) `
                 -Severity 'Information' -Component 'Network/Hosts' `
                 -Detail "The hosts file maps $blockCount hostnames to loopback/null addresses." `
