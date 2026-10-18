@@ -201,9 +201,10 @@ Describe 'omnidiag list' {
         if ($script:CanValidate) { Test-Json -Json $r.Out -SchemaFile $script:ListSchema | Should -BeTrue }
     }
 
-    It 'lists all 49 built-in scanners with ids and network access' {
+    It 'lists every built-in scanner with ids and network access' {
         $doc = (Invoke-Cli -Arguments @('list', 'modules', '-f', 'json') -ModulesPath @(Join-Path $script:Root 'src/Modules')).Out | ConvertFrom-Json
-        @($doc.items).Count | Should -Be 49
+        # One scanner per plugin file, so new scanners don't need this test edited.
+        @($doc.items).Count | Should -Be @(Get-ChildItem -LiteralPath (Join-Path $script:Root 'src/Modules') -Filter '*.psm1').Count
         ($doc.items | Where-Object id -eq 'network.dns-resolver').networkAccess | Should -Be 'Internet'
     }
 

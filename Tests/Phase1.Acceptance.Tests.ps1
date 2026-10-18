@@ -254,7 +254,7 @@ Describe 'omnidiag.ps1 in a child process: clean stdout and local logging' {
         $trimmed = $r.Out.Trim()
         $trimmed | Should -Match '^\{'
         $trimmed | Should -Match '\}$'
-        @(($trimmed | ConvertFrom-Json).items).Count | Should -Be 49
+        @(($trimmed | ConvertFrom-Json).items).Count | Should -Be @(Get-ChildItem -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'src/Modules') -Filter '*.psm1').Count
         if ($script:CanValidate) { Test-Json -Json $trimmed -SchemaFile $script:ListSchema | Should -BeTrue }
     }
 
