@@ -98,6 +98,8 @@ function Export-OmniReport {
         [object] $RedactionContext
     )
 
+    if (Get-Command Write-OmniDeprecationWarning -ErrorAction SilentlyContinue) { Write-OmniDeprecationWarning -Name 'Export-OmniReport' -Replacement 'Export-OmniDiagReport' }
+
     if ($RedactionMapPath -and -not $Redact) { throw '-RedactionMapPath requires -Redact.' }
 
     # Resolve relative paths against PowerShell's location (.NET file APIs use the process directory).
