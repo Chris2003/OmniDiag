@@ -208,7 +208,7 @@ every command.
 | Option | Meaning |
 |---|---|
 | `-f`, `--format <fmt>` | `json` (report schema v1), `csv` (findings table), `md` (Markdown), `html`, `pdf`. Repeatable or a comma list. `list` / `repair list` take `json`, `csv`, `md`; `repair run` takes `json`; `compare` takes `text`, `json`, `md`. |
-| `-o`, `--output <path>` | Write to a file or a directory instead of stdout. A path that exists as a folder, ends with `\` or `/`, or has no extension is a directory. Without `--format`, a file's extension picks the format (`.json`, `.csv`, `.md`, `.html`, `.pdf`); a directory gets `json` + `html` for `scan` and `report`, and `json` for `list` and `version`. |
+| `-o`, `--output <path>` | Write to a file or a directory instead of stdout. A path that exists as a folder, ends with `\` or `/`, or has no extension is a directory. Without `--format`, a file's extension picks the format (`.json`, `.csv`, `.md`, `.html`, `.pdf`); a directory gets `json` + `html` for `scan` and `report`, and `json` for `list` and `version`. The path is canonicalized (`..` collapsed) before anything is written; a device path (`\\.\`, `\\?\`), a reserved name (`NUL`, `CON`, `COM1`, ...), or an NTFS stream (`file.json:x`) is a usage error (exit 10). See docs/SECURITY-REVIEW.md. |
 | `--verbose` | Record Debug-level entries in the local log file (`OmniDiagData\logs\omnidiag-cli-*.jsonl`). Nothing extra goes to the console. |
 | `-q`, `--quiet` | No progress or status lines on stderr. Errors and usage messages are still printed. |
 | `--no-color` | Accepted for scripts; router output is already plain text. |
