@@ -53,7 +53,9 @@ reboot is reported by the System Health scanner in the [updates](updates.md) gro
   falling back to the context architecture / `PROCESSOR_ARCHITECTURE`. The OmniDiag support
   matrix is Windows 10 22H2 x64 and Windows 11 x64 / ARM64; anything else gets an Information
   finding.
-- **Uptime.** `Win32_OperatingSystem.LastBootUpTime`; more than 14 days is a Warning.
+- **Uptime.** `Win32_OperatingSystem.LastBootUpTime`; Information below 30 days, Warning at
+  30 days or more (the old 14-day threshold flagged machines that simply follow a monthly
+  patch-and-restart cycle).
 - **TPM.** `Win32_Tpm` (`root/cimv2/Security/MicrosoftTpm`), administrators only. As a
   standard user the scanner does not query it and reports "TPM details require elevation".
   Elevated: no TPM, a TPM that is not enabled/activated, or a TPM below 2.0 is a Warning.
@@ -107,7 +109,8 @@ None. Every scanner in this group is local-only.
 | `system.system.os-support-unknown` | Windows support status could not be determined | Information | Build not in the table, unknown edition, or Windows Server |
 | `system.system.os-version-unavailable` | Windows version could not be read | Information | CurrentVersion registry key unreadable |
 | `system.system.platform-outside-support-matrix` | Platform is outside the OmniDiag support matrix | Information | Not x64, or ARM64 on Windows 10 |
-| `system.system.uptime-long` | System uptime is N days | Warning | Last boot more than 14 days ago |
+| `system.system.uptime-long` | System uptime is N days | Warning | Last boot 30 days ago or more |
+| `system.system.uptime` | System uptime is N days | Information | Last boot less than 30 days ago |
 | `system.system.tpm-requires-elevation` | TPM details require elevation | Information | Standard user |
 | `system.system.tpm-ready` | TPM is present and enabled | Pass | TPM 2.0, enabled and activated |
 | `system.system.tpm-not-found` | No TPM detected | Warning | Elevated, `Win32_Tpm` returns nothing |

@@ -47,6 +47,10 @@ BeforeAll {
     }
 
     $script:ProcMod = Import-PluginCopy -File 'Processes.psm1' -AsName 'OmniPerfTestProcesses'
+
+    # ALWAYS define a simple Get-Process stub inside the plugin copy's module scope: the
+    # function shadows the real cmdlet, so Pester mocks the stub on every platform.
+    & $script:ProcMod { function script:Get-Process { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments)] $Rest) } }
 }
 
 AfterAll {
@@ -83,7 +87,29 @@ Describe 'Processes scanner: handles and threads' {
         @($r.Findings | Where-Object Severity -eq 'Pass').Count | Should -Be 1
     }
 
-    It 'warns when a process exceeds 10,000 handles, with a stable Id' {
+    It 'does not warn at 15,000 handles (busy processes routinely pass 10,000)' {
+        Mock -ModuleName OmniPerfTestProcesses Get-Process { @(New-FakeProcess -Name 'browser' -Id 40 -Handles 15000) }
+        $r = Invoke-PluginScan -Module $script:ProcMod -Context (New-TestContext)
+        @($r.Findings | Where-Object Id -eq 'performance.processes.handle-count-high').Count | Should -Be 0
+        @($r.Findings | Where-Object Id -eq 'performance.processes.handle-summary').Count | Should -Be 1
+    }
+
+    It 'reports not-responding processes with a stable Id' {
+        Mock -ModuleName OmniPerfTestProcesses Get-Process {
+            $p = New-FakeProcess -Name 'hung' -Id 50 -Handles 10
+            $p.MainWindowHandle = 1234
+            $p.Responding = $false
+            @($p, (New-FakeProcess -Name 'ok' -Id 51 -Handles 10))
+        }
+        $r = Invoke-PluginScan -Module $script:ProcMod -Context (New-TestContext)
+        $f = @($r.Findings | Where-Object Id -eq 'performance.processes.not-responding')
+        $f.Count | Should -Be 1
+        $f[0].Severity | Should -Be 'Warning'
+        $f[0].Detail | Should -Match 'hung'
+        $f[0].Id | Should -Not -Match '\d'
+    }
+
+    It 'warns when a process exceeds 20,000 handles, with a stable Id' {
         Mock -ModuleName OmniPerfTestProcesses Get-Process {
             @(
                 New-FakeProcess -Name 'leaky' -Id 4321 -Handles 25000

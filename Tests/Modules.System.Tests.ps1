@@ -208,13 +208,21 @@ Describe 'System scanner: architecture and uptime' {
         $r.Metrics.Contains('UptimeDays') | Should -BeFalse
     }
 
-    It 'warns on uptime over 14 days and records uptime otherwise' {
-        Mock -ModuleName OmniSysTestSystem Get-OmniSystemInventory { New-FakeInventory -LastBoot (Get-Date).AddDays(-20) }
+    It 'warns on uptime of 30 days or more and reports shorter uptime as Information' {
+        Mock -ModuleName OmniSysTestSystem Get-OmniSystemInventory { New-FakeInventory -LastBoot (Get-Date).AddDays(-30).AddMinutes(-5) }
         $r = Invoke-SysScan -Module $script:SysMod -Context (New-SysContext)
         $f = Get-Finding $r 'system.system.uptime-long'
-        $f.Count | Should -Be 1
+        $f.Count | Should -Be 1 -Because (($r.Findings | ForEach-Object { "$($_.Severity): $($_.Id)" }) -join '; ')
         $f[0].Severity | Should -Be 'Warning'
-        $r.Metrics['UptimeDays'] | Should -BeGreaterThan 19
+        $r.Metrics['UptimeDays'] | Should -BeGreaterThan 29
+
+        Mock -ModuleName OmniSysTestSystem Get-OmniSystemInventory { New-FakeInventory -LastBoot (Get-Date).AddDays(-20) }
+        $r = Invoke-SysScan -Module $script:SysMod -Context (New-SysContext)
+        (Get-Finding $r 'system.system.uptime-long').Count | Should -Be 0
+        $i = Get-Finding $r 'system.system.uptime'
+        $i.Count | Should -Be 1
+        $i[0].Severity | Should -Be 'Information'
+        $i[0].Id | Should -Not -Match '\d'
 
         Mock -ModuleName OmniSysTestSystem Get-OmniSystemInventory { New-FakeInventory -LastBoot (Get-Date).AddDays(-2) }
         $r = Invoke-SysScan -Module $script:SysMod -Context (New-SysContext)

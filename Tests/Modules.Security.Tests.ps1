@@ -42,10 +42,88 @@ BeforeAll {
 
     $script:AdminsMod = Import-PluginCopy -File 'LocalAdmins.psm1' -AsName 'OmniSecTestAdmins'
     $script:SecurityMod = Import-PluginCopy -File 'Security.psm1' -AsName 'OmniSecTestSecurity'
+
+    # A separate copy for the seam tests (real cmdlets mocked one level below the private
+    # helpers). It ALWAYS gets simple stubs in its module scope, on Windows too: the
+    # function shadows the real cmdlet, so Pester builds the mock from the stub.
+    $script:AdminsSeamMod = Import-PluginCopy -File 'LocalAdmins.psm1' -AsName 'OmniSecTestAdminsSeam'
+    & $script:AdminsSeamMod {
+        function script:Get-LocalGroupMember { [CmdletBinding()] param([string] $SID, [string] $Name, [Parameter(ValueFromRemainingArguments)] $Rest) }
+        function script:Get-LocalUser { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments)] $Rest) }
+        function script:Get-CimInstance { [CmdletBinding()] param([string] $ClassName, [string] $Filter, [Parameter(ValueFromRemainingArguments)] $Rest) }
+        function script:Get-CimAssociatedInstance { [CmdletBinding()] param([object] $InputObject, [string] $Association, [Parameter(ValueFromRemainingArguments)] $Rest) }
+    }
+
+    function New-TestSid {
+        # A real SecurityIdentifier where the platform supports it, else the SID string.
+        param([string] $Value)
+        try { return [System.Security.Principal.SecurityIdentifier]::new($Value) } catch { return $Value }
+    }
 }
 
 AfterAll {
-    foreach ($n in @('OmniSecTestAdmins', 'OmniSecTestSecurity')) { Remove-Module -Name $n -Force -ErrorAction SilentlyContinue }
+    foreach ($n in @('OmniSecTestAdmins', 'OmniSecTestSecurity', 'OmniSecTestAdminsSeam')) { Remove-Module -Name $n -Force -ErrorAction SilentlyContinue }
+}
+
+Describe 'Local Admins seams (real cmdlets mocked, helpers real)' {
+    It 'Get-OmniAdministratorsMember queries S-1-5-32-544 and maps SID and PrincipalSource' {
+        Mock -ModuleName OmniSecTestAdminsSeam Get-LocalGroupMember {
+            [pscustomobject]@{ Name = 'PC1\Administrator'; SID = (New-TestSid 'S-1-5-21-1000-2000-3000-500'); PrincipalSource = 'Local'; ObjectClass = 'User' }
+            [pscustomobject]@{ Name = 'CORP\Domain Admins'; SID = (New-TestSid 'S-1-5-21-7-8-9-512'); PrincipalSource = 'ActiveDirectory'; ObjectClass = 'Group' }
+            [pscustomobject]@{ Name = 'S-1-5-21-7-8-9-1105'; SID = (New-TestSid 'S-1-5-21-7-8-9-1105'); PrincipalSource = $null; ObjectClass = 'User' }
+        }
+        $m = & $script:AdminsSeamMod { Get-OmniAdministratorsMember }
+        $m.Available | Should -BeTrue
+        $m.Source | Should -Be 'Get-LocalGroupMember'
+        @($m.Members).Count | Should -Be 3
+        $m.Members[0].Sid | Should -Be 'S-1-5-21-1000-2000-3000-500'
+        $m.Members[0].Source | Should -Be 'Local'
+        $m.Members[1].Source | Should -Be 'ActiveDirectory'
+        $m.Members[2].Source | Should -Be 'Unknown'
+        Should -Invoke -ModuleName OmniSecTestAdminsSeam Get-LocalGroupMember -Times 1 -Exactly -ParameterFilter { $SID -eq 'S-1-5-32-544' }
+    }
+
+    It 'Get-OmniAdministratorsMember falls back to Win32_GroupUser and keeps the first error' {
+        Mock -ModuleName OmniSecTestAdminsSeam Get-LocalGroupMember { throw 'Failed to compare two elements in the array.' }
+        Mock -ModuleName OmniSecTestAdminsSeam Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Group' } { [pscustomobject]@{ Name = 'Administrators'; SID = 'S-1-5-32-544' } }
+        Mock -ModuleName OmniSecTestAdminsSeam Get-CimAssociatedInstance {
+            [pscustomobject]@{ Name = 'Administrator'; Domain = 'PC1'; SID = 'S-1-5-21-1000-2000-3000-500'; LocalAccount = $true }
+            [pscustomobject]@{ Name = 'Domain Admins'; Domain = 'CORP'; SID = 'S-1-5-21-7-8-9-512'; LocalAccount = $false }
+        }
+        $m = & $script:AdminsSeamMod { Get-OmniAdministratorsMember }
+        $m.Available | Should -BeTrue
+        $m.Source | Should -Be 'Win32_GroupUser'
+        $m.Error | Should -Match 'compare two elements'
+        $m.Members[0].Name | Should -Be 'PC1\Administrator'
+        $m.Members[0].Source | Should -Be 'Local'
+        $m.Members[1].Name | Should -Be 'CORP\Domain Admins'
+        $m.Members[1].Source | Should -Be 'Unknown'
+        Should -Invoke -ModuleName OmniSecTestAdminsSeam Get-CimInstance -Times 1 -Exactly -ParameterFilter { $Filter -match "SID = 'S-1-5-32-544'" }
+        Should -Invoke -ModuleName OmniSecTestAdminsSeam Get-CimAssociatedInstance -Times 1 -Exactly -ParameterFilter { $Association -eq 'Win32_GroupUser' }
+    }
+
+    It 'Get-OmniAdministratorsMember reports unavailable when both sources fail' {
+        Mock -ModuleName OmniSecTestAdminsSeam Get-LocalGroupMember { throw 'first failure' }
+        Mock -ModuleName OmniSecTestAdminsSeam Get-CimInstance { throw 'second failure' }
+        $m = & $script:AdminsSeamMod { Get-OmniAdministratorsMember }
+        $m.Available | Should -BeFalse
+        $m.Error | Should -Be 'first failure'
+        @($m.Members).Count | Should -Be 0
+    }
+
+    It 'Get-OmniLocalUserAccount maps Name, SID, and Enabled' {
+        Mock -ModuleName OmniSecTestAdminsSeam Get-LocalUser {
+            [pscustomobject]@{ Name = 'Administrator'; SID = (New-TestSid 'S-1-5-21-1000-2000-3000-500'); Enabled = $false; PrincipalSource = 'Local' }
+            [pscustomobject]@{ Name = 'jdoe'; SID = (New-TestSid 'S-1-5-21-1000-2000-3000-1001'); Enabled = $true; PrincipalSource = 'Local' }
+        }
+        $u = & $script:AdminsSeamMod { Get-OmniLocalUserAccount }
+        $u.Available | Should -BeTrue
+        @($u.Users).Count | Should -Be 2
+        $u.Users[0].Sid | Should -Be 'S-1-5-21-1000-2000-3000-500'
+        $u.Users[0].Enabled | Should -BeFalse
+        $u.Users[1].Name | Should -Be 'jdoe'
+        $u.Users[1].Enabled | Should -BeTrue
+    }
 }
 
 Describe 'Local Admins scanner' {

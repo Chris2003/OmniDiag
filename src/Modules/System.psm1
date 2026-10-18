@@ -11,7 +11,7 @@
         edition, and whether that release is still serviced, from the documented
         CurrentVersion registry values and the end-of-servicing table below.
       - Architecture (x64 / ARM64) against the OmniDiag support matrix.
-      - Uptime (last boot) with a long-uptime warning.
+      - Uptime (last boot): Information below 30 days, Warning at 30 days or more.
       - TPM (Win32_Tpm; requires elevation) and Secure Boot (Confirm-SecureBootUEFI;
         requires elevation, not supported on legacy BIOS).
 
@@ -80,7 +80,9 @@ $script:OmniEditionClass = @{
     EnterpriseS = 'Ltsc'; EnterpriseSN = 'Ltsc'; IoTEnterpriseS = 'LtscIoT'
 }
 
-$script:OmniUptimeWarningDays = 14
+# Uptime: Information below 30 days, Warning at 30 days or more (14 flagged too many
+# machines that simply follow a monthly patch-and-restart cycle).
+$script:OmniUptimeWarningDays = 30
 $script:OmniEndOfServicingSoonDays = 90
 
 function Get-OmniModuleManifest {
@@ -425,14 +427,20 @@ function Invoke-OmniModuleScan {
             Set-OmniResultMetric -Result $result -Name 'LastBootUpTime' -Value $bootTime
             $uptime = (Get-Date) - $bootTime
             Set-OmniResultMetric -Result $result -Name 'UptimeDays' -Value ([math]::Round($uptime.TotalDays, 1))
-            if ($uptime.TotalDays -gt $script:OmniUptimeWarningDays) {
+            $days = [math]::Floor($uptime.TotalDays)
+            if ($uptime.TotalDays -ge $script:OmniUptimeWarningDays) {
                 Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'system.system.uptime-long' `
-                    -Title ("System uptime is {0:N0} days" -f [math]::Floor($uptime.TotalDays)) -Severity 'Warning' `
+                    -Title ("System uptime is {0:N0} days" -f $days) -Severity 'Warning' `
                     -Component 'System/Uptime' `
-                    -Detail "The system has not been restarted in over $($script:OmniUptimeWarningDays) days (last boot $($bootTime.ToString('yyyy-MM-dd HH:mm')))." `
+                    -Detail "The system has not been restarted in $($script:OmniUptimeWarningDays) days or more (last boot $($bootTime.ToString('yyyy-MM-dd HH:mm')))." `
                     -LikelyCause 'Long uptime can defer pending updates and accumulate memory pressure.' `
                     -Confidence 60 `
                     -Recommendation 'Restart the device to apply pending updates and clear transient issues.')
+            } else {
+                Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'system.system.uptime' `
+                    -Title ("System uptime is {0:N0} days" -f $days) -Severity 'Information' `
+                    -Component 'System/Uptime' `
+                    -Detail "Last boot $($bootTime.ToString('yyyy-MM-dd HH:mm')). Uptime becomes a Warning at $($script:OmniUptimeWarningDays) days.")
             }
         } catch {
             if ($log) { $log.Debug("Uptime calculation failed: $($_.Exception.Message)", 'System') }

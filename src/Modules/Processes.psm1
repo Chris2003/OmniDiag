@@ -8,8 +8,9 @@
     processes that are not responding or hold an unusually large number of handles.
 
     Handle threshold: a single process holding more than HandleWarnCount handles
-    (default 10,000) raises a Warning. Typical desktop processes hold hundreds to a
-    few thousand handles; a count in the tens of thousands that keeps growing is the
+    (default 20,000) raises a Warning. Typical desktop processes hold hundreds to a
+    few thousand handles, and busy ones (browsers, security agents, Explorer) routinely
+    pass 10,000, so 10,000 was too noisy; a count in the tens of thousands that keeps growing is the
     classic sign of a handle leak, which eventually exhausts kernel memory (paged /
     nonpaged pool) or the per-process handle limit (16,777,216) and makes the process
     or the whole machine misbehave. The Idle (PID 0) and System (PID 4) pseudo-
@@ -17,7 +18,7 @@
     leaking application.
 
     Per-run options (via $Context.Config):
-        HandleWarnCount  int  Per-process handle warning threshold. Default 10000.
+        HandleWarnCount  int  Per-process handle warning threshold. Default 20000.
 
     Contract:
         Get-OmniModuleManifest -> module metadata
@@ -74,7 +75,7 @@ function Add-OmniProcessHandleFinding {
         [Parameter(Mandatory)] [pscustomobject] $Context
     )
 
-    $threshold = 10000
+    $threshold = 20000
     if ($Context.Config -and $Context.Config.ContainsKey('HandleWarnCount')) { $threshold = [int]$Context.Config['HandleWarnCount'] }
 
     $totalHandles = [long]0
@@ -173,7 +174,7 @@ function Invoke-OmniModuleScan {
             } | Select-Object -ExpandProperty ProcessName -Unique)
             Set-OmniResultMetric -Result $result -Name 'NotRespondingCount' -Value $notResponding.Count
             if ($notResponding.Count -gt 0) {
-                Add-OmniFinding -Result $result -Finding (New-OmniFinding `
+                Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'performance.processes.not-responding' `
                     -Title ("{0} process(es) not responding" -f $notResponding.Count) -Severity 'Warning' `
                     -Component 'Performance/Processes' `
                     -Detail ("Not responding: {0}" -f ($notResponding -join ', ')) `

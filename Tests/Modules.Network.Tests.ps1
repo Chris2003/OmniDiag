@@ -49,6 +49,12 @@ BeforeAll {
         return , @($Result.Findings | Where-Object Id -eq $Id)
     }
 
+    function Get-FindingDiag {
+        # -Because text listing what a scan emitted, so a CI failure shows the findings.
+        param($Result)
+        return (@($Result.Findings | ForEach-Object { "$($_.Severity): $($_.Id)" }) -join '; ')
+    }
+
     function New-WinHttpBlob {
         # Builds a WinHttpSettings value: header, counter, flags, proxy (len+bytes), bypass (len+bytes).
         param([uint32] $Header = 0x18, [uint32] $Counter = 0, [uint32] $Flags = 1, [string] $Proxy = '', [string] $Bypass = '')
@@ -67,10 +73,27 @@ BeforeAll {
     $script:ProxyMod = Import-PluginCopy -File 'ProxyConfiguration.psm1' -AsName 'OmniNetTestProxy'
     $script:WifiMod = Import-PluginCopy -File 'WifiNetworks.psm1' -AsName 'OmniNetTestWifi'
     $script:VpnMod = Import-PluginCopy -File 'Vpn.psm1' -AsName 'OmniNetTestVpn'
+
+    # Separate copies for the seam tests, which mock the real cmdlets one level below the
+    # private helpers. They ALWAYS get simple stubs in their module scope (on Windows too):
+    # the function shadows the real CDXML cmdlet, so Pester builds the mock from the stub.
+    # The main copies keep the real commands (one test resolves the current process).
+    $script:RoutesSeamMod = Import-PluginCopy -File 'Routes.psm1' -AsName 'OmniNetTestRoutesSeam'
+    $script:PortsSeamMod = Import-PluginCopy -File 'ListeningPorts.psm1' -AsName 'OmniNetTestPortsSeam'
+    & $script:RoutesSeamMod {
+        function script:Get-NetRoute { [CmdletBinding()] param([string[]] $AddressFamily, [string] $PolicyStore, [Parameter(ValueFromRemainingArguments)] $Rest) }
+    }
+    & $script:PortsSeamMod {
+        function script:Get-NetTCPConnection { [CmdletBinding()] param([string] $State, [Parameter(ValueFromRemainingArguments)] $Rest) }
+        function script:Get-NetUDPEndpoint { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments)] $Rest) }
+        function script:Get-Process { [CmdletBinding()] param([int[]] $Id, [Parameter(ValueFromRemainingArguments)] $Rest) }
+        function script:Get-CimInstance { [CmdletBinding()] param([string] $ClassName, [string] $Filter, [string[]] $Property, [Parameter(ValueFromRemainingArguments)] $Rest) }
+        function script:Get-ItemProperty { [CmdletBinding()] param([string[]] $LiteralPath, [string[]] $Name, [Parameter(ValueFromRemainingArguments)] $Rest) }
+    }
 }
 
 AfterAll {
-    foreach ($n in @('OmniNetTestRoutes', 'OmniNetTestPorts', 'OmniNetTestProxy', 'OmniNetTestWifi', 'OmniNetTestVpn')) {
+    foreach ($n in @('OmniNetTestRoutes', 'OmniNetTestPorts', 'OmniNetTestProxy', 'OmniNetTestWifi', 'OmniNetTestVpn', 'OmniNetTestRoutesSeam', 'OmniNetTestPortsSeam')) {
         Remove-Module -Name $n -Force -ErrorAction SilentlyContinue
     }
 }
@@ -86,14 +109,14 @@ Describe 'Routes scanner' {
     It 'reports an unavailable routing table as Information' {
         Mock -ModuleName OmniNetTestRoutes Get-OmniRouteTable { [pscustomobject]@{ Available = $false; Routes = @() } }
         $r = Invoke-PluginScan -Module $script:RoutesMod -Context (New-TestContext)
-        (Get-FindingById $r 'network-routes-unavailable').Count | Should -Be 1
+        (Get-FindingById $r 'network-routes-unavailable').Count | Should -Be 1 -Because (Get-FindingDiag $r)
         $r.Status | Should -Be 'Healthy'
     }
 
     It 'treats a failing Get-NetRoute as unavailable' {
         Mock -ModuleName OmniNetTestRoutes Get-OmniRouteTable { throw 'CIM failure' }
         $r = Invoke-PluginScan -Module $script:RoutesMod -Context (New-TestContext)
-        (Get-FindingById $r 'network-routes-unavailable').Count | Should -Be 1
+        (Get-FindingById $r 'network-routes-unavailable').Count | Should -Be 1 -Because (Get-FindingDiag $r)
     }
 
     It 'warns when there is no default route' {
@@ -106,7 +129,7 @@ Describe 'Routes scanner' {
         Mock -ModuleName OmniNetTestRoutes Get-OmniRouteTable -ParameterFilter { $PolicyStore -eq 'PersistentStore' } -MockWith { [pscustomobject]@{ Available = $true; Routes = @() } }
         $r = Invoke-PluginScan -Module $script:RoutesMod -Context (New-TestContext)
         $w = Get-FindingById $r 'network-routes-no-default'
-        $w.Count | Should -Be 1
+        $w.Count | Should -Be 1 -Because (Get-FindingDiag $r)
         $w[0].Severity | Should -Be 'Warning'
         $r.Status | Should -Be 'Warning'
         $r.Metrics['RouteCount'] | Should -Be 2
@@ -129,9 +152,9 @@ Describe 'Routes scanner' {
                 ) }
         }
         $r = Invoke-PluginScan -Module $script:RoutesMod -Context (New-TestContext)
-        (Get-FindingById $r 'network-routes-healthy').Count | Should -Be 1
+        (Get-FindingById $r 'network-routes-healthy').Count | Should -Be 1 -Because (Get-FindingDiag $r)
         $p = Get-FindingById $r 'network-routes-persistent'
-        $p.Count | Should -Be 1
+        $p.Count | Should -Be 1 -Because (Get-FindingDiag $r)
         $p[0].Severity | Should -Be 'Information'
         $p[0].Detail | Should -Match '10\.0\.0\.0/8'
         $r.Metrics['PersistentRouteCount'] | Should -Be 1
@@ -152,7 +175,7 @@ Describe 'Routes scanner' {
         Mock -ModuleName OmniNetTestRoutes Get-OmniRouteTable -ParameterFilter { $PolicyStore -eq 'PersistentStore' } -MockWith { [pscustomobject]@{ Available = $true; Routes = @() } }
         $r = Invoke-PluginScan -Module $script:RoutesMod -Context (New-TestContext)
         $a = Get-FindingById $r 'network-routes-ambiguous-default-ipv4'
-        $a.Count | Should -Be 1
+        $a.Count | Should -Be 1 -Because (Get-FindingDiag $r)
         $a[0].Severity | Should -Be 'Information'
         $a[0].Detail | Should -Match 'VPN'
         (Get-FindingById $r 'network-routes-ambiguous-default-ipv6').Count | Should -Be 0
@@ -170,7 +193,7 @@ Describe 'Routes scanner' {
         Mock -ModuleName OmniNetTestRoutes Get-OmniRouteTable -ParameterFilter { $PolicyStore -eq 'PersistentStore' } -MockWith { [pscustomobject]@{ Available = $true; Routes = @() } }
         $r = Invoke-PluginScan -Module $script:RoutesMod -Context (New-TestContext)
         (Get-FindingById $r 'network-routes-ambiguous-default-ipv4').Count | Should -Be 0
-        (Get-FindingById $r 'network-routes-healthy').Count | Should -Be 1
+        (Get-FindingById $r 'network-routes-healthy').Count | Should -Be 1 -Because (Get-FindingDiag $r)
     }
 
     It 'stops after the first read when the scan is cancelled' {
@@ -189,6 +212,11 @@ Describe 'Routes scanner' {
 }
 
 Describe 'Listening Ports scanner' {
+    BeforeEach {
+        # Client SKU unless a test says otherwise (CI runners are Windows Server).
+        Mock -ModuleName OmniNetTestPorts Test-OmniListenerServerSku { $false }
+    }
+
     It 'declares the contract manifest' {
         $m = & $script:PortsMod { Get-OmniModuleManifest }
         $m.Id | Should -Be 'network.listening-ports'
@@ -198,7 +226,7 @@ Describe 'Listening Ports scanner' {
     It 'reports unavailable listener tables as Information' {
         Mock -ModuleName OmniNetTestPorts Get-OmniListenerTable { [pscustomobject]@{ Available = $false; Tcp = @(); Udp = @() } }
         $r = Invoke-PluginScan -Module $script:PortsMod -Context (New-TestContext)
-        (Get-FindingById $r 'network-listening-ports-unavailable').Count | Should -Be 1
+        (Get-FindingById $r 'network-listening-ports-unavailable').Count | Should -Be 1 -Because (Get-FindingDiag $r)
     }
 
     It 'warns about RDP on all interfaces and names the hosting service' {
@@ -220,7 +248,7 @@ Describe 'Listening Ports scanner' {
         }
         $r = Invoke-PluginScan -Module $script:PortsMod -Context (New-TestContext)
         $w = Get-FindingById $r 'network-listening-ports-exposed-3389'
-        $w.Count | Should -Be 1
+        $w.Count | Should -Be 1 -Because (Get-FindingDiag $r)
         $w[0].Severity | Should -Be 'Warning'
         $w[0].Detail | Should -Match 'TermService'
         $w[0].Recommendation | Should -Match 'firewall'
@@ -251,6 +279,24 @@ Describe 'Listening Ports scanner' {
         (Get-FindingById $r 'network-listening-ports-third-party-all-interfaces').Count | Should -Be 0
     }
 
+    It 'reports WinRM as Information on a Server SKU and keeps RDP a Warning' {
+        Mock -ModuleName OmniNetTestPorts Test-OmniListenerServerSku { $true }
+        Mock -ModuleName OmniNetTestPorts Get-OmniListenerTable {
+            [pscustomobject]@{ Available = $true; Udp = @()
+                Tcp = @(3389, 5985, 5986 | ForEach-Object { [pscustomobject]@{ LocalAddress = '0.0.0.0'; LocalPort = $_; OwningProcess = 4 } })
+            }
+        }
+        Mock -ModuleName OmniNetTestPorts Get-OmniListenerOwner { @{ 4 = [pscustomobject]@{ Name = 'System'; Path = ''; Company = ''; Services = @() } } }
+        $r = Invoke-PluginScan -Module $script:PortsMod -Context (New-TestContext)
+        $diag = ($r.Findings | ForEach-Object { "$($_.Severity): $($_.Id)" }) -join '; '
+        (Get-FindingById $r 'network-listening-ports-exposed-5985').Count | Should -Be 1 -Because $diag
+        (Get-FindingById $r 'network-listening-ports-exposed-5985')[0].Severity | Should -Be 'Information'
+        (Get-FindingById $r 'network-listening-ports-exposed-5985')[0].Detail | Should -Match 'Windows Server'
+        (Get-FindingById $r 'network-listening-ports-exposed-5986')[0].Severity | Should -Be 'Information'
+        (Get-FindingById $r 'network-listening-ports-exposed-3389')[0].Severity | Should -Be 'Warning'
+        $r.Metrics['ServerSku'] | Should -BeTrue
+    }
+
     It 'lists non-Microsoft listeners on all interfaces and ignores loopback ones' {
         Mock -ModuleName OmniNetTestPorts Get-OmniListenerTable {
             [pscustomobject]@{ Available = $true
@@ -269,13 +315,13 @@ Describe 'Listening Ports scanner' {
         }
         $r = Invoke-PluginScan -Module $script:PortsMod -Context (New-TestContext)
         $i = Get-FindingById $r 'network-listening-ports-third-party-all-interfaces'
-        $i.Count | Should -Be 1
+        $i.Count | Should -Be 1 -Because (Get-FindingDiag $r)
         $i[0].Severity | Should -Be 'Information'
         $i[0].Detail | Should -Match 'TCP 3000: node'
         $i[0].Detail | Should -Match 'UDP 5353: node'
         $i[0].Detail | Should -Not -Match 'devserver'
         @($i[0].Data).Count | Should -Be 2
-        (Get-FindingById $r 'network-listening-ports-reviewed').Count | Should -Be 1
+        (Get-FindingById $r 'network-listening-ports-reviewed').Count | Should -Be 1 -Because (Get-FindingDiag $r)
         $r.Status | Should -Be 'Healthy'
     }
 
@@ -288,7 +334,7 @@ Describe 'Listening Ports scanner' {
         $ctx.IsAdmin = $false
         $r = Invoke-PluginScan -Module $script:PortsMod -Context $ctx
         $e = Get-FindingById $r 'network-listening-ports-paths-require-elevation'
-        $e.Count | Should -Be 1
+        $e.Count | Should -Be 1 -Because (Get-FindingDiag $r)
         $e[0].Recommendation | Should -Match 'requires elevation'
         $ctx.IsAdmin = $true
         $r2 = Invoke-PluginScan -Module $script:PortsMod -Context $ctx
@@ -320,6 +366,85 @@ Describe 'Listening Ports scanner' {
         $r = Invoke-PluginScan -Module $script:PortsMod -Context (New-TestContext -Cancelled)
         $r.Findings.Count | Should -Be 0
         Should -Invoke -ModuleName OmniNetTestPorts Get-OmniListenerOwner -Times 0 -Exactly
+    }
+}
+
+Describe 'Network seams (real cmdlets mocked, helpers real)' {
+    # The helpers under test are NOT mocked in this Describe; only the cmdlets below them.
+
+    It 'Get-OmniRouteTable reads both address families of the requested store' {
+        Mock -ModuleName OmniNetTestRoutesSeam Get-NetRoute {
+            [pscustomobject]@{ DestinationPrefix = '0.0.0.0/0'; NextHop = '192.168.1.1'; ifIndex = [uint32]5; InterfaceAlias = 'Ethernet'; RouteMetric = [uint16]0; InterfaceMetric = [uint32]25 }
+            [pscustomobject]@{ DestinationPrefix = '::/0'; NextHop = 'fe80::1'; ifIndex = [uint32]5; InterfaceAlias = 'Ethernet'; RouteMetric = [uint16]256; InterfaceMetric = [uint32]25 }
+        }
+        $t = & $script:RoutesSeamMod { Get-OmniRouteTable -PolicyStore 'PersistentStore' }
+        $t.Available | Should -BeTrue
+        @($t.Routes).Count | Should -Be 2
+        Should -Invoke -ModuleName OmniNetTestRoutesSeam Get-NetRoute -Times 1 -Exactly -ParameterFilter {
+            $PolicyStore -eq 'PersistentStore' -and @($AddressFamily) -contains 'IPv4' -and @($AddressFamily) -contains 'IPv6'
+        }
+        $rec = & $script:RoutesSeamMod { param($r) ConvertTo-OmniRouteRecord -Route $r } $t.Routes[1]
+        $rec.AddressFamily | Should -Be 'IPv6'
+        $rec.EffectiveMetric | Should -Be 281
+    }
+
+    It 'Get-OmniRouteTable lets a Get-NetRoute failure reach the caller' {
+        Mock -ModuleName OmniNetTestRoutesSeam Get-NetRoute { throw 'Invalid class' }
+        { & $script:RoutesSeamMod { Get-OmniRouteTable -PolicyStore 'ActiveStore' } } | Should -Throw
+    }
+
+    It 'Get-OmniListenerOwner merges Get-Process, Win32_Process, and Win32_Service by PID' {
+        Mock -ModuleName OmniNetTestPortsSeam Get-Process -ParameterFilter { @($Id) -contains 1200 } { [pscustomobject]@{ Id = 1200; ProcessName = 'svchost'; Path = $null } }
+        Mock -ModuleName OmniNetTestPortsSeam Get-Process -ParameterFilter { @($Id) -contains 1300 } { [pscustomobject]@{ Id = 1300; ProcessName = 'node'; Path = 'C:\Program Files\nodejs\node.exe' } }
+        Mock -ModuleName OmniNetTestPortsSeam Get-Process -ParameterFilter { @($Id) -contains 1400 } { throw 'Cannot find a process with the process identifier 1400.' }
+        Mock -ModuleName OmniNetTestPortsSeam Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Process' } {
+            [pscustomobject]@{ ProcessId = [uint32]1200; Name = 'svchost.exe'; ExecutablePath = 'C:\Windows\System32\svchost.exe' }
+            [pscustomobject]@{ ProcessId = [uint32]1400; Name = 'agent.exe'; ExecutablePath = $null }
+            [pscustomobject]@{ ProcessId = [uint32]9999; Name = 'other.exe'; ExecutablePath = 'C:\other.exe' }
+        }
+        Mock -ModuleName OmniNetTestPortsSeam Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Service' } {
+            [pscustomobject]@{ Name = 'TermService'; ProcessId = [uint32]1200 }
+            [pscustomobject]@{ Name = 'UmRdpService'; ProcessId = [uint32]1200 }
+            [pscustomobject]@{ Name = 'Unrelated'; ProcessId = [uint32]9999 }
+        }
+        $o = & $script:PortsSeamMod { Get-OmniListenerOwner -ProcessId @([uint32]1200, [uint32]1300, [uint32]1400, [uint32]1200) }
+        $o.Count | Should -Be 3
+        $o[1200].Name | Should -Be 'svchost'
+        $o[1200].Path | Should -Be 'C:\Windows\System32\svchost.exe'
+        (@($o[1200].Services) | Sort-Object) -join ',' | Should -Be 'TermService,UmRdpService'
+        $o[1300].Path | Should -Be 'C:\Program Files\nodejs\node.exe'
+        @($o[1300].Services).Count | Should -Be 0
+        $o[1400].Name | Should -Be 'agent'
+        $o[1400].Path | Should -Be ''
+        $o.ContainsKey(9999) | Should -BeFalse
+    }
+
+    It 'the scan maps UInt32 OwningProcess values to their owners' {
+        Mock -ModuleName OmniNetTestPortsSeam Test-OmniListenerServerSku { $false }
+        Mock -ModuleName OmniNetTestPortsSeam Get-NetTCPConnection { [pscustomobject]@{ LocalAddress = '0.0.0.0'; LocalPort = [uint16]3389; OwningProcess = [uint32]1200; State = 'Listen' } }
+        Mock -ModuleName OmniNetTestPortsSeam Get-NetUDPEndpoint { @() }
+        Mock -ModuleName OmniNetTestPortsSeam Get-Process { [pscustomobject]@{ Id = 1200; ProcessName = 'svchost'; Path = 'C:\Windows\System32\svchost.exe' } }
+        Mock -ModuleName OmniNetTestPortsSeam Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_Service' } { [pscustomobject]@{ Name = 'TermService'; ProcessId = [uint32]1200 } }
+        Mock -ModuleName OmniNetTestPortsSeam Get-CimInstance { @() }
+        $r = Invoke-PluginScan -Module $script:PortsSeamMod -Context (New-TestContext)
+        $w = Get-FindingById $r 'network-listening-ports-exposed-3389'
+        $w.Count | Should -Be 1 -Because (Get-FindingDiag $r)
+        $w[0].Detail | Should -Match 'svchost \[TermService\]'
+        Should -Invoke -ModuleName OmniNetTestPortsSeam Get-NetTCPConnection -Times 1 -Exactly -ParameterFilter { $State -eq 'Listen' }
+    }
+
+    It 'Test-OmniListenerServerSku reads ProductType, then InstallationType' {
+        Mock -ModuleName OmniNetTestPortsSeam Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_OperatingSystem' } { [pscustomobject]@{ ProductType = [uint32]3 } }
+        & $script:PortsSeamMod { Test-OmniListenerServerSku } | Should -BeTrue
+        Mock -ModuleName OmniNetTestPortsSeam Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_OperatingSystem' } { [pscustomobject]@{ ProductType = [uint32]2 } }
+        & $script:PortsSeamMod { Test-OmniListenerServerSku } | Should -BeTrue
+        Mock -ModuleName OmniNetTestPortsSeam Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_OperatingSystem' } { [pscustomobject]@{ ProductType = [uint32]1 } }
+        & $script:PortsSeamMod { Test-OmniListenerServerSku } | Should -BeFalse
+        Mock -ModuleName OmniNetTestPortsSeam Get-CimInstance -ParameterFilter { $ClassName -eq 'Win32_OperatingSystem' } { throw 'Access denied' }
+        Mock -ModuleName OmniNetTestPortsSeam Get-ItemProperty { [pscustomobject]@{ InstallationType = 'Server Core' } }
+        & $script:PortsSeamMod { Test-OmniListenerServerSku } | Should -BeTrue
+        Mock -ModuleName OmniNetTestPortsSeam Get-ItemProperty { [pscustomobject]@{ InstallationType = 'Client' } }
+        & $script:PortsSeamMod { Test-OmniListenerServerSku } | Should -BeFalse
     }
 }
 

@@ -61,7 +61,10 @@ for example `TermService`). The full table is in the `Listeners` metric. Checks:
   interface over TCP are each a Warning that asks you to confirm the firewall scope for that
   port. SMB (445) is bound on almost every Windows installation by default, so it is reported
   as Information with the same advice (it should normally not be open on the Public
-  profile). The scanner does not read firewall rules for the port and makes no connection
+  profile). WinRM is on by default on Windows Server, so on a Server SKU
+  (`Win32_OperatingSystem.ProductType` 2 or 3, or the CurrentVersion `InstallationType`
+  `Server`) 5985 / 5986 are Information; they stay a Warning on client SKUs (metric
+  `ServerSku`). The scanner does not read firewall rules for the port and makes no connection
   attempt, so the finding says the port is bound, not that it is reachable.
 
 **Network.** Active adapters (`Status = Up`), adapters with more than 1000 receive + send
@@ -178,7 +181,7 @@ run**, whose recommendation says how to run the probe.
 | Hosts File | Hosts file is clean | Pass | No warning |
 | IP Configuration | APIPA address on *adapter* (DHCP failure) | Warning | 169.254.x.x address |
 | IP Configuration | IP configuration valid | Pass | No warning |
-| Listening Ports | *Service* (TCP *port*) listens on all interfaces | Warning (Information for 445) | TCP 21, 23, 445, 3389, 5985, or 5986 bound to `0.0.0.0` or `::` |
+| Listening Ports | *Service* (TCP *port*) listens on all interfaces | Warning (Information for 445, and for 5985 / 5986 on a Windows Server SKU) | TCP 21, 23, 445, 3389, 5985, or 5986 bound to `0.0.0.0` or `::` |
 | Listening Ports | *n* non-Microsoft listener(s) on all interfaces | Information | A non-Windows program listens on every interface (TCP or UDP) |
 | Listening Ports | Some listener program paths require elevation | Information | Standard user and a non-Windows owner's path is unreadable |
 | Listening Ports | Listening ports not available | Information | `Get-NetTCPConnection` missing or failing |

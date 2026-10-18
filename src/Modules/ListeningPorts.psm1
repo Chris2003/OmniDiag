@@ -9,7 +9,9 @@
     hosted in the process (Win32_Service.ProcessId), which names what runs inside a
     shared svchost.exe. Flags listeners bound to every interface (0.0.0.0 / ::) by
     programs that are not part of Windows, and well-known remote-access or legacy ports
-    (FTP, Telnet, SMB, RDP, WinRM) listening on every interface.
+    (FTP, Telnet, SMB, RDP, WinRM) listening on every interface. WinRM (5985/5986) is
+    Information on Windows Server SKUs (Win32_OperatingSystem.ProductType 2 or 3, or
+    InstallationType 'Server'), where it is on by default, and a Warning on clients.
 
     Read-only and local: it reads the local TCP/IP tables and makes no connection
     attempt. The publisher check uses the file's version information (CompanyName),
@@ -30,14 +32,16 @@ if (-not (Get-Command -Name 'New-OmniFinding' -ErrorAction SilentlyContinue)) {
 
 # TCP ports whose exposure on every interface deserves a firewall-scope review. SMB (445)
 # listens on every interface on almost every Windows device by default, so it is reported as
-# Information to avoid a warning on healthy machines; the others are opt-in services.
+# Information to avoid a warning on healthy machines; the others are opt-in services on
+# client SKUs. WinRM (5985/5986) is enabled by default on Windows Server, so on a Server
+# SKU it is Information (ServerSeverity) and a Warning only on clients.
 $script:OmniRiskyListenPort = @(
-    [pscustomobject]@{ Port = 21;   Service = 'FTP';                            Severity = 'Warning' }
-    [pscustomobject]@{ Port = 23;   Service = 'Telnet';                         Severity = 'Warning' }
-    [pscustomobject]@{ Port = 445;  Service = 'SMB (file and printer sharing)'; Severity = 'Information' }
-    [pscustomobject]@{ Port = 3389; Service = 'Remote Desktop';                 Severity = 'Warning' }
-    [pscustomobject]@{ Port = 5985; Service = 'WinRM (HTTP)';                   Severity = 'Warning' }
-    [pscustomobject]@{ Port = 5986; Service = 'WinRM (HTTPS)';                  Severity = 'Warning' }
+    [pscustomobject]@{ Port = 21;   Service = 'FTP';                            Severity = 'Warning';     ServerSeverity = 'Warning' }
+    [pscustomobject]@{ Port = 23;   Service = 'Telnet';                         Severity = 'Warning';     ServerSeverity = 'Warning' }
+    [pscustomobject]@{ Port = 445;  Service = 'SMB (file and printer sharing)'; Severity = 'Information'; ServerSeverity = 'Information' }
+    [pscustomobject]@{ Port = 3389; Service = 'Remote Desktop';                 Severity = 'Warning';     ServerSeverity = 'Warning' }
+    [pscustomobject]@{ Port = 5985; Service = 'WinRM (HTTP)';                   Severity = 'Warning';     ServerSeverity = 'Information' }
+    [pscustomobject]@{ Port = 5986; Service = 'WinRM (HTTPS)';                  Severity = 'Warning';     ServerSeverity = 'Information' }
 )
 
 # Windows processes that own listeners and whose path a standard user cannot read.
@@ -142,6 +146,28 @@ function Get-OmniListenerOwner {
         }
     }
     return $owners
+}
+
+function Test-OmniListenerServerSku {
+    <#
+    .SYNOPSIS
+        Internal: true on a Windows Server SKU (Win32_OperatingSystem.ProductType 2 = domain
+        controller or 3 = server, or the CurrentVersion InstallationType starts with
+        'Server'). Local, read-only; $false when neither source can be read.
+    #>
+    [OutputType([bool])]
+    param()
+    if (Get-Command -Name 'Get-CimInstance' -ErrorAction SilentlyContinue) {
+        try {
+            $os = Get-CimInstance -ClassName Win32_OperatingSystem -Property ProductType -ErrorAction Stop | Select-Object -First 1
+            if ($null -ne $os -and $null -ne $os.ProductType) { return ([int]$os.ProductType -in @(2, 3)) }
+        } catch { Write-Verbose "Win32_OperatingSystem query failed: $($_.Exception.Message)" }
+    }
+    try {
+        $cv = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'InstallationType' -ErrorAction Stop
+        if ($cv -and $cv.PSObject.Properties['InstallationType']) { return ([string]$cv.InstallationType -like 'Server*') }
+    } catch { Write-Verbose "InstallationType read failed: $($_.Exception.Message)" }
+    return $false
 }
 
 function Get-OmniListenerProperty {
@@ -266,15 +292,20 @@ function Invoke-OmniModuleScan {
     }
 
     # Well-known remote-access / legacy services exposed on every interface.
+    $isServer = $false
+    try { $isServer = [bool](Test-OmniListenerServerSku) } catch { $log.Debug("Server SKU check failed: $($_.Exception.Message)", 'Listening Ports') }
+    Set-OmniResultMetric -Result $result -Name 'ServerSku' -Value $isServer
     foreach ($risky in $script:OmniRiskyListenPort) {
         $port = [int]$risky.Port
         $hits = @($wild | Where-Object { $_.Protocol -eq 'TCP' -and $_.LocalPort -eq $port })
         if ($hits.Count -eq 0) { continue }
         $svcName = $risky.Service
+        $sev = if ($isServer) { $risky.ServerSeverity } else { $risky.Severity }
+        $skuNote = if ($isServer -and $risky.ServerSeverity -ne $risky.Severity) { " $svcName is enabled by default on Windows Server, so this is informational here." } else { '' }
         $owner = @($hits | ForEach-Object { if ($_.Services) { "$($_.ProcessName) [$($_.Services)]" } elseif ($_.ProcessName) { $_.ProcessName } else { "PID $($_.ProcessId)" } } | Select-Object -Unique) -join ', '
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id ("network-listening-ports-exposed-{0}" -f $port) `
-            -Title ("{0} (TCP {1}) listens on all interfaces" -f $svcName, $port) -Severity $risky.Severity -Component 'Network/Ports' `
-            -Detail ("TCP port {0} ({1}) is bound to every interface, owned by {2}. Whether it is reachable depends on the Windows Firewall rules for that port." -f $port, $svcName, $owner) `
+            -Title ("{0} (TCP {1}) listens on all interfaces" -f $svcName, $port) -Severity $sev -Component 'Network/Ports' `
+            -Detail ("TCP port {0} ({1}) is bound to every interface, owned by {2}. Whether it is reachable depends on the Windows Firewall rules for that port.{3}" -f $port, $svcName, $owner, $skuNote) `
             -LikelyCause 'The service is enabled on this device; it accepts connections from any network the firewall allows.' `
             -Confidence 60 `
             -Recommendation ("Confirm the firewall rules for TCP {0} are scoped to trusted networks or addresses (and not the Public profile), or turn the service off if it is not needed." -f $port) `
@@ -292,7 +323,7 @@ function Invoke-OmniModuleScan {
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'network-listening-ports-reviewed' `
             -Title 'No risky listener exposed on all interfaces' -Severity 'Pass' -Component 'Network/Ports' `
-            -Detail ("{0} TCP listener(s) and {1} UDP endpoint(s) reviewed; none of FTP, Telnet, SMB, RDP, or WinRM listens on every interface." -f $tcpCount, $udpCount))
+            -Detail ("{0} TCP listener(s) and {1} UDP endpoint(s) reviewed; no FTP, Telnet, RDP, or (on clients) WinRM listener is exposed on every interface." -f $tcpCount, $udpCount))
     }
 
     return (Complete-OmniResult -Result $result)
