@@ -121,7 +121,7 @@ Describe 'Service Persistence scanner' {
         $uw[0].Detail | Should -Match ([regex]::Escape('C:\Windows\Temp\t.exe'))
 
         $ns = Get-FindingById $r 'service-persistence-nonstandard-location'
-        $ns[0].Severity | Should -Be 'Warning'
+        $ns[0].Severity | Should -Be 'Information'
         $ns[0].Detail | Should -Match ([regex]::Escape('D:\Apps\agent.exe'))
 
         $uq = Get-FindingById $r 'service-persistence-unquoted-path'
@@ -129,6 +129,16 @@ Describe 'Service Persistence scanner' {
         $uq[0].Detail | Should -Match 'unq display'
         $uq[0].Detail | Should -Not -Match 'disabledunq'
         (Get-FindingById $r 'service-persistence-ok').Count | Should -Be 0
+    }
+
+    It 'reports a custom install folder as Information and still passes' {
+        $script:SvcData = @(
+            New-TestService 'svchost' 'Auto' 'C:\Windows\system32\svchost.exe -k netsvcs -p'
+            New-TestService 'custom' 'Auto' '"D:\Apps\agent.exe" -service'
+        )
+        $r = Invoke-PluginScan -Module $script:SpMod -Context (New-TestContext)
+        (Get-FindingById $r 'service-persistence-nonstandard-location')[0].Severity | Should -Be 'Information'
+        (Get-FindingById $r 'service-persistence-ok').Count | Should -Be 1
     }
 
     It 'parses quoted, unquoted, and prefixed PathName values' {
@@ -168,6 +178,7 @@ Describe 'Startup Folders scanner' {
         $script:Links = @{
             'Vendor.lnk' = [pscustomobject]@{ Target = 'C:\Program Files\Vendor\v.exe'; Arguments = '/tray' }
         }
+        Mock -ModuleName OmniStartTestStartupFolders New-OmniStartupShell { [pscustomobject]@{ FakeShell = $true } }
         Mock -ModuleName OmniStartTestStartupFolders Get-OmniStartupFolderList { $script:Folders }
         Mock -ModuleName OmniStartTestStartupFolders Get-OmniStartupFolderItem {
             $scope = if ($Path -like 'C:\Users\*') { 'CurrentUser' } else { 'AllUsers' }
@@ -203,15 +214,51 @@ Describe 'Startup Folders scanner' {
         $script:Links['ok.lnk'] = [pscustomobject]@{ Target = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'; Arguments = '-ExecutionPolicy Bypass -File C:\Scripts\x.ps1' }
         $r = Invoke-PluginScan -Module $script:SfMod -Context (New-TestContext)
         $r.Metrics['StartupFolderEntryCount'] | Should -Be 6
-        $r.Metrics['SuspiciousStartupFolderEntryCount'] | Should -Be 3
+        $r.Metrics['SuspiciousStartupFolderEntryCount'] | Should -Be 2
+        $r.Metrics['UserWritableStartupFolderEntryCount'] | Should -Be 1
+        $i = Get-FindingById $r 'startup-folders-user-writable-target'
+        $i[0].Severity | Should -Be 'Information'
+        $i[0].Detail | Should -Match 'App\.lnk'
         $w = Get-FindingById $r 'startup-folders-suspicious-entry'
         $w[0].Severity | Should -Be 'Warning'
-        $w[0].Detail | Should -Match 'App\.lnk .*user-writable'
+        $w[0].Detail | Should -Not -Match 'App\.lnk'
         $w[0].Detail | Should -Match 'run\.bat .*placed directly'
         $w[0].Detail | Should -Match 'ps\.lnk .*encoded command'
         $w[0].Detail | Should -Not -Match 'ok\.lnk'
         $w[0].Detail | Should -Not -Match 'site\.url'
         (Get-FindingById $r 'startup-folders-ok').Count | Should -Be 0
+    }
+
+    It 'treats a per-user install under LOCALAPPDATA\Programs as Information and still passes' {
+        $userDir = 'C:\Users\bob\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'
+        $script:Items['CurrentUser'] = @([pscustomobject]@{ Name = 'Chat.lnk'; FullName = "$userDir\Chat.lnk"; Extension = '.lnk' })
+        $script:Links['Chat.lnk'] = [pscustomobject]@{ Target = 'C:\Users\bob\AppData\Local\Programs\Chat\chat.exe'; Arguments = '--minimized' }
+        $r = Invoke-PluginScan -Module $script:SfMod -Context (New-TestContext)
+        (Get-FindingById $r 'startup-folders-user-writable-target')[0].Severity | Should -Be 'Information'
+        (Get-FindingById $r 'startup-folders-suspicious-entry').Count | Should -Be 0
+        (Get-FindingById $r 'startup-folders-ok').Count | Should -Be 1
+    }
+
+    It 'warns when a user-writable target also uses a script host' {
+        $userDir = 'C:\Users\bob\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'
+        $script:Items['CurrentUser'] = @([pscustomobject]@{ Name = 'Ws.lnk'; FullName = "$userDir\Ws.lnk"; Extension = '.lnk' })
+        $script:Links['Ws.lnk'] = [pscustomobject]@{ Target = 'C:\Users\bob\AppData\Local\Temp\wscript.exe'; Arguments = 'a.vbs' }
+        $r = Invoke-PluginScan -Module $script:SfMod -Context (New-TestContext)
+        $w = Get-FindingById $r 'startup-folders-suspicious-entry'
+        $w[0].Severity | Should -Be 'Warning'
+        $w[0].Detail | Should -Match 'Ws\.lnk .*user-writable.*Windows Script Host'
+        (Get-FindingById $r 'startup-folders-user-writable-target').Count | Should -Be 0
+    }
+
+    It 'creates one WScript.Shell per scan' {
+        $userDir = 'C:\Users\bob\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'
+        $script:Items['CurrentUser'] = @(
+            [pscustomobject]@{ Name = 'a.lnk'; FullName = "$userDir\a.lnk"; Extension = '.lnk' }
+            [pscustomobject]@{ Name = 'b.lnk'; FullName = "$userDir\b.lnk"; Extension = '.lnk' }
+        )
+        $null = Invoke-PluginScan -Module $script:SfMod -Context (New-TestContext)
+        Should -Invoke -ModuleName OmniStartTestStartupFolders New-OmniStartupShell -Times 1 -Exactly
+        Should -Invoke -ModuleName OmniStartTestStartupFolders Resolve-OmniStartupShortcut -Times 3 -Exactly
     }
 
     It 'reports shortcuts it cannot resolve (no WScript.Shell)' {
@@ -277,11 +324,15 @@ Describe 'Scheduled Tasks scanner' {
         $r = Invoke-PluginScan -Module $script:StMod -Context (New-TestContext)
         $r.Metrics['EnabledTaskCount'] | Should -Be 6
         $r.Metrics['LogonBootTaskCount'] | Should -Be 6
-        $r.Metrics['SuspiciousTaskCount'] | Should -Be 4
+        $r.Metrics['SuspiciousTaskCount'] | Should -Be 3
+        $r.Metrics['UserWritableTaskCount'] | Should -Be 1
+        $i = Get-FindingById $r 'scheduled-tasks-user-writable-action'
+        $i[0].Severity | Should -Be 'Information'
+        $i[0].Detail | Should -Match '\\AppData \[Logon\]'
         $w = Get-FindingById $r 'scheduled-tasks-suspicious-action'
         $w[0].Severity | Should -Be 'Warning'
         $w[0].Detail | Should -Match '\\Enc \[Boot\].*PowerShell encoded command'
-        $w[0].Detail | Should -Match '\\AppData \[Logon\].*user-writable'
+        $w[0].Detail | Should -Not -Match '\\AppData'
         $w[0].Detail | Should -Match '\\Js \[Logon\].*rundll32'
         $w[0].Detail | Should -Match '\\Vbs \[Logon\].*Windows Script Host'
         $w[0].Detail | Should -Not -Match 'PsFile'
@@ -289,12 +340,46 @@ Describe 'Scheduled Tasks scanner' {
         $w[0].Detail | Should -Not -Match 'Updater'
     }
 
-    It 'flags third-party tasks that run as SYSTEM at logon' {
+    It 'lists third-party tasks that run as SYSTEM at logon as Information' {
         $script:Tasks = @(New-TestTask -Path '\Vendor\' -Name 'Agent' -Trigger 'MSFT_TaskLogonTrigger' -Execute 'C:\Program Files\V\s.exe' -UserId 'SYSTEM')
         $r = Invoke-PluginScan -Module $script:StMod -Context (New-TestContext)
         $f = Get-FindingById $r 'scheduled-tasks-system-at-logon'
-        $f[0].Severity | Should -Be 'Warning'
+        $f[0].Severity | Should -Be 'Information'
         $f[0].Detail | Should -Match ([regex]::Escape('\Vendor\Agent'))
+        (Get-FindingById $r 'scheduled-tasks-ok').Count | Should -Be 1
+    }
+
+    It 'warns on a SYSTEM logon task whose action is in a user-writable location' {
+        $script:Tasks = @(
+            New-TestTask -Path '\' -Name 'Sys1' -Trigger 'MSFT_TaskLogonTrigger' -Execute 'C:\Users\Public\x.exe' -UserId 'NT AUTHORITY\SYSTEM'
+            New-TestTask -Path '\' -Name 'Sys2' -Trigger 'MSFT_TaskLogonTrigger' -Execute 'C:\Program Files\V\s.exe' -UserId 'S-1-5-18'
+        )
+        $r = Invoke-PluginScan -Module $script:StMod -Context (New-TestContext)
+        $r.Metrics['SystemAtLogonTaskCount'] | Should -Be 2
+        $f = Get-FindingById $r 'scheduled-tasks-system-at-logon'
+        $f[0].Severity | Should -Be 'Warning'
+        $f[0].Detail | Should -Match '\\Sys1 \(action in a user-writable location'
+        $f[0].Detail | Should -Match '\\Sys2'
+    }
+
+    It 'matches the SYSTEM principal exactly, not as a substring' {
+        $script:Tasks = @(New-TestTask -Path '\' -Name 'Svc' -Trigger 'MSFT_TaskLogonTrigger' -Execute 'C:\Program Files\V\s.exe' -UserId 'CONTOSO\systemadmin')
+        $r = Invoke-PluginScan -Module $script:StMod -Context (New-TestContext)
+        (Get-FindingById $r 'scheduled-tasks-system-at-logon').Count | Should -Be 0
+    }
+
+    It 'keeps known vendor updaters in the logon/boot listing only' {
+        $script:Tasks = @(
+            New-TestTask -Path '\' -Name 'MicrosoftEdgeUpdateTaskMachineCore{A1B2}' -Trigger 'MSFT_TaskLogonTrigger' -Execute 'C:\Program Files (x86)\Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe' -Arguments '/c' -UserId 'SYSTEM'
+            New-TestTask -Path '\' -Name 'GoogleUpdateTaskMachineCore' -Trigger 'MSFT_TaskLogonTrigger' -Execute 'C:\Program Files (x86)\Google\Update\GoogleUpdate.exe' -Arguments '/c' -UserId 'SYSTEM'
+            New-TestTask -Path '\' -Name 'OneDrive Standalone Update Task-S-1-5-21-1' -Trigger 'MSFT_TaskLogonTrigger' -Execute 'C:\Users\bob\AppData\Local\Microsoft\OneDrive\OneDriveStandaloneUpdater.exe'
+        )
+        $r = Invoke-PluginScan -Module $script:StMod -Context (New-TestContext)
+        $r.Metrics['LogonBootTaskCount'] | Should -Be 3
+        (Get-FindingById $r 'scheduled-tasks-logon-boot')[0].Severity | Should -Be 'Information'
+        (Get-FindingById $r 'scheduled-tasks-system-at-logon').Count | Should -Be 0
+        (Get-FindingById $r 'scheduled-tasks-user-writable-action').Count | Should -Be 0
+        (Get-FindingById $r 'scheduled-tasks-ok').Count | Should -Be 1
     }
 
     It 'is skipped with an Information finding when Get-ScheduledTask is unavailable' {
@@ -302,5 +387,50 @@ Describe 'Scheduled Tasks scanner' {
         $r = Invoke-PluginScan -Module $script:StMod -Context (New-TestContext)
         $r.Status | Should -Be 'Skipped'
         (Get-FindingById $r 'scheduled-tasks-unavailable')[0].Severity | Should -Be 'Information'
+    }
+}
+
+Describe 'Startup Folders shortcut seam (New-Object mocked, helpers real)' {
+    # The helpers under test are NOT mocked here; only New-Object -ComObject is.
+    BeforeEach {
+        $script:Created = 0
+        $script:ShortcutError = $false
+        Mock -ModuleName OmniStartTestStartupFolders New-Object -ParameterFilter { $ComObject -eq 'WScript.Shell' } {
+            $script:Created++
+            $shell = [pscustomobject]@{ Kind = 'FakeWScriptShell' }
+            $shell | Add-Member -MemberType ScriptMethod -Name CreateShortcut -Value {
+                param($p)
+                if ($script:ShortcutError) { throw 'The shortcut is damaged.' }
+                [pscustomobject]@{ TargetPath = 'C:\Program Files\Vendor\v.exe'; Arguments = "/tray $p" }
+            }
+            $shell
+        }
+    }
+
+    It 'creates the shell through New-Object and maps TargetPath/Arguments' {
+        $r = & $script:SfMod {
+            $s = New-OmniStartupShell
+            Resolve-OmniStartupShortcut -Path 'C:\x\Vendor.lnk' -Shell $s
+        }
+        $script:Created | Should -Be 1
+        $r.Target | Should -Be 'C:\Program Files\Vendor\v.exe'
+        $r.Arguments | Should -Be '/tray C:\x\Vendor.lnk'
+    }
+
+    It 'returns $null when the shortcut cannot be read' {
+        $script:ShortcutError = $true
+        $r = & $script:SfMod { Resolve-OmniStartupShortcut -Path 'C:\x\bad.lnk' -Shell (New-OmniStartupShell) }
+        $r | Should -BeNullOrEmpty
+    }
+
+    It 'returns $null when WScript.Shell cannot be created' {
+        Mock -ModuleName OmniStartTestStartupFolders New-Object -ParameterFilter { $ComObject -eq 'WScript.Shell' } { throw 'Class not registered' }
+        $r = & $script:SfMod { $s = New-OmniStartupShell; [pscustomobject]@{ Shell = $s; Lnk = (Resolve-OmniStartupShortcut -Path 'C:\x\a.lnk' -Shell $s) } }
+        $r.Shell | Should -BeNullOrEmpty
+        $r.Lnk | Should -BeNullOrEmpty
+    }
+
+    It 'release ignores objects that are not COM objects' {
+        { & $script:SfMod { Remove-OmniStartupComObject -InputObject ([pscustomobject]@{ A = 1 }); Remove-OmniStartupComObject -InputObject $null } } | Should -Not -Throw
     }
 }

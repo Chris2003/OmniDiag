@@ -8,7 +8,8 @@
         (AppData, Temp, Users\Public, Downloads/Desktop/Documents, directly in ProgramData)
         -> Warning;
       - automatic-start services whose binary is outside %SystemRoot%, %ProgramFiles%,
-        and %ProgramFiles(x86)% -> Warning;
+        and %ProgramFiles(x86)% -> Information (vendors commonly install to custom
+        folders; only user-writable locations and unquoted paths are Warnings);
       - services (not disabled) with an unquoted image path that contains a space
         (classic unquoted-service-path hijack) -> Warning;
       - an Information summary with the counts.
@@ -241,7 +242,7 @@ function Invoke-OmniModuleScan {
 
     if ($nonStandard.Count -gt 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'service-persistence-nonstandard-location' `
-            -Title ("$($nonStandard.Count) auto-start service(s) run from outside Windows and Program Files") -Severity 'Warning' `
+            -Title ("$($nonStandard.Count) auto-start service(s) run from outside Windows and Program Files") -Severity 'Information' `
             -Component 'Startup/Services' `
             -Detail ('Automatic services whose binary is outside %SystemRoot%, %ProgramFiles%, and %ProgramFiles(x86)% (first 20): ' + (@($nonStandard | Select-Object -First 20 | ForEach-Object { & $fmt $_ }) -join '; ')) `
             -LikelyCause 'Software installed to a custom folder or ProgramData; less commonly, a service planted for persistence. Such folders may have weaker permissions.' `
@@ -263,9 +264,14 @@ function Invoke-OmniModuleScan {
 
     # Always record at least one positive finding when nothing is wrong.
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
+        $okDetail = if ($nonStandard.Count -gt 0) {
+            'No automatic-start service binary is in a user-writable location, and no service has an unquoted path with spaces (services in custom folders are listed separately).'
+        } else {
+            'Every automatic-start service binary is under Windows or Program Files, and no service has an unquoted path with spaces.'
+        }
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'service-persistence-ok' `
             -Title 'Auto-start services run from standard locations' -Severity 'Pass' -Component 'Startup/Services' `
-            -Detail 'Every automatic-start service binary is under Windows or Program Files, and no service has an unquoted path with spaces.')
+            -Detail $okDetail)
     }
 
     return (Complete-OmniResult -Result $result)

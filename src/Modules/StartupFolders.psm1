@@ -7,10 +7,12 @@
     ([Environment]::GetFolderPath('Startup' / 'CommonStartup')) and reports each entry.
     Shortcut (.lnk) targets are read through the WScript.Shell COM object when it is
     available (the shortcut is loaded, never saved); Internet shortcuts (.url) are read
-    as text. Entries are flagged (Warning) when the target is in a user-writable
-    location (AppData, Temp, Users\Public, Downloads/Desktop/Documents, directly in
-    ProgramData), when a script host is used in a way common to malware, or when an
-    executable or script file is placed directly in a Startup folder.
+    as text. One WScript.Shell object is created per scan and every COM object is
+    released. Entries are flagged (Warning) when a script host is used in a way common
+    to malware, when an Internet shortcut opens a file, or when an executable or script
+    file is placed directly in a Startup folder. A target in a user-writable location
+    (AppData, Temp, Users\Public, Downloads/Desktop/Documents, directly in ProgramData)
+    on its own is Information: per-user installs under %LOCALAPPDATA%\Programs are normal.
 
     Read-only and local-only.
 
@@ -77,26 +79,52 @@ function Get-OmniStartupFolderItem {
         ForEach-Object { [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; Extension = $_.Extension } })
 }
 
+function New-OmniStartupShell {
+    <#
+    .SYNOPSIS
+        Creates the WScript.Shell COM object used to read shortcuts (private; $null when unavailable).
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Creates an in-process COM object only; nothing on the system changes.')]
+    param()
+    try {
+        return (New-Object -ComObject 'WScript.Shell' -ErrorAction Stop)
+    } catch {
+        return $null
+    }
+}
+
+function Remove-OmniStartupComObject {
+    <#
+    .SYNOPSIS
+        Releases a COM object, ignoring objects that are not COM objects (private).
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Releases an in-process COM reference only.')]
+    param([object] $InputObject)
+    if ($null -eq $InputObject) { return }
+    try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($InputObject) } catch { $null = $_ }
+}
+
 function Resolve-OmniStartupShortcut {
     <#
     .SYNOPSIS
-        Reads a .lnk target and arguments via WScript.Shell (private; mocked in tests).
+        Reads a .lnk target and arguments via a WScript.Shell object (private; mocked in tests).
 
     .DESCRIPTION
         CreateShortcut on an existing file loads it; Save is never called, so the file is
-        not changed. Returns $null when the COM object is unavailable.
+        not changed. The shortcut object is released before returning. Returns $null when
+        the shell is unavailable or the shortcut cannot be read.
     #>
     [OutputType([pscustomobject])]
-    param([Parameter(Mandatory)] [string] $Path)
-    $shell = $null
+    param([Parameter(Mandatory)] [string] $Path, [object] $Shell)
+    if ($null -eq $Shell) { return $null }
+    $lnk = $null
     try {
-        $shell = New-Object -ComObject 'WScript.Shell' -ErrorAction Stop
-        $lnk = $shell.CreateShortcut($Path)
+        $lnk = $Shell.CreateShortcut($Path)
         return [pscustomobject]@{ Target = [string]$lnk.TargetPath; Arguments = [string]$lnk.Arguments }
     } catch {
         return $null
     } finally {
-        if ($null -ne $shell) { try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) } catch { $null = $_ } }
+        Remove-OmniStartupComObject -InputObject $lnk
     }
 }
 
@@ -187,47 +215,60 @@ function Invoke-OmniModuleScan {
 
     $entries = [System.Collections.Generic.List[object]]::new()
     $unresolved = 0
-    foreach ($folder in $folders) {
-        if ($Context.CancellationToken.IsCancellationRequested) { break }
-        $items = @()
-        try {
-            $items = @(Get-OmniStartupFolderItem -Path $folder.Path)
-        } catch {
-            $log.Debug("Failed to list Startup folder '$($folder.Path)': $($_.Exception.Message)", 'Startup Folders')
-            continue
-        }
-        foreach ($item in $items) {
+    $locationReason = 'target in a user-writable location'
+    # One WScript.Shell per scan, created on the first shortcut and released at the end.
+    $shell = $null
+    $shellCreated = $false
+    try {
+        foreach ($folder in $folders) {
             if ($Context.CancellationToken.IsCancellationRequested) { break }
-            $ext = ([string]$item.Extension).ToLowerInvariant()
-            $type = 'File'; $target = [string]$item.FullName; $argText = ''
-            $reasons = [System.Collections.Generic.List[string]]::new()
-            if ($ext -eq '.lnk') {
-                $type = 'Shortcut'
-                $lnk = Resolve-OmniStartupShortcut -Path $item.FullName
-                if ($null -eq $lnk -or -not $lnk.Target) { $target = '(target not resolved)'; $unresolved++ }
-                else {
-                    $target = [Environment]::ExpandEnvironmentVariables([string]$lnk.Target)
-                    $argText = [string]$lnk.Arguments
-                    if (Test-OmniStartupUserWritablePath -Path $target) { $reasons.Add('target in a user-writable location') }
-                    foreach ($r in @(Get-OmniStartupScriptHostRisk -Target $target -Arguments $argText)) { $reasons.Add($r) }
-                }
-            } elseif ($ext -eq '.url') {
-                $type = 'InternetShortcut'
-                try { $target = Get-OmniStartupUrlTarget -Path $item.FullName } catch { $target = '(URL not readable)' }
-                if ($target -match '^(?i)file:') { $reasons.Add('Internet shortcut opens a local or network file') }
-            } elseif ($ext -in $script:RunnableExtension) {
-                $reasons.Add('executable or script placed directly in the Startup folder')
+            $items = @()
+            try {
+                $items = @(Get-OmniStartupFolderItem -Path $folder.Path)
+            } catch {
+                $log.Debug("Failed to list Startup folder '$($folder.Path)': $($_.Exception.Message)", 'Startup Folders')
+                continue
             }
-            $entries.Add([pscustomobject]@{
-                Scope = $folder.Scope; Name = [string]$item.Name; Type = $type
-                Target = $target; Arguments = $argText; Reasons = [string[]]@($reasons)
-            })
+            foreach ($item in $items) {
+                if ($Context.CancellationToken.IsCancellationRequested) { break }
+                $ext = ([string]$item.Extension).ToLowerInvariant()
+                $type = 'File'; $target = [string]$item.FullName; $argText = ''
+                $reasons = [System.Collections.Generic.List[string]]::new()
+                if ($ext -eq '.lnk') {
+                    $type = 'Shortcut'
+                    if (-not $shellCreated) { $shell = New-OmniStartupShell; $shellCreated = $true }
+                    $lnk = Resolve-OmniStartupShortcut -Path $item.FullName -Shell $shell
+                    if ($null -eq $lnk -or -not $lnk.Target) { $target = '(target not resolved)'; $unresolved++ }
+                    else {
+                        $target = [Environment]::ExpandEnvironmentVariables([string]$lnk.Target)
+                        $argText = [string]$lnk.Arguments
+                        if (Test-OmniStartupUserWritablePath -Path $target) { $reasons.Add($locationReason) }
+                        foreach ($r in @(Get-OmniStartupScriptHostRisk -Target $target -Arguments $argText)) { $reasons.Add($r) }
+                    }
+                } elseif ($ext -eq '.url') {
+                    $type = 'InternetShortcut'
+                    try { $target = Get-OmniStartupUrlTarget -Path $item.FullName } catch { $target = '(URL not readable)' }
+                    if ($target -match '^(?i)file:') { $reasons.Add('Internet shortcut opens a local or network file') }
+                } elseif ($ext -in $script:RunnableExtension) {
+                    $reasons.Add('executable or script placed directly in the Startup folder')
+                }
+                $entries.Add([pscustomobject]@{
+                    Scope = $folder.Scope; Name = [string]$item.Name; Type = $type
+                    Target = $target; Arguments = $argText; Reasons = [string[]]@($reasons)
+                })
+            }
         }
+    } finally {
+        Remove-OmniStartupComObject -InputObject $shell
     }
 
-    $flagged = @($entries | Where-Object { @($_.Reasons).Count -gt 0 })
+    # A user-writable target on its own is Information (per-user installs under
+    # %LOCALAPPDATA%\Programs are normal); any other reason makes the entry a Warning.
+    $flagged = @($entries | Where-Object { @($_.Reasons | Where-Object { $_ -ne $locationReason }).Count -gt 0 })
+    $userWritableOnly = @($entries | Where-Object { @($_.Reasons).Count -gt 0 -and @($_.Reasons | Where-Object { $_ -ne $locationReason }).Count -eq 0 })
     Set-OmniResultMetric -Result $result -Name 'StartupFolderEntryCount' -Value $entries.Count
     Set-OmniResultMetric -Result $result -Name 'SuspiciousStartupFolderEntryCount' -Value $flagged.Count
+    Set-OmniResultMetric -Result $result -Name 'UserWritableStartupFolderEntryCount' -Value $userWritableOnly.Count
     Set-OmniResultMetric -Result $result -Name 'StartupFolders' -Value @($folders | ForEach-Object { [pscustomobject]@{ Scope = $_.Scope; Path = $_.Path } })
 
     $describe = { param($e) ('[{0}] {1} -> {2} {3}' -f $e.Scope, $e.Name, $e.Target, $e.Arguments).Trim() }
@@ -239,12 +280,21 @@ function Invoke-OmniModuleScan {
         -Title ("$($entries.Count) Startup folder item(s)") -Severity 'Information' -Component 'System/StartupFolders' `
         -Detail $detail -Data @($entries))
 
+    if ($userWritableOnly.Count -gt 0) {
+        $list = @($userWritableOnly | Select-Object -First 20 | ForEach-Object { & $describe $_ })
+        Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'startup-folders-user-writable-target' `
+            -Title ("$($userWritableOnly.Count) Startup folder shortcut(s) start a program from a user-writable location") -Severity 'Information' `
+            -Component 'System/StartupFolders' `
+            -Detail ('Shortcuts whose target is under AppData, Temp, Users\Public, Downloads/Desktop/Documents, or directly in ProgramData (first 20): ' + ($list -join '; ') + '. Per-user installs (for example under %LOCALAPPDATA%\Programs) are normal; review entries you do not recognize.') `
+            -Data @($userWritableOnly))
+    }
+
     if ($flagged.Count -gt 0) {
         $list = @($flagged | Select-Object -First 20 | ForEach-Object { '{0} ({1})' -f (& $describe $_), ($_.Reasons -join ', ') })
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'startup-folders-suspicious-entry' `
             -Title ("$($flagged.Count) Startup folder item(s) need review") -Severity 'Warning' `
             -Component 'System/StartupFolders' `
-            -Detail ('Startup folder entries that start from a user-writable location, use a script host, or are executables/scripts placed directly in the folder: ' + ($list -join '; ')) `
+            -Detail ('Startup folder entries that use a script host, open a file through an Internet shortcut, or are executables/scripts placed directly in the folder: ' + ($list -join '; ')) `
             -LikelyCause 'Persistence by unwanted software or malware; some per-user applications also start from AppData.' `
             -Confidence 55 `
             -Recommendation 'Verify each entry belongs to software you trust; remove entries you cannot attribute and scan the target with your antimalware tool.' `
@@ -255,7 +305,7 @@ function Invoke-OmniModuleScan {
     if (@($result.Findings | Where-Object { $_.SeverityRank -ge (Get-OmniSeverityRank 'Warning') }).Count -eq 0) {
         Add-OmniFinding -Result $result -Finding (New-OmniFinding -Id 'startup-folders-ok' `
             -Title 'Startup folder entries look normal' -Severity 'Pass' -Component 'System/StartupFolders' `
-            -Detail 'No Startup folder entry starts from a user-writable location or uses a script host.')
+            -Detail 'No Startup folder entry uses a script host or places an executable or script directly in the folder.')
     }
 
     return (Complete-OmniResult -Result $result)

@@ -49,13 +49,16 @@ prefix, `-ec`) or a URL / download cradle; `wscript.exe` / `cscript.exe`; `mshta
 - Lists every file in the per-user (`[Environment]::GetFolderPath('Startup')`) and
   all-users (`'CommonStartup'`) Startup folders, except `desktop.ini`.
 - `.lnk` shortcuts: reads the target and arguments with the `WScript.Shell` COM object
-  (the shortcut is loaded, never saved). A shortcut that cannot be read is listed as
-  "target not resolved".
+  (the shortcut is loaded, never saved). One `WScript.Shell` object is created per scan;
+  the shell and every shortcut object are released with `Marshal.ReleaseComObject`. A
+  shortcut that cannot be read is listed as "target not resolved".
 - `.url` Internet shortcuts: reads the `URL=` line as text.
-- Flags (Warning) a shortcut whose target is in a user-writable location or that uses a
-  suspicious script host, an executable or script (`.exe`, `.bat`, `.cmd`, `.vbs`, `.js`,
-  `.ps1`, `.hta`, `.scr`, ...) placed directly in a Startup folder, and an Internet
-  shortcut that opens a `file:` URL.
+- Flags (Warning) a shortcut that uses a suspicious script host, an executable or script
+  (`.exe`, `.bat`, `.cmd`, `.vbs`, `.js`, `.ps1`, `.hta`, `.scr`, ...) placed directly in
+  a Startup folder, and an Internet shortcut that opens a `file:` URL.
+- A shortcut whose target is in a user-writable location, with no other reason, is
+  Information only: per-user installs (for example under `%LOCALAPPDATA%\Programs`) are
+  normal. Combined with a script-host reason it is part of the Warning.
 
 ### Scheduled Tasks (`startup.scheduled-tasks`)
 
@@ -63,9 +66,17 @@ prefix, `-ec`) or a URL / download cradle; `wscript.exe` / `cscript.exe`; `mshta
 - For non-Microsoft tasks with a logon (`MSFT_TaskLogonTrigger`) or boot
   (`MSFT_TaskBootTrigger`) trigger, lists the task, its triggers, and each exec action
   (`Execute` + `Arguments`) as Information.
-- Flags (Warning) those logon/boot tasks whose action runs from a user-writable location
-  or uses a suspicious script host.
-- Flags (Warning) non-Microsoft tasks that run as SYSTEM at logon.
+- Flags (Warning) those logon/boot tasks whose action uses a suspicious script host.
+- Lists (Information) logon/boot tasks whose action only runs from a user-writable
+  location; per-user installs under `%LOCALAPPDATA%\Programs` are normal.
+- Lists non-Microsoft tasks that run as SYSTEM at logon. The principal must be exactly
+  `SYSTEM`, `NT AUTHORITY\SYSTEM`, or `S-1-5-18`. Information on its own; Warning only
+  when the task's action is also in a user-writable location or flagged by the
+  script-host rules.
+- Known vendor updaters (task names `MicrosoftEdgeUpdate*`, `GoogleUpdate*`,
+  `OneDrive*`) appear in the logon/boot listing only; they never raise the SYSTEM-at-logon
+  or user-writable findings. A script-host reason is still a Warning, because a task name
+  is easy to copy.
 
 ### Service Persistence (`startup.service-persistence`)
 
@@ -75,7 +86,7 @@ prefix, `-ec`) or a URL / download cradle; `wscript.exe` / `cscript.exe`; `mshta
 - For automatic-start services (including delayed):
   - binary in a user-writable location -> Warning;
   - otherwise, binary outside `%SystemRoot%`, `%ProgramFiles%`, and `%ProgramFiles(x86)%`
-    -> Warning. Microsoft Defender's platform folders under `%ProgramData%\Microsoft\` are
+    -> Information (vendors commonly install to custom folders). Microsoft Defender's platform folders under `%ProgramData%\Microsoft\` are
     treated as standard.
 - For every service that is not disabled: an unquoted path whose binary path contains a
   space (for example `C:\Program Files\Vendor App\svc.exe -k`) -> Warning, the classic
@@ -121,18 +132,20 @@ or certificate is checked.
 | High number of startup items (`startup-items-high-count`) | Warning | More than 25 Run-key / startup-command entries |
 | Startup entries within normal range (`startup-items-ok`) | Pass | No Warning or worse (Startup) |
 | N Startup folder item(s) (`startup-folders-summary`) | Information | Always (lists the entries and their targets) |
-| N Startup folder item(s) need review (`startup-folders-suspicious-entry`) | Warning | A target in a user-writable location, a suspicious script host, or an executable/script directly in the folder |
+| N Startup folder shortcut(s) start a program from a user-writable location (`startup-folders-user-writable-target`) | Information | A shortcut target is in a user-writable location and nothing else is wrong with it |
+| N Startup folder item(s) need review (`startup-folders-suspicious-entry`) | Warning | A suspicious script host (alone or with a user-writable target), an Internet shortcut to a `file:` URL, or an executable/script directly in the folder |
 | Startup folders not available (`startup-folders-unavailable`) | Information | The folders are not defined on this platform (result Skipped) |
 | Startup folder entries look normal (`startup-folders-ok`) | Pass | No Warning or worse (Startup Folders) |
 | N enabled scheduled task(s) (`scheduled-tasks-summary`) | Information | Always |
 | N non-Microsoft task(s) start at logon or boot (`scheduled-tasks-logon-boot`) | Information | A non-Microsoft task has a logon or boot trigger (lists actions) |
-| N logon/boot task(s) with a suspicious action (`scheduled-tasks-suspicious-action`) | Warning | Such a task runs from a user-writable location or uses a suspicious script host |
-| N third-party task(s) run as SYSTEM at logon (`scheduled-tasks-system-at-logon`) | Warning | A non-Microsoft task runs as SYSTEM with a logon trigger |
+| N logon/boot task(s) run a program from a user-writable location (`scheduled-tasks-user-writable-action`) | Information | Such a task's program is in a user-writable location and no script-host rule matches (known vendor updaters excluded) |
+| N logon/boot task(s) with a suspicious action (`scheduled-tasks-suspicious-action`) | Warning | Such a task uses a suspicious script host |
+| N third-party task(s) run as SYSTEM at logon (`scheduled-tasks-system-at-logon`) | Information / Warning | A non-Microsoft task runs as exactly `SYSTEM` / `NT AUTHORITY\SYSTEM` / `S-1-5-18` with a logon trigger (known vendor updaters excluded). Warning only when such a task's action is also in a user-writable location or flagged by the script-host rules |
 | Scheduled tasks not available (`scheduled-tasks-unavailable`) | Information | `Get-ScheduledTask` is unavailable (result Skipped) |
 | Scheduled tasks inventory collected (`scheduled-tasks-ok`) | Pass | No Warning or worse (Scheduled Tasks) |
 | Auto-start service locations reviewed (`service-persistence-summary`) | Information | Always (counts) |
 | N auto-start service(s) run from a user-writable location (`service-persistence-user-writable`) | Warning | See above |
-| N auto-start service(s) run from outside Windows and Program Files (`service-persistence-nonstandard-location`) | Warning | See above |
+| N auto-start service(s) run from outside Windows and Program Files (`service-persistence-nonstandard-location`) | Information | See above |
 | N service(s) with an unquoted path containing spaces (`service-persistence-unquoted-path`) | Warning | See above |
 | Service inventory not available (`service-persistence-unavailable`) | Information | `Win32_Service` cannot be queried (result Skipped) |
 | Auto-start services run from standard locations (`service-persistence-ok`) | Pass | No Warning or worse (Service Persistence) |
