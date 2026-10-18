@@ -28,7 +28,7 @@ BeforeAll {
         'Windows Health' = 'updates'; 'Windows Update' = 'updates'; 'System Health' = 'updates'; 'Update Rings' = 'updates'
         'Security' = 'security'; 'Firewall Rules' = 'security'; 'Certificates' = 'security'; 'BitLocker' = 'security'; 'Defender Onboarding' = 'security'
     }
-    $script:ExpectedNetwork = @{ 'Network' = 'Internet'; 'DNS Resolver' = 'Internet'; 'Active Directory' = 'LocalNetwork'; 'Repair Component Store (DISM)' = 'Internet' }
+    $script:ExpectedNetwork = @{ 'Network' = 'Internet'; 'DNS Resolver' = 'Internet'; 'Active Directory' = 'LocalNetwork'; 'Repair Component Store (DISM)' = 'Internet'; 'Release / Renew IP Address' = 'LocalNetwork' }
     $script:IdPattern = '^[a-z0-9]+(?:[.-][a-z0-9]+)*$'
 
     function ConvertTo-TestKebab([string] $Name) { ($Name.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-') }
@@ -121,7 +121,7 @@ Describe 'Repair registrations (contract v1)' {
         }
     }
 
-    It 'labels network access per the conventions (DISM is Internet, the rest None)' {
+    It 'labels network access per the conventions (DISM Internet, IP renew LocalNetwork, the rest None)' {
         foreach ($r in $script:Repairs) {
             $net = if ($script:ExpectedNetwork.ContainsKey($r.Name)) { $script:ExpectedNetwork[$r.Name] } else { 'None' }
             $r.NetworkAccess | Should -Be $net -Because $r.Name

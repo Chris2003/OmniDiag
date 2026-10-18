@@ -79,11 +79,12 @@ Prints the usage overview or one command's usage. `--help` / `-h` work on every 
 | Option | Meaning |
 |---|---|
 | `-f`, `--format <fmt>` | `json` (report schema v1), `csv` (findings table), `md` (Markdown), `html`, `pdf`. Repeatable or a comma list. |
-| `-o`, `--output <path>` | Write to a file or a directory instead of stdout. A path that exists as a folder, ends with `\` or `/`, or has no extension is a directory. Without `--format`, a file's extension picks the format (`.json`, `.csv`, `.md`, `.html`, `.pdf`); a directory gets `json` + `html`. |
+| `-o`, `--output <path>` | Write to a file or a directory instead of stdout. A path that exists as a folder, ends with `\` or `/`, or has no extension is a directory. Without `--format`, a file's extension picks the format (`.json`, `.csv`, `.md`, `.html`, `.pdf`); a directory gets `json` + `html` for `scan` and `report`, and `json` for `list` and `version`. |
 | `--verbose` | Record Debug-level entries in the local log file (`OmniDiagData\logs\omnidiag-cli-*.jsonl`). Nothing extra goes to the console. |
 | `-q`, `--quiet` | No progress or status lines on stderr. Errors and usage messages are still printed. |
 | `--no-color` | Accepted for scripts; router output is already plain text. |
-| `-h`, `--help` | Show help. |
+| `-h`, `--help`, `-?`, `/?` | Show help. |
+| `--version` | Same as the `version` command. |
 
 Options may appear before or after the command; `--name=value` works too, and `--` ends
 option parsing.
@@ -93,7 +94,8 @@ option parsing.
 * **Data** (JSON, CSV, Markdown) goes to **stdout only when `--format` is given without
   `--output`**. Only one format can go to stdout at a time; use `--output <directory>` for
   several. HTML and PDF are always files: without `--output` they go to
-  `OmniDiagData\reports` and the path is printed on stderr.
+  `OmniDiagData\reports` and the path is printed on stderr (not with `--quiet`; use `--output`
+  to choose the path when scripting).
 * **Progress and status** go to **stderr** (suppressed by `--quiet`).
 * When no data is written to stdout, the human-readable result (tables, the scan summary,
   help, written file paths) goes to stdout.
