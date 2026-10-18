@@ -321,11 +321,13 @@ function Invoke-OmniDiagScan {
     $context = New-OmniContext -Logger $logger -TimeRange (Get-OmniTimeRange -Preset $Range) `
         -CancellationToken $CancellationToken -Config $Config -NetworkProbes:$NetworkProbes
     $activity = 'OmniDiag scan'
+    # No GetNewClosure(): on Windows PowerShell 5.1 it re-validates this function's
+    # [ValidateSet] parameters (an unset -Profile is '') and throws.
     $progress = {
         param($p)
         $status = if ($p.Phase -eq 'Start') { "Running $($p.Name)" } else { "$($p.Name): $($p.Phase)" }
-        Write-Progress -Activity $activity -Status $status -PercentComplete ([Math]::Min(100, [Math]::Max(0, [int]$p.PercentComplete)))
-    }.GetNewClosure()
+        Write-Progress -Activity 'OmniDiag scan' -Status $status -PercentComplete ([Math]::Min(100, [Math]::Max(0, [int]$p.PercentComplete)))
+    }
     if ($ProgressCallback) { $progress = $ProgressCallback }
     try {
         $session = Invoke-OmniSession -Registration $selected -Context $context -ProgressCallback $progress -MaxParallel $MaxParallel

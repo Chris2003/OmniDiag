@@ -295,12 +295,12 @@ Describe 'GUI findings and group helpers (cross-platform)' {
     It 'filters findings by words and by severity' {
         $rows = @(& $script:Gui { param($s, $n) ConvertTo-OmniGuiFindingRow -Session $s -GroupNames $n } $script:Session $script:Names)
         $f = { param($t, $sev) @(& $script:Gui { param($r, $t, $sev) Select-OmniFindingRow -Row $r -Text $t -Severity $sev } $rows $t $sev) }
-        (& $f '' 'All severities').Count | Should -Be 3
-        (& $f 'almost' '').Count | Should -Be 1
-        (& $f 'disk' '').Count | Should -Be 2               # title or module name
-        (& $f 'network suffix' '').Count | Should -Be 1     # every word must match (group name + title)
-        (& $f '' 'Warning').Count | Should -Be 1
-        (& $f 'disk' 'Warning').Count | Should -Be 0
+        @(& $f '' 'All severities').Count | Should -Be 3
+        @(& $f 'almost' '').Count | Should -Be 1
+        @(& $f 'disk' '').Count | Should -Be 2               # title or module name
+        @(& $f 'network suffix' '').Count | Should -Be 1     # every word must match (group name + title)
+        @(& $f '' 'Warning').Count | Should -Be 1
+        @(& $f 'disk' 'Warning').Count | Should -Be 0
     }
 
     It 'formats the finding detail panel with cause, recommendation, and evidence' {
