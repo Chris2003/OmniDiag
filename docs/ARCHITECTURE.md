@@ -331,13 +331,34 @@ file names. An optional mapping file stays local.
    `Invoke-RestMethod`, `Net.WebClient`, `HttpClient`, sockets, `Ping`, `Dns`, `Resolve-DnsName`,
    `Test-Connection`, `Test-NetConnection`, `Test-ComputerSecureChannel`, `Start-BitsTransfer`)
    and fails on any use outside an allowlist tied to the plugin's `NetworkAccess`.
-2. **Runtime (Windows runner):** an outbound firewall block on the PowerShell executables, then a
-   default scan; assert no outbound connection or DNS query from the test process.
+2. **Runtime (Windows runner):** `build/Test-NoNetworkRuntime.ps1`, CI job `no-network`. It
+   enables auditing for *Filtering Platform Connection* (Security events 5156 allowed / 5157
+   blocked, each carrying the calling `ProcessID` and `Application`) and *Process Creation*
+   (4688, to follow child processes), enables the `Microsoft-Windows-DNS-Client/Operational`
+   log (3006 = query issued, attributed to the calling process), and adds outbound firewall
+   block rules for `pwsh.exe` and `powershell.exe` so an attempt never leaves the runner while
+   other processes keep their connectivity. It then runs, with the environment `OmniDiag.cmd`
+   sets up (PowerShell update check and telemetry off):
+   * a **positive control** (TCP connect to `1.1.1.1:443` and a name lookup) that the detector
+     must see, or the test fails as vacuous;
+   * `omnidiag scan --format json` (default selection) and `omnidiag report`;
+   * when the CLI supports it, `omnidiag scan --network-probes` - reported for information
+     only, since that is the opt-in path.
+
+   For each run it keeps the events from the run's time window and process tree, drops
+   inbound and loopback (`127.0.0.0/8`, `::1`) records, and also flags connections to the
+   known probe targets (`1.1.1.1`, the default gateways) and lookups of the probe name
+   (`www.microsoft.com`) from any process, in case a probe is attributed to a system
+   process. Any remaining event in the scan or report run is a violation (exit 1). Audit
+   policy (`auditpol /backup` / `/restore`), firewall profiles and rules, and the DNS log
+   state are restored in a `finally` block. The JSON and Markdown report is a CI artifact.
 3. **Mocks:** per-module Pester mocks for network cmdlets.
 
 ### CI pipeline
 
 lint (PSScriptAnalyzer + contract/help tests) → tests (Windows pwsh 7, Windows PowerShell 5.1,
 Ubuntu for pure logic, `windows-11-arm`; coverage gate on Core) → standard-user leg →
-no-network runtime test → performance (soft gate) → package (reproducible zip, signing hook,
+no-network runtime test (`build/Test-NoNetworkRuntime.ps1`) → performance (soft gate,
+`build/Measure-ScanPerformance.ps1`: median of three full scans against the 60 s budget,
+startup time, slowest modules) → package (reproducible zip, signing hook,
 `SHA256SUMS`, SBOM) → release on tag.
