@@ -6,19 +6,67 @@
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource BrushWindowBg}"
         TextElement.Foreground="{DynamicResource BrushText}"
-        FontFamily="Segoe UI" FontSize="13">
+        FontFamily="Segoe UI" FontSize="13"
+        AutomationProperties.Name="OmniDiag"
+        AutomationProperties.AutomationId="OmniDiagMainWindow"
+        AutomationProperties.HelpText="Windows diagnostics. Press F1 for keyboard shortcuts."
+        FocusManager.FocusedElement="{Binding ElementName=BtnScan}">
+
+    <!--
+        Keyboard shortcuts. Every binding raises NavigationCommands.GoToPage with a
+        CommandParameter naming the action; OmniDiagGui.psm1 attaches one CommandBinding
+        that dispatches on the parameter (Invoke-OmniShortcut). Keep this list in sync with
+        $script:OmniShortcutHelp and docs/GUI.md.
+    -->
+    <Window.InputBindings>
+        <KeyBinding Key="F5" Command="NavigationCommands.GoToPage" CommandParameter="Scan"/>
+        <KeyBinding Key="Escape" Command="NavigationCommands.GoToPage" CommandParameter="Cancel"/>
+        <KeyBinding Key="E" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Export"/>
+        <KeyBinding Key="F" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Find"/>
+        <KeyBinding Key="T" Modifiers="Alt" Command="NavigationCommands.GoToPage" CommandParameter="Theme"/>
+        <KeyBinding Key="F1" Command="NavigationCommands.GoToPage" CommandParameter="Help"/>
+        <KeyBinding Key="D1" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Nav1"/>
+        <KeyBinding Key="D2" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Nav2"/>
+        <KeyBinding Key="D3" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Nav3"/>
+        <KeyBinding Key="D4" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Nav4"/>
+        <KeyBinding Key="D5" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Nav5"/>
+        <KeyBinding Key="D6" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Nav6"/>
+        <KeyBinding Key="D7" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Nav7"/>
+        <KeyBinding Key="D8" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Nav8"/>
+        <KeyBinding Key="D9" Modifiers="Control" Command="NavigationCommands.GoToPage" CommandParameter="Nav9"/>
+    </Window.InputBindings>
 
     <Window.Resources>
-        <!-- Brushes are set in code (Set-OmniTheme) for dark/light; defaults here
-             keep the designer/preview usable. These mirror the Light palette,
-             which is the default theme. -->
-        <SolidColorBrush x:Key="BrushWindowBg" Color="#F5F7FA"/>
-        <SolidColorBrush x:Key="BrushPanel"   Color="#FFFFFF"/>
-        <SolidColorBrush x:Key="BrushPanel2"  Color="#EEF1F5"/>
-        <SolidColorBrush x:Key="BrushText"    Color="#1A1F24"/>
-        <SolidColorBrush x:Key="BrushMuted"   Color="#5A6472"/>
-        <SolidColorBrush x:Key="BrushAccent"  Color="#0969DA"/>
-        <SolidColorBrush x:Key="BrushLine"    Color="#D5DBE2"/>
+        <!-- Brushes are set in code (Set-OmniTheme) for dark/light/high contrast; defaults
+             here keep the designer/preview usable. These mirror the Light palette, which is
+             the default theme. In high contrast every key maps to a SystemColors brush. -->
+        <SolidColorBrush x:Key="BrushWindowBg"   Color="#F5F7FA"/>
+        <SolidColorBrush x:Key="BrushPanel"      Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="BrushPanel2"     Color="#EEF1F5"/>
+        <SolidColorBrush x:Key="BrushText"       Color="#1A1F24"/>
+        <SolidColorBrush x:Key="BrushMuted"      Color="#5A6472"/>
+        <SolidColorBrush x:Key="BrushAccent"     Color="#0969DA"/>
+        <SolidColorBrush x:Key="BrushAccentText" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="BrushLine"       Color="#D5DBE2"/>
+        <SolidColorBrush x:Key="BrushFocus"      Color="#1A1F24"/>
+        <SolidColorBrush x:Key="BrushHover"      Color="#0969DA"/>
+        <SolidColorBrush x:Key="BrushDisabled"   Color="#8C959F"/>
+        <SolidColorBrush x:Key="BrushSevCritical" Color="#C4282D"/>
+        <SolidColorBrush x:Key="BrushSevError"    Color="#B35A00"/>
+        <SolidColorBrush x:Key="BrushSevWarning"  Color="#8A5A00"/>
+        <SolidColorBrush x:Key="BrushSevPass"     Color="#1A7F37"/>
+
+        <!-- Keyboard focus cue: a 2px dotted rectangle in BrushFocus (visible in every theme). -->
+        <Style x:Key="OmniFocusVisual">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Rectangle Margin="-3" Stroke="{DynamicResource BrushFocus}" StrokeThickness="2"
+                                   StrokeDashArray="1 1" SnapsToDevicePixels="True"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <Style TargetType="Button">
             <Setter Property="Background" Value="{DynamicResource BrushPanel2}"/>
@@ -28,17 +76,61 @@
             <Setter Property="Padding" Value="14,7"/>
             <Setter Property="Margin" Value="0,0,8,0"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource OmniFocusVisual}"/>
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                            <ContentPresenter RecognizesAccessKey="True" HorizontalAlignment="Center" VerticalAlignment="Center"
                                               Margin="{TemplateBinding Padding}"/>
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource BrushHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource BrushFocus}"/>
+                                <Setter TargetName="Bd" Property="BorderThickness" Value="2"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource BrushDisabled}"/>
+                                <Setter Property="Background" Value="{DynamicResource BrushPanel2}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource BrushDisabled}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <!-- Primary action buttons. Colors come from setters (not local values) so the
+             template's disabled trigger can still grey them out. -->
+        <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{DynamicResource BrushAccent}"/>
+            <Setter Property="Foreground" Value="{DynamicResource BrushAccentText}"/>
+        </Style>
+
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource BrushText}"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource OmniFocusVisual}"/>
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource OmniFocusVisual}"/>
+        </Style>
+
+        <Style TargetType="ListBoxItem">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource OmniFocusVisual}"/>
+            <Setter Property="Padding" Value="8,6"/>
+        </Style>
+
+        <Style TargetType="Label">
+            <Setter Property="Foreground" Value="{DynamicResource BrushText}"/>
+            <Setter Property="Padding" Value="0,0,6,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
 
         <Style TargetType="DataGrid">
@@ -53,6 +145,9 @@
             <Setter Property="IsReadOnly" Value="True"/>
             <Setter Property="HeadersVisibility" Value="Column"/>
             <Setter Property="CanUserAddRows" Value="False"/>
+            <Setter Property="SelectionMode" Value="Single"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource OmniFocusVisual}"/>
+            <Setter Property="KeyboardNavigation.TabNavigation" Value="Once"/>
         </Style>
 
         <Style TargetType="DataGridColumnHeader">
@@ -60,6 +155,43 @@
             <Setter Property="Foreground" Value="{DynamicResource BrushMuted}"/>
             <Setter Property="Padding" Value="8,6"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <!-- Rows named for screen readers ("Critical: <title> (<module>)"). Severity is also
+             a text column, so color is never the only cue; in high contrast the severity
+             brushes all map to WindowText. -->
+        <Style x:Key="FindingRowStyle" TargetType="DataGridRow">
+            <Setter Property="AutomationProperties.Name" Value="{Binding A11yName}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Severity}" Value="Critical">
+                    <Setter Property="Foreground" Value="{DynamicResource BrushSevCritical}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Severity}" Value="Error">
+                    <Setter Property="Foreground" Value="{DynamicResource BrushSevError}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Severity}" Value="Warning">
+                    <Setter Property="Foreground" Value="{DynamicResource BrushSevWarning}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Severity}" Value="Pass">
+                    <Setter Property="Foreground" Value="{DynamicResource BrushSevPass}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="NamedRowStyle" TargetType="DataGridRow">
+            <Setter Property="AutomationProperties.Name" Value="{Binding A11yName}"/>
+        </Style>
+
+        <Style x:Key="DetailTextBox" TargetType="TextBox">
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="IsReadOnlyCaretVisible" Value="True"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="Padding" Value="8"/>
+            <Setter Property="Background" Value="{DynamicResource BrushPanel}"/>
+            <Setter Property="Foreground" Value="{DynamicResource BrushText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BrushLine}"/>
         </Style>
     </Window.Resources>
 
@@ -73,25 +205,52 @@
         <!-- Top bar -->
         <Border Grid.Row="0" Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="0,0,0,1" Padding="16,12">
             <Grid>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock Text="OmniDiag" FontSize="20" FontWeight="Bold"/>
                     <TextBlock Text="One Tool. Complete Diagnostics." Foreground="{DynamicResource BrushMuted}" Margin="12,0,0,0" VerticalAlignment="Bottom"/>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <CheckBox x:Name="ChkNetworkProbes" Content="Run connectivity probes (contacts the network)" IsChecked="False"
-                              VerticalAlignment="Center" Margin="0,0,12,0"
+                              VerticalAlignment="Center" Margin="0,4,12,4" TabIndex="1"
                               AutomationProperties.Name="Run connectivity probes (contacts the network)"
+                              AutomationProperties.HelpText="Off by default. When on, some scanners contact the default gateway, a public DNS server, and the domain controller."
                               ToolTip="Off by default. When on, the Network, DNS Resolver, and Active Directory scanners ping the default gateway and 1.1.1.1, resolve www.microsoft.com, and check the domain secure channel."/>
-                    <ComboBox x:Name="CmbRange" Width="130" Margin="0,0,8,0" VerticalContentAlignment="Center">
+                    <Label Content="Time _window" Target="{Binding ElementName=CmbRange}"/>
+                    <ComboBox x:Name="CmbRange" Width="130" Margin="0,4,8,4" VerticalContentAlignment="Center" TabIndex="2"
+                              AutomationProperties.Name="Event time window"
+                              AutomationProperties.HelpText="How far back event-log scanners look."
+                              ToolTip="How far back event-log scanners look (Alt+W)">
                         <ComboBoxItem Content="Last 24 Hours"/>
                         <ComboBoxItem Content="Last 7 Days" IsSelected="True"/>
                         <ComboBoxItem Content="Last 30 Days"/>
                     </ComboBox>
-                    <Button x:Name="BtnScan" Content="Run Scan" Background="{DynamicResource BrushAccent}"/>
-                    <Button x:Name="BtnCancel" Content="Cancel" IsEnabled="False"/>
-                    <Button x:Name="BtnExport" Content="Export Report" IsEnabled="False"/>
-                    <Button x:Name="BtnTheme" Content="Dark Mode"/>
-                </StackPanel>
+                    <Button x:Name="BtnScan" Content="Run _Scan" Style="{StaticResource AccentButton}" TabIndex="3" Margin="0,4,8,4"
+                            AutomationProperties.Name="Run scan"
+                            AutomationProperties.AcceleratorKey="F5"
+                            AutomationProperties.HelpText="Runs the enabled diagnostic scanners in the background."
+                            ToolTip="Run a diagnostic scan (F5)"/>
+                    <Button x:Name="BtnCancel" Content="_Cancel" IsEnabled="False" TabIndex="4" Margin="0,4,8,4"
+                            AutomationProperties.Name="Cancel scan"
+                            AutomationProperties.AcceleratorKey="Escape"
+                            ToolTip="Cancel the running scan or repair (Esc)"/>
+                    <Button x:Name="BtnExport" Content="_Export Report" IsEnabled="False" TabIndex="5" Margin="0,4,8,4"
+                            AutomationProperties.Name="Export report"
+                            AutomationProperties.AcceleratorKey="Ctrl+E"
+                            AutomationProperties.HelpText="Writes the latest scan to report files on this computer."
+                            ToolTip="Export the latest scan as reports (Ctrl+E)"/>
+                    <Button x:Name="BtnTheme" Content="Dark Mode" TabIndex="6" Margin="0,4,8,4"
+                            AutomationProperties.Name="Switch to dark theme"
+                            AutomationProperties.AcceleratorKey="Alt+T"
+                            ToolTip="Toggle dark or light theme (Alt+T)"/>
+                    <Button x:Name="BtnHelp" Content="?" TabIndex="7" Margin="0,4,0,4" Padding="12,7" MinWidth="34"
+                            AutomationProperties.Name="Keyboard shortcuts and help"
+                            AutomationProperties.AcceleratorKey="F1"
+                            ToolTip="Keyboard shortcuts and help (F1)"/>
+                </WrapPanel>
             </Grid>
         </Border>
 
@@ -103,18 +262,28 @@
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="0,0,1,0">
-                <ListBox x:Name="NavList" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource BrushText}" Margin="6">
-                    <ListBoxItem Content="Dashboard" IsSelected="True"/>
-                    <ListBoxItem Content="All Findings"/>
-                    <ListBoxItem Content="Diagnostics"/>
-                    <ListBoxItem Content="Repair Center"/>
-                    <ListBoxItem Content="Local AI"/>
+                <ListBox x:Name="NavList" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource BrushText}" Margin="6"
+                         TabIndex="10" KeyboardNavigation.TabNavigation="Once" KeyboardNavigation.DirectionalNavigation="Cycle"
+                         AutomationProperties.Name="Sections"
+                         AutomationProperties.HelpText="Use the Up and Down arrow keys to switch sections, or Ctrl+1 to Ctrl+6.">
+                    <ListBoxItem Content="Dashboard" Tag="PanelDashboard" IsSelected="True"
+                                 AutomationProperties.Name="Dashboard" AutomationProperties.AcceleratorKey="Ctrl+1"/>
+                    <ListBoxItem Content="Groups" Tag="PanelGroups"
+                                 AutomationProperties.Name="Groups" AutomationProperties.AcceleratorKey="Ctrl+2"/>
+                    <ListBoxItem Content="All Findings" Tag="PanelFindings"
+                                 AutomationProperties.Name="All Findings" AutomationProperties.AcceleratorKey="Ctrl+3"/>
+                    <ListBoxItem Content="Diagnostics" Tag="PanelDiagnostics"
+                                 AutomationProperties.Name="Diagnostics" AutomationProperties.AcceleratorKey="Ctrl+4"/>
+                    <ListBoxItem Content="Repair Center" Tag="PanelRepair"
+                                 AutomationProperties.Name="Repair Center" AutomationProperties.AcceleratorKey="Ctrl+5"/>
+                    <ListBoxItem Content="Local AI" Tag="PanelLocalAi"
+                                 AutomationProperties.Name="Local AI" AutomationProperties.AcceleratorKey="Ctrl+6"/>
                 </ListBox>
             </Border>
 
             <Grid Grid.Column="1" Margin="16">
                 <!-- Dashboard panel -->
-                <ScrollViewer x:Name="PanelDashboard" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer x:Name="PanelDashboard" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Dashboard">
                     <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Border Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="1" CornerRadius="8" Padding="22,16" Margin="0,0,16,0">
@@ -134,11 +303,13 @@
 
                         <TextBlock Text="System Information" FontSize="15" FontWeight="SemiBold" Margin="0,22,0,8"/>
                         <Border Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="1" CornerRadius="6" Padding="12">
-                            <StackPanel x:Name="PanelSysInfo"/>
+                            <StackPanel x:Name="PanelSysInfo" AutomationProperties.Name="System information">
+                                <TextBlock Text="Loading system information..." Foreground="{DynamicResource BrushMuted}"/>
+                            </StackPanel>
                         </Border>
 
                         <TextBlock Text="Top Recommendations" FontSize="15" FontWeight="SemiBold" Margin="0,22,0,8"/>
-                        <ItemsControl x:Name="ItemsRecommendations">
+                        <ItemsControl x:Name="ItemsRecommendations" AutomationProperties.Name="Top recommendations">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,6">
@@ -152,46 +323,142 @@
                         </ItemsControl>
 
                         <TextBlock Text="Module Results" FontSize="15" FontWeight="SemiBold" Margin="0,18,0,8"/>
-                        <DataGrid x:Name="GridModules" MaxHeight="280">
+                        <DataGrid x:Name="GridModules" MaxHeight="280" RowStyle="{StaticResource NamedRowStyle}"
+                                  AutomationProperties.Name="Module results">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="2*"/>
-                                <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="*"/>
+                                <DataGridTextColumn Header="Group" Binding="{Binding GroupName}" Width="*"/>
                                 <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*"/>
                                 <DataGridTextColumn Header="Findings" Binding="{Binding Findings}" Width="Auto"/>
-                                <DataGridTextColumn Header="ms" Binding="{Binding DurationMs}" Width="Auto"/>
+                                <DataGridTextColumn Header="Duration (ms)" Binding="{Binding DurationMs}" Width="Auto"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </StackPanel>
                 </ScrollViewer>
 
-                <!-- Findings panel -->
-                <DataGrid x:Name="GridFindings" Visibility="Collapsed">
-                    <DataGrid.RowStyle>
-                        <Style TargetType="DataGridRow">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Severity}" Value="Critical">
-                                    <Setter Property="Foreground" Value="#E5484D"/>
-                                </DataTrigger>
-                                <DataTrigger Binding="{Binding Severity}" Value="Error">
-                                    <Setter Property="Foreground" Value="#D9730D"/>
-                                </DataTrigger>
-                                <DataTrigger Binding="{Binding Severity}" Value="Warning">
-                                    <Setter Property="Foreground" Value="#B7791F"/>
-                                </DataTrigger>
-                                <DataTrigger Binding="{Binding Severity}" Value="Pass">
-                                    <Setter Property="Foreground" Value="#2DA44E"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </DataGrid.RowStyle>
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Severity" Binding="{Binding Severity}" Width="Auto"/>
-                        <DataGridTextColumn Header="Component" Binding="{Binding Component}" Width="*"/>
-                        <DataGridTextColumn Header="Finding" Binding="{Binding Title}" Width="2*"/>
-                        <DataGridTextColumn Header="Likely Cause" Binding="{Binding LikelyCause}" Width="2*"/>
-                        <DataGridTextColumn Header="Recommendation" Binding="{Binding Recommendation}" Width="2*"/>
-                    </DataGrid.Columns>
-                </DataGrid>
+                <!-- Groups panel: per-group summary with drill-down -->
+                <Grid x:Name="PanelGroups" Visibility="Collapsed">
+                    <Grid x:Name="GroupListView">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                            <TextBlock Text="Groups" FontSize="20" FontWeight="Bold"/>
+                            <DockPanel Margin="0,4,0,0" LastChildFill="True">
+                                <Button x:Name="BtnGroupOpen" DockPanel.Dock="Right" Content="Open selected _group" Margin="8,0,0,0"
+                                        AutomationProperties.Name="Open selected group"
+                                        ToolTip="Show the modules and findings in the selected group (Enter)"/>
+                                <TextBlock x:Name="TxtGroupsHint" TextWrapping="Wrap" Foreground="{DynamicResource BrushMuted}" VerticalAlignment="Center"
+                                           Text="Each v1.0 module group with its status after a scan. Select a group and press Enter (or double-click) to see its modules and findings."/>
+                            </DockPanel>
+                        </StackPanel>
+                        <DataGrid x:Name="GridGroups" Grid.Row="1" RowStyle="{StaticResource NamedRowStyle}"
+                                  AutomationProperties.Name="Module groups"
+                                  AutomationProperties.HelpText="Press Enter to open the selected group.">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Group" Binding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="Auto"/>
+                                <DataGridTextColumn Header="Score" Binding="{Binding Score}" Width="Auto"/>
+                                <DataGridTextColumn Header="Worst severity" Binding="{Binding Worst}" Width="Auto"/>
+                                <DataGridTextColumn Header="Critical" Binding="{Binding Critical}" Width="Auto"/>
+                                <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="Auto"/>
+                                <DataGridTextColumn Header="Warning" Binding="{Binding Warning}" Width="Auto"/>
+                                <DataGridTextColumn Header="Scanners" Binding="{Binding Scanners}" Width="Auto"/>
+                                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="2*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+
+                    <Grid x:Name="GroupDetailView" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="170"/>
+                        </Grid.RowDefinitions>
+                        <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="True">
+                            <Button x:Name="BtnGroupBack" DockPanel.Dock="Left" Content="_Back to groups"
+                                    AutomationProperties.Name="Back to groups"
+                                    AutomationProperties.AcceleratorKey="Alt+Left"
+                                    ToolTip="Return to the group list (Alt+Left or Backspace)"/>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="TxtGroupTitle" Text="Group" FontSize="18" FontWeight="Bold"/>
+                                <TextBlock x:Name="TxtGroupSummary" Text="" Foreground="{DynamicResource BrushMuted}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </DockPanel>
+                        <DataGrid x:Name="GridGroupModules" Grid.Row="1" MaxHeight="170" Margin="0,0,0,8" RowStyle="{StaticResource NamedRowStyle}"
+                                  AutomationProperties.Name="Modules in this group">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="2*"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*"/>
+                                <DataGridTextColumn Header="Findings" Binding="{Binding Findings}" Width="Auto"/>
+                                <DataGridTextColumn Header="Duration (ms)" Binding="{Binding DurationMs}" Width="Auto"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <DataGrid x:Name="GridGroupFindings" Grid.Row="2" RowStyle="{StaticResource FindingRowStyle}"
+                                  AutomationProperties.Name="Findings in this group"
+                                  AutomationProperties.HelpText="Press Enter to read the selected finding's details.">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Severity" Binding="{Binding Severity}" Width="Auto"/>
+                                <DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="*"/>
+                                <DataGridTextColumn Header="Component" Binding="{Binding Component}" Width="*"/>
+                                <DataGridTextColumn Header="Finding" Binding="{Binding Title}" Width="2*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock Grid.Row="3" Text="Finding details" FontWeight="SemiBold" Margin="0,8,0,4"/>
+                        <TextBox x:Name="TxtGroupFindingDetail" Grid.Row="4" Style="{StaticResource DetailTextBox}"
+                                 Text="Select a finding to see its details."
+                                 AutomationProperties.Name="Finding details"/>
+                    </Grid>
+                </Grid>
+
+                <!-- All Findings panel: filter + grid + detail -->
+                <Grid x:Name="PanelFindings" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="170"/>
+                    </Grid.RowDefinitions>
+                    <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                        <Label Content="_Filter" Target="{Binding ElementName=TxtFindingFilter}"/>
+                        <TextBox x:Name="TxtFindingFilter" Width="260" Padding="6,4" Margin="0,0,16,0" VerticalContentAlignment="Center"
+                                 Background="{DynamicResource BrushPanel}" Foreground="{DynamicResource BrushText}" BorderBrush="{DynamicResource BrushLine}"
+                                 AutomationProperties.Name="Filter findings"
+                                 AutomationProperties.AcceleratorKey="Ctrl+F"
+                                 AutomationProperties.HelpText="Matches title, component, module, group, detail, cause, and recommendation."
+                                 ToolTip="Type to filter findings (Ctrl+F)"/>
+                        <Label Content="Se_verity" Target="{Binding ElementName=CmbSeverityFilter}"/>
+                        <ComboBox x:Name="CmbSeverityFilter" Width="150" Margin="0,0,16,0" VerticalContentAlignment="Center"
+                                  AutomationProperties.Name="Severity filter">
+                            <ComboBoxItem Content="All severities" IsSelected="True"/>
+                            <ComboBoxItem Content="Critical"/>
+                            <ComboBoxItem Content="Error"/>
+                            <ComboBoxItem Content="Warning"/>
+                            <ComboBoxItem Content="Information"/>
+                            <ComboBoxItem Content="Pass"/>
+                        </ComboBox>
+                        <TextBlock x:Name="TxtFindingCount" Text="No scan yet." VerticalAlignment="Center" Foreground="{DynamicResource BrushMuted}"/>
+                    </WrapPanel>
+                    <DataGrid x:Name="GridFindings" Grid.Row="1" RowStyle="{StaticResource FindingRowStyle}"
+                              AutomationProperties.Name="All findings"
+                              AutomationProperties.HelpText="Press Enter to read the selected finding's details.">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Severity" Binding="{Binding Severity}" Width="Auto"/>
+                            <DataGridTextColumn Header="Group" Binding="{Binding GroupName}" Width="Auto"/>
+                            <DataGridTextColumn Header="Component" Binding="{Binding Component}" Width="*"/>
+                            <DataGridTextColumn Header="Finding" Binding="{Binding Title}" Width="2*"/>
+                            <DataGridTextColumn Header="Likely Cause" Binding="{Binding LikelyCause}" Width="2*"/>
+                            <DataGridTextColumn Header="Recommendation" Binding="{Binding Recommendation}" Width="2*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Grid.Row="2" Text="Finding details" FontWeight="SemiBold" Margin="0,8,0,4"/>
+                    <TextBox x:Name="TxtFindingDetail" Grid.Row="3" Style="{StaticResource DetailTextBox}"
+                             Text="Select a finding to see its details."
+                             AutomationProperties.Name="Finding details"/>
+                </Grid>
 
                 <!-- Diagnostics panel: toggle scanners on/off, or run one individually -->
                 <Grid x:Name="PanelDiagnostics" Visibility="Collapsed">
@@ -202,25 +469,32 @@
                     </Grid.RowDefinitions>
 
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                        <Button x:Name="BtnDiagEnableAll" Content="Enable All"/>
-                        <Button x:Name="BtnDiagDisableAll" Content="Disable All"/>
+                        <Button x:Name="BtnDiagEnableAll" Content="Enable _All" AutomationProperties.Name="Enable all scanners"/>
+                        <Button x:Name="BtnDiagDisableAll" Content="_Disable All" AutomationProperties.Name="Disable all scanners"/>
+                        <Button x:Name="BtnDiagRunSelected" Content="R_un Selected Scanner" AutomationProperties.Name="Run the selected scanner now"
+                                ToolTip="Run only the scanner selected in the grid; results appear on the Dashboard"/>
                     </StackPanel>
 
                     <TextBlock Grid.Row="1" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{DynamicResource BrushMuted}"
-                               Text="Toggle scanners on or off - only enabled scanners run when you click Run Scan. Use a row's Run button to run just that scanner now (results appear on the Dashboard)."/>
+                               Text="Toggle scanners on or off - only enabled scanners run when you click Run Scan. Use a row's Run button to run just that scanner now (results appear on the Dashboard). Space toggles the selected row's checkbox."/>
 
                     <DataGrid x:Name="DiagGrid" Grid.Row="2" IsReadOnly="False" AutoGenerateColumns="False"
-                              CanUserAddRows="False" HeadersVisibility="Column" CanUserSortColumns="True">
+                              CanUserAddRows="False" HeadersVisibility="Column" CanUserSortColumns="True"
+                              RowStyle="{StaticResource NamedRowStyle}"
+                              AutomationProperties.Name="Scanners"
+                              AutomationProperties.HelpText="Arrow keys move between rows; Space toggles a scanner on or off.">
                         <DataGrid.Columns>
                             <DataGridCheckBoxColumn Header="On" Width="Auto"
                                 Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                             <DataGridTextColumn Header="Scanner" Binding="{Binding Name}" Width="2*" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Group" Binding="{Binding GroupName}" Width="*" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="*" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Last Status" Binding="{Binding Status}" Width="Auto" IsReadOnly="True"/>
                             <DataGridTemplateColumn Header="Run" Width="Auto">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Button Content="Run" Tag="{Binding Name}" Padding="10,2" Margin="2"/>
+                                        <Button Content="Run" Tag="{Binding Name}" Padding="10,2" Margin="2" Focusable="False"
+                                                AutomationProperties.Name="{Binding Name, StringFormat='Run {0} now'}"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
@@ -238,32 +512,41 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                        <Button x:Name="BtnRunRepairs" Content="Run Selected" Background="{DynamicResource BrushAccent}"/>
-                        <Button x:Name="BtnRepairCancel" Content="Cancel" IsEnabled="False"/>
-                        <Button x:Name="BtnRepairRecommended" Content="Select Recommended"/>
-                        <Button x:Name="BtnRepairClear" Content="Clear"/>
-                        <CheckBox x:Name="ChkRepairDryRun" Content="Dry run (preview only)" VerticalAlignment="Center"
-                                  Margin="6,0,0,0" Foreground="{DynamicResource BrushText}"/>
-                    </StackPanel>
+                    <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button x:Name="BtnRunRepairs" Content="_Run Selected" Style="{StaticResource AccentButton}" Margin="0,0,8,4"
+                                AutomationProperties.Name="Run selected repairs"
+                                AutomationProperties.HelpText="Asks for confirmation before anything changes."/>
+                        <Button x:Name="BtnRepairCancel" Content="Cancel Re_pairs" IsEnabled="False" Margin="0,0,8,4"
+                                AutomationProperties.Name="Cancel repairs"
+                                ToolTip="Stop after the current repair step (Esc)"/>
+                        <Button x:Name="BtnRepairRecommended" Content="Select Rec_ommended" Margin="0,0,8,4"
+                                AutomationProperties.Name="Select recommended repairs"/>
+                        <Button x:Name="BtnRepairClear" Content="C_lear" Margin="0,0,8,4"
+                                AutomationProperties.Name="Clear repair selection"/>
+                        <CheckBox x:Name="ChkRepairDryRun" Content="Dr_y run (preview only)" VerticalAlignment="Center"
+                                  Margin="6,0,0,4" AutomationProperties.Name="Dry run (preview only)"/>
+                    </WrapPanel>
 
                     <TextBlock x:Name="TxtRepairAdminNote" Grid.Row="1" Margin="0,0,0,8" TextWrapping="Wrap"
                                Foreground="{DynamicResource BrushMuted}"
                                Text="Repairs are confirmed before they run. System-altering repairs run only after a System Restore point is created (or one exists from the last 24 hours)."/>
 
                     <DataGrid x:Name="RepairGrid" Grid.Row="2" IsReadOnly="False" AutoGenerateColumns="False"
-                              CanUserAddRows="False" HeadersVisibility="Column">
+                              CanUserAddRows="False" HeadersVisibility="Column"
+                              AutomationProperties.Name="Available repairs"
+                              AutomationProperties.HelpText="Arrow keys move between rows; Space on the Run cell selects a repair.">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow">
+                                <Setter Property="AutomationProperties.Name" Value="{Binding A11yName}"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding Risk}" Value="Destructive">
-                                        <Setter Property="Foreground" Value="#E5484D"/>
+                                        <Setter Property="Foreground" Value="{DynamicResource BrushSevCritical}"/>
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding Risk}" Value="Moderate">
-                                        <Setter Property="Foreground" Value="#B7791F"/>
+                                        <Setter Property="Foreground" Value="{DynamicResource BrushSevWarning}"/>
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding Risk}" Value="Safe">
-                                        <Setter Property="Foreground" Value="#2DA44E"/>
+                                        <Setter Property="Foreground" Value="{DynamicResource BrushSevPass}"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -271,7 +554,7 @@
                         <DataGrid.Columns>
                             <DataGridCheckBoxColumn Header="Run" Width="Auto"
                                 Binding="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                            <DataGridTextColumn Header="" Binding="{Binding Mark}" Width="Auto" IsReadOnly="True"/>
+                            <DataGridTextColumn Header="Recommended" Binding="{Binding Mark}" Width="Auto" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Repair" Binding="{Binding Name}" Width="2*" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="*" IsReadOnly="True"/>
                             <DataGridTextColumn Header="Risk" Binding="{Binding Risk}" Width="Auto" IsReadOnly="True"/>
@@ -286,7 +569,9 @@
                     </StackPanel>
 
                     <DataGrid x:Name="RepairResultGrid" Grid.Row="4" MaxHeight="220" AutoGenerateColumns="False"
-                              CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column">
+                              CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column"
+                              RowStyle="{StaticResource NamedRowStyle}"
+                              AutomationProperties.Name="Repair results">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Repair" Binding="{Binding Name}" Width="2*"/>
                             <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="Auto"/>
@@ -320,51 +605,62 @@
                                 <ColumnDefinition Width="240"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Model" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                            <ComboBox x:Name="CmbAiModel" Grid.Column="1" IsEditable="True" VerticalContentAlignment="Center" Margin="0,0,16,0">
+                            <Label Grid.Column="0" Content="_Model" Target="{Binding ElementName=CmbAiModel}" Margin="0,0,2,0"/>
+                            <ComboBox x:Name="CmbAiModel" Grid.Column="1" IsEditable="True" VerticalContentAlignment="Center" Margin="0,0,16,0"
+                                      AutomationProperties.Name="Ollama model">
                                 <ComboBoxItem Content="gemma4:e2b" IsSelected="True"/>
                                 <ComboBoxItem Content="gemma3:1b"/>
                             </ComboBox>
-                            <TextBlock Grid.Column="2" Text="Endpoint" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <Label Grid.Column="2" Content="E_ndpoint" Target="{Binding ElementName=TxtAiEndpoint}" Margin="0,0,2,0"/>
                             <TextBox x:Name="TxtAiEndpoint" Grid.Column="3" Text="http://127.0.0.1:11434" Padding="7,5"
                                      Background="{DynamicResource BrushPanel2}" Foreground="{DynamicResource BrushText}"
-                                     BorderBrush="{DynamicResource BrushLine}"/>
-                            <Button x:Name="BtnAiCheck" Grid.Column="4" Content="Check Ollama" HorizontalAlignment="Right" Margin="12,0,0,0"/>
+                                     BorderBrush="{DynamicResource BrushLine}"
+                                     AutomationProperties.Name="Ollama endpoint"
+                                     AutomationProperties.HelpText="Loopback address of the local Ollama service."/>
+                            <Button x:Name="BtnAiCheck" Grid.Column="4" Content="C_heck Ollama" HorizontalAlignment="Right" Margin="12,0,0,0"
+                                    AutomationProperties.Name="Check Ollama"/>
                         </Grid>
                     </Border>
 
                     <StackPanel Grid.Row="2" Margin="0,0,0,10">
-                        <TextBlock Text="Question for the assistant" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                        <Label Content="_Question for the assistant" Target="{Binding ElementName=TxtAiQuestion}" FontWeight="SemiBold" Margin="0,0,0,5"/>
                         <TextBox x:Name="TxtAiQuestion" MinHeight="58" TextWrapping="Wrap" AcceptsReturn="True" Padding="8"
                                  Text="What are the most likely root causes and safest next diagnostic steps?"
                                  Background="{DynamicResource BrushPanel}" Foreground="{DynamicResource BrushText}"
-                                 BorderBrush="{DynamicResource BrushLine}"/>
+                                 BorderBrush="{DynamicResource BrushLine}"
+                                 AutomationProperties.Name="Question for the assistant"/>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <Button x:Name="BtnAiAnalyze" Content="Analyze Latest Scan" IsEnabled="False"
-                                    Background="{DynamicResource BrushAccent}"/>
+                            <Button x:Name="BtnAiAnalyze" Content="Analy_ze Latest Scan" IsEnabled="False"
+                                    Style="{StaticResource AccentButton}"
+                                    AutomationProperties.Name="Analyze latest scan"/>
                             <TextBlock x:Name="TxtAiStatus" Text="Run a scan, then analyze it here."
                                        Foreground="{DynamicResource BrushMuted}" VerticalAlignment="Center" Margin="4,0,0,0"/>
                         </StackPanel>
                     </StackPanel>
 
-                    <TextBox x:Name="TxtAiOutput" Grid.Row="3" IsReadOnly="True" AcceptsReturn="True"
+                    <TextBox x:Name="TxtAiOutput" Grid.Row="3" IsReadOnly="True" IsReadOnlyCaretVisible="True" AcceptsReturn="True"
                              TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="12"
                              Text="No local AI analysis yet."
                              Background="{DynamicResource BrushPanel}" Foreground="{DynamicResource BrushText}"
-                             BorderBrush="{DynamicResource BrushLine}"/>
+                             BorderBrush="{DynamicResource BrushLine}"
+                             AutomationProperties.Name="Local AI output"/>
                 </Grid>
             </Grid>
         </Grid>
 
-        <!-- Status bar -->
+        <!-- Status bar. Screen-reader live regions (LiveSetting=Polite) are applied to
+             TxtStatus and ProgressBarMain in code (Enable-OmniLiveRegion) so the XAML still
+             loads on .NET Framework builds older than 4.7.1. -->
         <Border Grid.Row="2" Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}" BorderThickness="0,1,0,0" Padding="16,8">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="320"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock x:Name="TxtStatus" Grid.Column="0" Text="Ready." VerticalAlignment="Center" Foreground="{DynamicResource BrushMuted}"/>
-                <ProgressBar x:Name="ProgressBarMain" Grid.Column="1" Height="14" Minimum="0" Maximum="100" Value="0"/>
+                <TextBlock x:Name="TxtStatus" Grid.Column="0" Text="Ready." VerticalAlignment="Center" Foreground="{DynamicResource BrushMuted}"
+                           TextTrimming="CharacterEllipsis"/>
+                <ProgressBar x:Name="ProgressBarMain" Grid.Column="1" Height="14" Minimum="0" Maximum="100" Value="0"
+                             AutomationProperties.Name="Progress"/>
             </Grid>
         </Border>
     </Grid>
