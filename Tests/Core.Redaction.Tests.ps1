@@ -71,6 +71,47 @@ Describe 'Names derived from the session' {
     }
 }
 
+Describe 'Domain names without the environment (SYSTEM, local accounts, imported sessions)' {
+    It 'redacts a Domain metric planted in the results with the environment excluded' {
+        $s = [pscustomobject]@{
+            PSTypeName = 'OmniDiag.Session'
+            Host       = [pscustomobject]@{ ComputerName = 'PC-0815'; UserName = 'NT AUTHORITY\SYSTEM'; PSVersion = '5.1' }
+            Results    = @(
+                [pscustomobject]@{ ModuleName = 'ActiveDirectory'; Metrics = [ordered]@{ PartOfDomain = $true; Domain = 'ad.fabrikam.example' }; Findings = @() }
+                [pscustomobject]@{ ModuleName = 'Other'; Metrics = [ordered]@{ DomainName = 'NORTHWIND' }; Findings = @() }
+            )
+        }
+        $ctx = New-OmniRedactionContext -Session $s -ExcludeEnvironment
+        $copy = ConvertTo-OmniRedacted -InputObject $s -Context $ctx
+        $json = $copy | ConvertTo-Json -Depth 8
+        $json | Should -Not -Match 'fabrikam|NORTHWIND'
+        $copy.Results[0].Metrics['Domain'] | Should -Match '^DOMAIN-\d+$'
+        Invoke-Redact 'joined to AD.FABRIKAM.example (fabrikam.example), NetBIOS northwind' $ctx | Should -Not -Match 'fabrikam|northwind'
+    }
+
+    It 'redacts the domains a v1 report document records in its module metrics' {
+        $doc = [pscustomobject]@{
+            schemaVersion = '1.1.0'
+            host          = [pscustomobject]@{ computerName = 'PC-0815'; userName = 'svc' }
+            modules       = @([pscustomobject]@{ id = 'active-directory'; metrics = [pscustomobject]@{ Domain = 'corp.tailspin.example' } })
+        }
+        $ctx = New-OmniRedactionContext -Session $doc -ExcludeEnvironment
+        Invoke-Redact 'GPO from corp.tailspin.example' $ctx | Should -Match '^GPO from DOMAIN-\d+$'
+    }
+
+    It 'redacts Host.Domain and Host.DnsDomain recorded with the session' {
+        $s = [pscustomobject]@{ Host = [pscustomobject]@{ ComputerName = 'PC-0815'; UserName = 'localadm'; Domain = 'WOODGROVE'; DnsDomain = 'woodgrove.example' } }
+        $ctx = New-OmniRedactionContext -Session $s -ExcludeEnvironment
+        Invoke-Redact 'WOODGROVE\x on pc-0815.woodgrove.example' $ctx | Should -Not -Match 'woodgrove'
+    }
+
+    It 'keeps WORKGROUP (a well-known name)' {
+        $s = [pscustomobject]@{ Results = @([pscustomobject]@{ Metrics = @{ Domain = 'WORKGROUP' } }) }
+        $ctx = New-OmniRedactionContext -Session $s -ExcludeEnvironment
+        Invoke-Redact 'member of WORKGROUP' $ctx | Should -BeExactly 'member of WORKGROUP'
+    }
+}
+
 Describe 'Profile paths' {
     It 'keeps the structure of the user profile path' {
         Invoke-Redact 'C:\Users\jdoe\AppData\Local\Temp' | Should -BeExactly 'C:\Users\USER-1\AppData\Local\Temp'
@@ -86,6 +127,26 @@ Describe 'Profile paths' {
         $out | Should -Not -Match 'lwhite|kbrown'
         $out | Should -BeExactly '{"p":"C:\\Users\\USER-3\\x.txt","q":"/home/USER-4/.ssh"}'
         Invoke-Redact 'owner lwhite' $ctx | Should -BeExactly 'owner USER-3'
+    }
+
+    It 'redacts profile folders behind device paths, UNC shares, and WSL mounts' {
+        $ctx = New-TestContext
+        Invoke-Redact '\Device\HarddiskVolume3\Users\bob\AppData\x.exe' $ctx | Should -BeExactly '\Device\HarddiskVolume3\Users\USER-3\AppData\x.exe'
+        Invoke-Redact '\\fs01\Users\carol\Docs' $ctx | Should -BeExactly '\\fs01\Users\USER-4\Docs'
+        Invoke-Redact '/mnt/c/Users/dave' $ctx | Should -BeExactly '/mnt/c/Users/USER-5'
+        Invoke-Redact 'bob carol dave' $ctx | Should -BeExactly 'USER-3 USER-4 USER-5'
+    }
+
+    It 'discovers profile names behind device paths, UNC shares, and WSL mounts in the session' {
+        $s = [pscustomobject]@{
+            Host  = [pscustomobject]@{ ComputerName = 'PC-0815'; UserName = 'jdoe' }
+            Notes = @('\Device\HarddiskVolume3\Users\bob\AppData\x.exe', '\\fs01\Users\carol\Docs', '/mnt/c/Users/dave', 'C:\Users\erin\x', '/home/frank/.ssh')
+        }
+        $ctx = New-OmniRedactionContext -Session $s -ExcludeEnvironment
+        $users = @((Get-OmniRedactionMap -Context $ctx) | Where-Object Category -eq 'User' | ForEach-Object Original)
+        foreach ($u in 'bob', 'carol', 'dave', 'erin', 'frank') { $users | Should -Contain $u }
+        # Discovered names are redacted even where they appear without a path.
+        Invoke-Redact 'owners: bob, carol, dave' $ctx | Should -Not -Match 'bob|carol|dave'
     }
 
     It 'keeps well-known profile folders and URLs' {
@@ -128,6 +189,34 @@ Describe 'Pattern detectors' {
     It 'redacts MAC addresses in either notation to one pseudonym' {
         $ctx = New-TestContext
         Invoke-Redact 'NIC 00-15-5D-AA-BB-CC aka 00:15:5d:aa:bb:cc' $ctx | Should -BeExactly 'NIC MAC-1 aka MAC-1'
+    }
+
+    It 'redacts MAC addresses glued to a label or followed by a colon' {
+        $ctx = New-TestContext
+        Invoke-Redact 'MAC:00-11-22-33-44-55' $ctx | Should -BeExactly 'MAC:MAC-1'
+        Invoke-Redact 'BSSID:aa:bb:cc:dd:ee:ff' $ctx | Should -BeExactly 'BSSID:MAC-2'
+        Invoke-Redact 'link aa:bb:cc:dd:ee:ff: down' $ctx | Should -BeExactly 'link MAC-2: down'
+    }
+
+    It 'does not take six pairs out of a longer hex chain as a MAC' {
+        Invoke-Redact 'eui 00-11-22-33-44-55-66-77' | Should -BeExactly 'eui 00-11-22-33-44-55-66-77'
+    }
+
+    It 'redacts IPv6 addresses glued to a label or followed by a colon' {
+        $ctx = New-TestContext
+        Invoke-Redact 'Pinging 2001:db8::5: Request timed out' $ctx | Should -BeExactly 'Pinging IPV6-1: Request timed out'
+        Invoke-Redact 'gw fe80::1:' $ctx | Should -BeExactly 'gw IPV6-2:'
+        Invoke-Redact 'IPv6Address:2001:db8::5' $ctx | Should -BeExactly 'IPv6Address:IPV6-1'
+        Invoke-Redact 'Address:fe80::1' $ctx | Should -BeExactly 'Address:IPV6-2'
+        Invoke-Redact 'Source:fe80::1 Interface:2001:db8::7' $ctx | Should -BeExactly 'Source:IPV6-2 Interface:IPV6-3'
+        Invoke-Redact '[2001:db8::1]:443' $ctx | Should -BeExactly '[IPV6-4]:443'
+        Invoke-Redact 'mapped ::ffff:192.168.1.5' $ctx | Should -BeExactly 'mapped IPV6-5'
+        Invoke-Redact 'zone fe80::1%12' $ctx | Should -BeExactly 'zone IPV6-2%12'
+    }
+
+    It 'still keeps versions, times, timestamps, and colon chains that are no address' {
+        $text = 'build 10.0.22631.4317 at 12:30:45 on 2026-06-01T08:00:00.000Z; 1:2:3:4:5:6:7:8:9; Foo::Bar::Baz'
+        Invoke-Redact $text | Should -BeExactly $text
     }
 
     It 'keeps broadcast/zero MACs, dates, and GUIDs' {

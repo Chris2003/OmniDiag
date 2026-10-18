@@ -40,16 +40,16 @@ Options:
 | Identifier | Source | Pseudonym |
 |---|---|---|
 | Computer name (NetBIOS) | session `Host.ComputerName`, `$env:COMPUTERNAME` | `HOST-1` |
-| Computer FQDN | `<host>.<dns domain>` found anywhere in the session; `$env:COMPUTERNAME` + `$env:USERDNSDOMAIN` | `HOST-1.DOMAIN-2` |
+| Computer FQDN | `<host>.<dns domain>` found anywhere in the session; `$env:COMPUTERNAME` + `$env:USERDNSDOMAIN` or the machine's DNS domain | `HOST-1.DOMAIN-2` |
 | User name | session `Host.UserName` (`DOMAIN\user` and `user@domain` are split), `$env:USERNAME` | `USER-1` |
-| NetBIOS domain | the `DOMAIN` part of `DOMAIN\user`, `$env:USERDOMAIN` | `DOMAIN-1` |
-| DNS domain | `$env:USERDNSDOMAIN`, the domain of an FQDN or a UPN, and its parent suffixes (`contoso.com` from `corp.contoso.com`) | `DOMAIN-2` |
-| Profile folders | `$env:USERPROFILE`, and every `\Users\<name>\`, `/home/<name>/`, `\Documents and Settings\<name>\` folder anywhere in the session or a log line (including JSON-escaped `\\Users\\<name>`) | `C:\Users\USER-2\...` |
+| NetBIOS domain | the `DOMAIN` part of `DOMAIN\user`, session `Host.Domain`, `Domain` / `DomainName` metrics, `$env:USERDOMAIN` | `DOMAIN-1` |
+| DNS domain | session `Host.DnsDomain` (recorded at scan time), `Domain` / `DnsDomain` / `DomainName` metrics in the results (for example the Active Directory scanner's `Domain`), `$env:USERDNSDOMAIN`, the machine's primary DNS domain (registry `HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters`, so it is found when running as SYSTEM or a local account), the domain of an FQDN or a UPN, and its parent suffixes (`contoso.com` from `corp.contoso.com`) | `DOMAIN-2` |
+| Profile folders | `$env:USERPROFILE`, and every `\Users\<name>\`, `/home/<name>/`, `\Documents and Settings\<name>\` folder anywhere in the session or a log line, including device paths (`\Device\HarddiskVolume3\Users\<name>`), UNC shares (`\\fs01\Users\<name>`), WSL mounts (`/mnt/c/Users/<name>`), and JSON-escaped `\\Users\\<name>` | `C:\Users\USER-2\...` |
 | Other profile roots | `$env:USERPROFILE` outside `X:\Users` (redirected or roaming profiles) | `PATH-1` |
 | Account SIDs | `S-1-5-21-...` (machine and domain accounts), `S-1-12-1-...` (Entra ID) | `SID-1` |
 | IPv4 addresses | any dotted quad | `IP-1` (`IP-1/24` for a CIDR) |
-| IPv6 addresses | full and compressed forms, IPv4-mapped, with a zone index | `IPV6-1` (`IPV6-1%12`) |
-| MAC addresses | `AA-BB-CC-DD-EE-FF` and `AA:BB:CC:DD:EE:FF` | `MAC-1` |
+| IPv6 addresses | full and compressed forms, IPv4-mapped, with a zone index, also glued to a label (`Address:fe80::1`) or followed by a colon (`Pinging 2001:db8::5: ...`) | `IPV6-1` (`IPV6-1%12`) |
+| MAC addresses | `AA-BB-CC-DD-EE-FF` and `AA:BB:CC:DD:EE:FF`, also glued to a label (`BSSID:aa:bb:...`) or followed by a colon | `MAC-1` |
 | Extra terms | `-AdditionalTerm` | `TERM-1` |
 
 Names are matched case-insensitively and longest first, so `acme-ws-042.corp.contoso.com`
@@ -84,8 +84,9 @@ These values identify nothing about the machine and are kept so the report stays
   `DefaultAppPool`, `root`, and the words `user`, `users`, `host`, `domain`, `path`, `sid`, `mac`,
   `term`. Names shorter than 3 characters are ignored (`-AdditionalTerm` accepts 2).
 * **Text that is not an identifier:** times (`12:30`, `12:30:45`), ISO timestamps, dates, GUIDs,
-  version numbers with more than four parts or a part above 255 (`10.0.19045.1`), and code such
-  as `[System.IO.Path]::Combine`.
+  version numbers with more than four parts or a part above 255 (`10.0.19045.1`), code such
+  as `[System.IO.Path]::Combine`, and hex chains longer than a MAC (`00-11-22-33-44-55-66-77`).
+* **URL paths:** `/home/` or `/Users/` inside a URL (`https://example.com/home/index.html`).
 * **Branding** you pass (`-BrandName`, `-BrandLogo`) and the output folder.
 
 ## Pseudonym scheme
@@ -136,6 +137,8 @@ omitted because timings and errors in it are often what a vendor needs.
 * A profile folder first seen while redacting (for example only in a run-log line) is redacted
   from that point on; text that was already redacted before it was seen is not revisited.
   Folders anywhere in the session are found up front, so this only affects the log.
+* Any `\Users\<x>\` or `\home\<x>\` segment after a backslash is treated as a profile folder,
+  so a registry path such as `SAM\Domains\Account\Users\000001F4` is (harmlessly) over-redacted.
 * A four-part version number whose parts are all 0-255 (`1.2.3.4`) is indistinguishable from an
   IPv4 address and is redacted.
 * A real name that already looks like a pseudonym in upper case (a computer named `HOST-12`) is

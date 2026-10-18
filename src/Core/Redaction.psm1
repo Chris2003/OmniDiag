@@ -41,8 +41,11 @@ $script:OmniRedactPseudonymRegex = [regex]::new(
 
 # Profile folders: \Users\<name>\, /home/<name>/, \Documents and Settings\<name>\.
 # The separators allow doubled backslashes, so JSON-escaped text (log lines) matches too.
+# A backslash prefix matches anywhere (\Device\HarddiskVolume3\Users\x, \\fs01\Users\x);
+# a forward slash only at a path start or after /mnt/<drive> (WSL), so URL paths such as
+# https://example.com/home/index.html are kept.
 $script:OmniRedactProfileRegex = [regex]::new(
-    '(?<![A-Za-z0-9._-])(?<prefix>[\\/]+(?:Users|home|Documents and Settings)[\\/]+)(?<name>[^\\/:*?"<>|\r\n\t]+(?=[\\/])|[^\\/:*?"<>|\s,;''()\[\]{}]+)',
+    '(?<prefix>(?:\\+|(?<![A-Za-z0-9._-])/+|(?<=/mnt/[A-Za-z])/+)(?:Users|home|Documents and Settings)[\\/]+)(?<name>[^\\/:*?"<>|\r\n\t]+(?=[\\/])|[^\\/:*?"<>|\s,;''()\[\]{}]+)',
     $script:OmniRedactRegexOptions)
 
 # Machine / domain / Entra ID account SIDs. Other well-known SIDs (S-1-5-18, S-1-5-32-544,
@@ -50,14 +53,20 @@ $script:OmniRedactProfileRegex = [regex]::new(
 $script:OmniRedactSidRegex = [regex]::new(
     '(?<![A-Za-z0-9-])S-1-(?:5-21|12-1)(?:-\d+){3,4}(?!\d)', $script:OmniRedactRegexOptions)
 
-# MAC addresses: six hex pairs with a consistent ':' or '-' separator.
+# MAC addresses: six hex pairs with a consistent ':' or '-' separator. A label glued on with
+# ':' (MAC:00-11-..., BSSID:aa:bb:...) or a trailing ':' still matches; a seventh standalone
+# hex pair before or after (EUI-64, IPv6 with two-digit groups) does not.
 $script:OmniRedactMacRegex = [regex]::new(
-    '(?<![0-9A-Za-z:-])[0-9A-F]{2}([:-])(?:[0-9A-F]{2}\1){4}[0-9A-F]{2}(?![0-9A-Za-z:-])', $script:OmniRedactRegexOptions)
+    '(?<![0-9A-Za-z])(?<!(?<![0-9A-Za-z])[0-9A-F]{2}[:-])[0-9A-F]{2}([:-])(?:[0-9A-F]{2}\1){4}[0-9A-F]{2}(?![0-9A-Za-z])(?![:-][0-9A-F]{2}(?![0-9A-Za-z]))',
+    $script:OmniRedactRegexOptions)
 
 # IPv6 candidates (at least two colons); every candidate is validated by IPAddress.TryParse
 # and must contain '::' or eight groups, so times like 12:30 or 12:30:45 never match.
+# A candidate may follow a word label and a colon (Address:fe80::1, Source:2001:db8::5) but
+# never starts inside a colon chain (after a standalone 1-4 digit hex group and ':').
+# A trailing ':' (Pinging 2001:db8::5: ...) is split off in Get-OmniRedactionMatchReplacement.
 $script:OmniRedactIPv6Regex = [regex]::new(
-    '(?<![0-9A-Za-z:.\])])(?=[0-9A-F]*:[0-9A-F]*:)[0-9A-F:]+(?:(?<=:)(?:\d{1,3}\.){3}\d{1,3})?(?:%[0-9A-Za-z]+)?(?![0-9A-Za-z:]|\.\d)',
+    '(?<![0-9A-Za-z.\])])(?<!(?<![0-9A-Za-z])[0-9A-F]{1,4}:)(?=[0-9A-F]*:[0-9A-F]*:)[0-9A-F:]+(?:(?<=:)(?:\d{1,3}\.){3}\d{1,3})?(?:%[0-9A-Za-z]+)?(?![0-9A-Za-z:]|\.\d)',
     $script:OmniRedactRegexOptions)
 
 # IPv4 dotted quads (no leading/trailing dotted digits, so 10.0.19045.1 is not an address).
@@ -268,6 +277,23 @@ function Test-OmniRedactionKeepIPv4 {
     return $false
 }
 
+function ConvertTo-OmniRedactionIPv6Address {
+    <#
+    .SYNOPSIS
+        Internal: the IPv6 address a candidate spells, or $null. The candidate must contain
+        '::' or eight groups (six plus an embedded IPv4) and parse as InterNetworkV6.
+    #>
+    param([string] $Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $null }
+    $colons = $Text.Length - $Text.Replace(':', '').Length
+    $hasV4 = $Text.Contains('.')
+    if (-not ($Text.Contains('::') -or $colons -eq 7 -or ($hasV4 -and $colons -eq 6))) { return $null }
+    $addr = $null
+    if (-not [System.Net.IPAddress]::TryParse($Text, [ref]$addr)) { return $null }
+    if ([string]$addr.AddressFamily -ne 'InterNetworkV6') { return $null }  # enum compared by name (no socket types referenced)
+    return $addr
+}
+
 function Get-OmniRedactionMatchReplacement {
     <# .SYNOPSIS Internal: the replacement text for one pattern match, or $null to keep it. #>
     param($Context, [string] $Kind, [System.Text.RegularExpressions.Match] $Match)
@@ -297,19 +323,21 @@ function Get-OmniRedactionMatchReplacement {
             $core = $v
             $pct = $v.IndexOf('%')
             if ($pct -ge 0) { $zone = $v.Substring($pct); $core = $v.Substring(0, $pct) }
-            $colons = $core.Length - $core.Replace(':', '').Length
-            $hasV4 = $core.Contains('.')
-            if (-not ($core.Contains('::') -or $colons -eq 7 -or ($hasV4 -and $colons -eq 6))) { return $null }
-            $addr = $null
-            if (-not [System.Net.IPAddress]::TryParse($core, [ref]$addr)) { return $null }
-            if ([string]$addr.AddressFamily -ne 'InterNetworkV6') { return $null }  # enum compared by name (no socket types referenced)
+            $addr = ConvertTo-OmniRedactionIPv6Address -Text $core
+            $tail = ''
+            if ($null -eq $addr -and $zone -eq '' -and $core.EndsWith(':') -and -not $core.EndsWith('::')) {
+                # 'Pinging 2001:db8::5: Request timed out' - the colon belongs to the sentence.
+                $addr = ConvertTo-OmniRedactionIPv6Address -Text $core.Substring(0, $core.Length - 1)
+                $tail = ':'
+            }
+            if ($null -eq $addr) { return $null }
             $bytes = $addr.GetAddressBytes()
             if ($bytes[0] -eq 0xFF) { return $null }                          # multicast
             if ([System.Net.IPAddress]::IsLoopback($addr)) { return $null }     # ::1
             if (@($bytes | Where-Object { $_ -ne 0 }).Count -eq 0) { return $null } # ::
             $key = $addr.ToString().ToLowerInvariant()
             $pi = $key.IndexOf('%'); if ($pi -ge 0) { $key = $key.Substring(0, $pi) }
-            return (Get-OmniRedactionPseudonym -Context $Context -Category 'IPv6' -Key $key -Original $key) + $zone
+            return (Get-OmniRedactionPseudonym -Context $Context -Category 'IPv6' -Key $key -Original $key) + $zone + $tail
         }
         'IPv4' {
             if (Test-OmniRedactionKeepIPv4 -Value $v) { return $null }
@@ -524,6 +552,57 @@ function ConvertTo-OmniRedactedValue {
     return $copy
 }
 
+function Add-OmniRedactionDomainName {
+    <# .SYNOPSIS Internal: registers a DNS domain (with its parent suffixes) or a NetBIOS domain name. #>
+    param($Context, [string] $Domain)
+    if ([string]::IsNullOrWhiteSpace($Domain)) { return }
+    if ($Domain -match '\.') { [void](Add-OmniRedactionDnsDomain -Context $Context -Domain $Domain) }
+    else { [void](Add-OmniRedactionTerm -Context $Context -Category 'Domain' -Value $Domain) }
+}
+
+function Add-OmniRedactionDomainMetric {
+    <#
+    .SYNOPSIS
+        Internal: registers every Domain / DnsDomain / DomainName metric value found in the
+        session results (native Results[].Metrics or v1 modules[].metrics).
+    #>
+    param($Context, $Session)
+    if ($null -eq $Session) { return }
+    $results = @(Get-OmniRedactionMember -InputObject $Session -Name 'Results') + @(Get-OmniRedactionMember -InputObject $Session -Name 'modules')
+    foreach ($r in $results) {
+        if ($null -eq $r) { continue }
+        $metrics = Get-OmniRedactionMember -InputObject $r -Name 'Metrics'
+        if ($null -eq $metrics) { continue }
+        foreach ($n in @('Domain', 'DnsDomain', 'DomainName')) {
+            $v = Get-OmniRedactionMember -InputObject $metrics -Name $n
+            if ($v -is [string]) { Add-OmniRedactionDomainName -Context $Context -Domain $v }
+        }
+    }
+}
+
+function Get-OmniRedactionMachineDnsDomain {
+    <#
+    .SYNOPSIS
+        Internal: the local machine's primary DNS domain from the TCP/IP parameters in the
+        registry (Domain, then NV Domain), or ''. A local registry read: no network I/O.
+    #>
+    [OutputType([string])]
+    param()
+    $key = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters'
+    try {
+        if (Test-Path -LiteralPath $key) {
+            $props = Get-ItemProperty -LiteralPath $key -ErrorAction Stop
+            foreach ($n in @('Domain', 'NV Domain')) {
+                $p = $props.PSObject.Properties[$n]
+                if ($p -and -not [string]::IsNullOrWhiteSpace([string]$p.Value)) { return ([string]$p.Value).Trim() }
+            }
+        }
+    } catch {
+        Write-Verbose "DNS domain not readable from the registry: $($_.Exception.Message)"
+    }
+    return ''
+}
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -539,7 +618,9 @@ function New-OmniRedactionContext {
             from the session host and $env:COMPUTERNAME / $env:USERDNSDOMAIN,
           * user names from the session host (DOMAIN\user and user@domain are split)
             and $env:USERNAME,
-          * domain names ($env:USERDOMAIN, $env:USERDNSDOMAIN and its parent suffixes),
+          * domain names (session Host.Domain / Host.DnsDomain, Domain / DnsDomain /
+            DomainName metrics in the results, $env:USERDOMAIN, $env:USERDNSDOMAIN, the
+            machine's primary DNS domain from the registry, and their parent suffixes),
           * user profile paths ($env:USERPROFILE and every \Users\<name>\ folder found
             anywhere in the session),
           * any -AdditionalTerm values,
@@ -565,8 +646,9 @@ function New-OmniRedactionContext {
         TERM-n. Terms shorter than 2 characters are ignored.
 
     .PARAMETER ExcludeEnvironment
-        Do not read $env:COMPUTERNAME, USERNAME, USERDOMAIN, USERDNSDOMAIN, USERPROFILE
-        (useful when redacting a session imported from another machine, and in tests).
+        Do not read $env:COMPUTERNAME, USERNAME, USERDOMAIN, USERDNSDOMAIN, USERPROFILE or
+        the machine's DNS domain (useful when redacting a session imported from another
+        machine, and in tests). Names recorded in the session itself are still used.
 
     .OUTPUTS
         OmniDiag.RedactionContext
@@ -612,19 +694,25 @@ function New-OmniRedactionContext {
             Add-OmniRedactionHostName -Context $ctx -Name ([string](Get-OmniRedactionMember -InputObject $sessionHost -Name $n))
         }
         foreach ($n in @('DnsDomain', 'Domain')) {
-            $d = [string](Get-OmniRedactionMember -InputObject $sessionHost -Name $n)
-            if ($d -match '\.') { [void](Add-OmniRedactionDnsDomain -Context $ctx -Domain $d) }
-            else { [void](Add-OmniRedactionTerm -Context $ctx -Category 'Domain' -Value $d) }
+            Add-OmniRedactionDomainName -Context $ctx -Domain ([string](Get-OmniRedactionMember -InputObject $sessionHost -Name $n))
         }
         Add-OmniRedactionUserName -Context $ctx -Name ([string](Get-OmniRedactionMember -InputObject $sessionHost -Name 'UserName'))
     }
 
+    # 1b. Domain metrics in the results (ActiveDirectory / SystemInformation 'Domain' =
+    #     Win32_ComputerSystem.Domain): covers sessions saved before Host.DnsDomain existed.
+    Add-OmniRedactionDomainMetric -Context $ctx -Session $Session
+
     # 2. The local environment.
     if (-not $ExcludeEnvironment) {
         if ($env:USERDNSDOMAIN) { [void](Add-OmniRedactionDnsDomain -Context $ctx -Domain $env:USERDNSDOMAIN) }
+        # The machine's DNS domain is set even when $env:USERDNSDOMAIN is not (SYSTEM, local accounts).
+        $machineDns = Get-OmniRedactionMachineDnsDomain
+        if ($machineDns) { [void](Add-OmniRedactionDnsDomain -Context $ctx -Domain $machineDns) }
         if ($env:COMPUTERNAME) {
             Add-OmniRedactionHostName -Context $ctx -Name $env:COMPUTERNAME
             if ($env:USERDNSDOMAIN) { Add-OmniRedactionHostName -Context $ctx -Name ('{0}.{1}' -f $env:COMPUTERNAME, $env:USERDNSDOMAIN) }
+            if ($machineDns -and $machineDns -ne $env:USERDNSDOMAIN) { Add-OmniRedactionHostName -Context $ctx -Name ('{0}.{1}' -f $env:COMPUTERNAME, $machineDns) }
         }
         if ($env:USERDOMAIN -and $env:USERDOMAIN -ne $env:COMPUTERNAME) { [void](Add-OmniRedactionTerm -Context $ctx -Category 'Domain' -Value $env:USERDOMAIN) }
         if ($env:USERNAME) { Add-OmniRedactionUserName -Context $ctx -Name $env:USERNAME }
