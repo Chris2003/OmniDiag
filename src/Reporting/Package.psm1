@@ -11,6 +11,38 @@
 
 Set-StrictMode -Version Latest
 
+function ConvertFrom-OmniJsonUnicodeEscape {
+    <#
+    .SYNOPSIS
+        Internal: decodes \uXXXX escapes of printable characters in JSON text.
+
+    .DESCRIPTION
+        ConvertTo-Json on Windows PowerShell 5.1 escapes ' & < > (and more) as \u0027,
+        \u0026, ... The decoded text is equivalent JSON. Quotes, backslashes, control
+        characters, and surrogate halves stay escaped; an escaped backslash followed by
+        'u0027' (\\u0027) is left alone.
+    #>
+    [OutputType([string])]
+    param([AllowEmptyString()][string] $Text)
+    if ([string]::IsNullOrEmpty($Text) -or $Text.IndexOf('\u', [System.StringComparison]::Ordinal) -lt 0) { return $Text }
+    $sb = [System.Text.StringBuilder]::new($Text.Length)
+    $last = 0
+    foreach ($m in $script:OmniJsonUnicodeEscapeRegex.Matches($Text)) {
+        $code = [System.Convert]::ToInt32($m.Groups['hex'].Value, 16)
+        $keep = $code -lt 0x20 -or $code -eq 0x22 -or $code -eq 0x5C -or ($code -ge 0x7F -and $code -lt 0xA0) -or ($code -ge 0xD800 -and $code -le 0xDFFF)
+        if ($keep) { continue }
+        [void]$sb.Append($Text, $last, $m.Index - $last)
+        [void]$sb.Append($m.Groups['bs'].Value)
+        [void]$sb.Append([char]$code)
+        $last = $m.Index + $m.Length
+    }
+    [void]$sb.Append($Text, $last, $Text.Length - $last)
+    return $sb.ToString()
+}
+
+# An even run of backslashes (escaped backslashes, kept) followed by \uXXXX.
+$script:OmniJsonUnicodeEscapeRegex = [regex]::new('(?<!\\)(?<bs>(?:\\\\)*)\\u(?<hex>[0-9A-Fa-f]{4})', [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+
 function Export-OmniReportPackage {
     <#
     .SYNOPSIS
@@ -22,8 +54,14 @@ function Export-OmniReportPackage {
     .PARAMETER Path
         Destination .zip path.
 
-    .PARAMETER BrandName / BrandLogo / BrandColor
-        Optional branding passed to the HTML (and best-effort PDF) report.
+    .PARAMETER BrandName
+        Optional organization name shown on the HTML (and best-effort PDF) report.
+
+    .PARAMETER BrandLogo
+        Optional logo image path embedded in the HTML (and best-effort PDF) report.
+
+    .PARAMETER BrandColor
+        Optional accent color (#RRGGBB) for the HTML (and best-effort PDF) report.
 
     .PARAMETER Redact
         Redact every entry with stable pseudonyms (see Export-OmniReport -Redact). A
@@ -100,7 +138,9 @@ function Export-OmniReportPackage {
         } catch { }
 
         # Include the raw structured log when available. Redacted packages get a copy
-        # redacted line by line with the same context (each JSONL line is redacted as text).
+        # redacted line by line with the same context (each JSONL line is redacted as text,
+        # after its printable \uXXXX escapes are decoded; the line stays valid JSON and its
+        # timestamps and layout are untouched).
         $logIncluded = $false
         if ($LogPath -and (Test-Path -LiteralPath $LogPath)) {
             $logDest = Join-Path $staging 'omnidiag-log.jsonl'
@@ -109,7 +149,10 @@ function Export-OmniReportPackage {
                 $writer = [System.IO.StreamWriter]::new($logDest, $false, $utf8)
                 try {
                     foreach ($line in [System.IO.File]::ReadLines((Resolve-Path -LiteralPath $LogPath).ProviderPath)) {
-                        $writer.Write([string](ConvertTo-OmniRedacted -InputObject $line -Context $ctx))
+                        # Undo \uXXXX escapes first: Windows PowerShell 5.1 writes ' and & as
+                        # \u0027 / \u0026, which would hide o'brien or R&D from the term match.
+                        $plainLine = ConvertFrom-OmniJsonUnicodeEscape -Text $line
+                        $writer.Write([string](ConvertTo-OmniRedacted -InputObject $plainLine -Context $ctx))
                         $writer.Write("`n")
                     }
                 } finally { $writer.Dispose() }

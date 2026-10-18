@@ -122,7 +122,9 @@ technician's machine, outside the folder you share.
 The ZIP package includes the run log (`omnidiag-log.jsonl`). In a redacted package the log is
 redacted line by line with the same context, so pseudonyms match the rest of the bundle. Each
 line is redacted as text: names, profile folders (also the JSON-escaped `C:\\Users\\name` form),
-SIDs, and addresses are replaced; the JSON structure is untouched. The log was kept rather than
+SIDs, and addresses are replaced; the JSON structure and timestamps are untouched. Printable
+`\uXXXX` escapes are decoded first (Windows PowerShell 5.1 writes `'` and `&` as `\u0027` and
+`\u0026`), so names such as `o'brien` or `R&D` are found; the line stays valid JSON. The log was kept rather than
 omitted because timings and errors in it are often what a vendor needs.
 
 ## Limitations

@@ -271,6 +271,29 @@ Describe 'Redaction entry points' {
         { Export-OmniReport -Session $script:Session -OutputDirectory (Join-Path $TestDrive 'x') -Format Json -RedactionMapPath (Join-Path $TestDrive 'm.json') } | Should -Throw '*requires -Redact*'
     }
 
+    It 'redacts names with an apostrophe or an ampersand in a run log written by Windows PowerShell 5.1 (\u0027 / \u0026)' {
+        $log = Join-Path $TestDrive 'escaped.jsonl'
+        $lines = @(
+            '{"time":"2026-06-01T08:00:00.000Z","level":"Info","message":"Data folder C:\\Users\\o\u0027brien\\Downloads for R\u0026D Lab"}',
+            '{"time":"2026-06-01T08:00:01.000Z","level":"Info","message":"literal \\u0027 stays"}'
+        )
+        [System.IO.File]::WriteAllText($log, (($lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+        $session = New-RedactionFixtureSession -LogPath $log
+        $ctx = New-OmniRedactionContext -Session $session -ExcludeEnvironment -AdditionalTerm 'R&D Lab'
+        $zip = Export-OmniReportPackage -Session $session -Path (Join-Path (Join-Path $TestDrive 'escaped') 'pkg.zip') -Redact -RedactionContext $ctx
+        $dest = Join-Path $TestDrive 'escaped-x'
+        Expand-Archive -LiteralPath $zip -DestinationPath $dest
+        $text = [System.IO.File]::ReadAllText((Join-Path $dest 'omnidiag-log.jsonl'))
+        foreach ($id in @("o'brien", 'o\u0027brien', 'R&D', 'R\u0026D')) {
+            $text.IndexOf($id, [System.StringComparison]::OrdinalIgnoreCase) | Should -Be -1 -Because "'$id' must not appear in the run log"
+        }
+        $rows = @($text -split "`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+        $rows.Count | Should -Be 2
+        $rows[0].message | Should -Match '^Data folder C:\\Users\\USER-\d+\\Downloads for TERM-\d+$'
+        $text | Should -Match ([regex]::Escape('"time":"2026-06-01T08:00:00.000Z"'))
+        $rows[1].message | Should -BeExactly 'literal \u0027 stays'
+    }
+
     It 'Export-OmniReportPackage -Redact redacts the package and its file name when called directly' {
         $zip = Export-OmniReportPackage -Session $script:Session -Path (Join-Path (Join-Path $TestDrive 'direct') 'ACME-WS-042.zip') -Redact
         Split-Path $zip -Leaf | Should -Be 'HOST-1.zip'
