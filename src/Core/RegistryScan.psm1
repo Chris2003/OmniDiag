@@ -245,6 +245,26 @@ function Get-OmniInvalidRegistryEntry {
     return $result
 }
 
+function Get-OmniRegExportBody {
+    <#
+    .SYNOPSIS
+        Strips the leading "Windows Registry Editor Version 5.00" header (and an optional
+        U+FEFF byte-order mark) from the text of a reg.exe export, so several exports can be
+        merged under one header.
+
+    .NOTES
+        The BOM is matched with the regex escape \uFEFF, never a literal character: this file
+        is UTF-8 without a BOM, and Windows PowerShell 5.1 reads such a file as ANSI, which
+        turned a literal U+FEFF into three characters and stopped the header being stripped.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([AllowNull()] [AllowEmptyString()] [string] $Content)
+
+    if (-not $Content) { return '' }
+    return ($Content -replace '(?s)^\s*\uFEFF?\s*Windows Registry Editor Version 5\.00\s*', '')
+}
+
 function Export-OmniRegistryBackup {
     <#
     .SYNOPSIS
@@ -282,7 +302,7 @@ function Export-OmniRegistryBackup {
                 throw "reg.exe export failed for '$k' (exit $LASTEXITCODE): $($exportOutput -join ' ')"
             }
             $content = Get-Content -LiteralPath $tmp -Raw
-            $content = $content -replace '(?s)^\s*﻿?Windows Registry Editor Version 5\.00\s*', ''
+            $content = Get-OmniRegExportBody -Content $content
             [void]$sb.AppendLine($content.Trim())
             [void]$sb.AppendLine('')
         } finally {

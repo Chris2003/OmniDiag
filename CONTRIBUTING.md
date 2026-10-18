@@ -23,23 +23,78 @@ Requirements: Windows PowerShell 5.1 or PowerShell 7+, and Pester 5.5+ for tests
 
 1. Create a branch: `git checkout -b feature/my-change`.
 2. Make your change with tests.
-3. Run the analyzer and tests locally (see below). Both must pass.
-4. Update `CHANGELOG.md` under **Unreleased**.
+3. Run `build/Invoke-Lint.ps1` and `build/Invoke-Tests.ps1` locally (see below). Both must pass.
+4. Update `CHANGELOG.md` under the topmost (unreleased) version.
 5. Open a pull request describing the change and how you verified it.
 
 ## Linting & tests
 
 ```powershell
-# Lint
+# One-time setup
+Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -SkipPublisherCheck
 Install-Module PSScriptAnalyzer -Scope CurrentUser
-Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error,Warning
+
+# Lint: 0 errors required
+.\build\Invoke-Lint.ps1
+.\build\Invoke-Lint.ps1 -FailOnWarning        # stricter, optional
 
 # Tests
-Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser
-Invoke-Pester -Path .\Tests
+.\build\Invoke-Tests.ps1
+.\build\Invoke-Tests.ps1 -Path .\Tests\NoNetwork.Tests.ps1 -Verbosity Detailed
+.\build\Invoke-Tests.ps1 -Coverage -CoverageTarget 80   # coverage report
 ```
 
-CI runs both on `windows-latest` for every pull request.
+Both scripts run on Windows PowerShell 5.1 and PowerShell 7+, and exit non-zero on failure.
+
+**`build/Invoke-Tests.ps1`** runs Pester (5.5+) over `Tests/` through `New-PesterConfiguration`.
+It points `OMNIDIAG_DATA` at a fresh temporary folder for the run, so tests never write
+`OmniDiagData` into your checkout; the folder is deleted afterwards (`-KeepData` keeps it).
+Use it instead of a bare `Invoke-Pester`. `-TestResultPath` writes NUnit XML.
+
+**Coverage.** `-Coverage` measures `src/Core`, `src/Repair`, and `src/Reporting`, writes a
+JaCoCo report (`-CoverageOutputPath`, default `coverage.xml`, git-ignored), and prints the
+percentage per folder. `-CoverageTarget` is report-only in Phase 1; `-EnforceCoverage` makes a
+miss fail the run. Windows-only code paths count as missed on Linux, so compare Windows numbers.
+
+**`build/Invoke-Lint.ps1`** runs PSScriptAnalyzer with
+[`PSScriptAnalyzerSettings.psd1`](PSScriptAnalyzerSettings.psd1) over `src`, `OmniDiag.ps1`,
+`install.ps1`, and `build`. It prints counts by severity and by rule and lists every error and
+warning. All default rules are on. `PSProvideCommentHelp` stays at Information (advisory).
+`PSAvoidUsingWriteHost` is ignored only for the console presentation layers (`src/Cli`,
+`src/UI`, `OmniDiag.ps1`, `install.ps1`, `build/`), because the settings file can't scope a
+rule by path. Errors fail the build. Warnings are tracked against a baseline; don't add new
+ones. Point the VS Code PowerShell extension at the same settings file
+(`powershell.scriptAnalysis.settingsPath`).
+
+**CI** (`.github/workflows/ci.yml`) runs on every push to `main` and every pull request:
+
+- lint
+- tests on Windows pwsh 7, Windows PowerShell 5.1, Ubuntu pwsh, and Windows 11 ARM64
+  (the ARM64 leg doesn't block merges yet)
+- a coverage report from the Windows pwsh leg (job summary and `test-results` artifact)
+- the portable package build (zip and `.sha256` uploaded as an artifact)
+- dependency review on pull requests
+
+Actions are pinned to commit SHAs, and Dependabot proposes updates weekly.
+
+### No-network rule and allowlist
+
+OmniDiag is local-only. `Tests/NoNetwork.Tests.ps1` parses every script under `src` (and
+`OmniDiag.ps1`) and fails on any network-capable API outside its allowlist. That covers
+`Invoke-WebRequest`, `Invoke-RestMethod`, `Test-Connection`, `Test-NetConnection`,
+`Resolve-DnsName`, `Test-ComputerSecureChannel`, `Start-BitsTransfer`, remoting/CIM sessions,
+`Invoke-Command -ComputerName`, `System.Net.WebClient`, `HttpClient`, sockets, `Ping`, `Dns`,
+and `WebRequest`. Outside `src`, only `install.ps1` may download.
+
+To add a network-capable API, you need all of these:
+
+1. An allowlist entry at the top of `Tests/NoNetwork.Tests.ps1`: the file's repo-relative path,
+   the API as the detector reports it, and a reason.
+2. The plugin's manifest declares the matching `NetworkAccess` (`LocalNetwork` or `Internet`).
+3. The pull request has the **NetworkAccess** label.
+4. A project owner approves it.
+
+The test also fails on stale allowlist entries, so remove the entry when the usage goes away.
 
 ## Adding a diagnostic module
 
@@ -73,3 +128,6 @@ CI runs both on `windows-latest` for every pull request.
 - Approved PowerShell verbs (`Get-`, `New-`, `Invoke-`, …) and `Verb-OmniNoun` naming
   for shared functions.
 - No `Write-Host` outside the `Cli`/`UI` presentation layers.
+- Source files are ASCII-only, saved as UTF-8 without a BOM. Windows PowerShell 5.1 reads a
+  BOM-less file as ANSI, so write a non-ASCII character as `[char]0x....` or a regex `\uXXXX`
+  escape, never as a literal.

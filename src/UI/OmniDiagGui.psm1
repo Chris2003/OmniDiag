@@ -16,9 +16,9 @@
     is safe on headless/Server Core hosts.
 
     Threading model:
-        UI thread  ── BtnScan ──> spawn background runspace (Invoke-OmniDiag)
-                   <── DispatcherTimer polls $sync (Progress/Phase/Done) ──
-        Cancel     ── $cts.Cancel()  (engine checks the token between modules)
+        UI thread  -- BtnScan --> spawn background runspace (Invoke-OmniDiag)
+                   <-- DispatcherTimer polls $sync (Progress/Phase/Done) --
+        Cancel     -- $cts.Cancel()  (engine checks the token between modules)
 #>
 
 Set-StrictMode -Version Latest
