@@ -1,2 +1,5 @@
 OmniDiagData/
 reports/
+dist/
+coverage.xml
+testResults.xml

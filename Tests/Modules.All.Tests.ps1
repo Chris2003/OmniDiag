@@ -3,7 +3,8 @@
     Contract + integration coverage for the full granular scanner set. Discovers every
     module under src/Modules, validates the plugin contract, then runs them all through
     the real engine on the host and asserts none threw and each returned a well-formed
-    OmniDiag.Result. This replaces the old per-module suites (SystemInformation, M3).
+    OmniDiag.Result. The scanner-specific suites (e.g. Modules.SystemInformation,
+    Modules.M3) remain for behavior beyond the shared contract.
 
     The live scan is genuinely exercised, so this suite takes a while on a real Windows
     host; it self-skips the execution assertions on non-Windows (no data sources).

@@ -43,7 +43,6 @@ function Invoke-OmniModuleScan {
 
     $result = New-OmniResult -ModuleName 'Reliability' -Category 'Reliability' `
         -RequiresAdmin $false -HadAdmin $Context.IsAdmin
-    $log = $Context.Logger
 
     $start = $Context.TimeRange.Start
     $end   = $Context.TimeRange.End
