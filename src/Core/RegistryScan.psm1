@@ -245,7 +245,7 @@ function Get-OmniInvalidRegistryEntry {
     return $result
 }
 
-function Remove-OmniRegFileHeader {
+function Get-OmniRegExportBody {
     <#
     .SYNOPSIS
         Strips the leading "Windows Registry Editor Version 5.00" header (and an optional
@@ -302,7 +302,7 @@ function Export-OmniRegistryBackup {
                 throw "reg.exe export failed for '$k' (exit $LASTEXITCODE): $($exportOutput -join ' ')"
             }
             $content = Get-Content -LiteralPath $tmp -Raw
-            $content = Remove-OmniRegFileHeader -Content $content
+            $content = Get-OmniRegExportBody -Content $content
             [void]$sb.AppendLine($content.Trim())
             [void]$sb.AppendLine('')
         } finally {

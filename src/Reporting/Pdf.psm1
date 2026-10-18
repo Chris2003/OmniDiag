@@ -278,7 +278,7 @@ function Add-OmniPdfLogo {
     return $true
 }
 
-function ConvertTo-OmniPdfBytes {
+function ConvertTo-OmniPdfBinary {
     <# .SYNOPSIS Internal: assemble the page content streams into a valid PDF byte array. #>
     [OutputType([byte[]])]
     param([hashtable] $Doc)
@@ -499,7 +499,7 @@ function Export-OmniPdfReport {
         'Privacy: OmniDiag runs entirely on the local machine and uploads nothing. This report may ' +
         'contain usernames, device names, file paths, and domain information. Review before sharing.')
 
-    [System.IO.File]::WriteAllBytes(($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)), (ConvertTo-OmniPdfBytes -Doc $doc))
+    [System.IO.File]::WriteAllBytes(($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)), (ConvertTo-OmniPdfBinary -Doc $doc))
     return $Path
 }
 

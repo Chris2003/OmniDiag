@@ -60,7 +60,7 @@ Describe 'Backup + remove round-trip (HKCU, no admin)' {
     }
 }
 
-Describe 'Remove-OmniRegFileHeader (cross-platform, no registry)' {
+Describe 'Get-OmniRegExportBody (cross-platform, no registry)' {
     BeforeAll {
         # Private helper: call it inside the RegistryScan nested module's scope.
         $script:RegScanModule = (Get-Module OmniDiag).NestedModules | Where-Object { $_.Name -eq 'RegistryScan' } | Select-Object -First 1
@@ -69,18 +69,18 @@ Describe 'Remove-OmniRegFileHeader (cross-platform, no registry)' {
     It 'finds the RegistryScan nested module' { $script:RegScanModule | Should -Not -BeNullOrEmpty }
     It 'strips the header when there is no BOM' {
         $text = "Windows Registry Editor Version 5.00`r`n`r`n" + $script:Body
-        $out = & $script:RegScanModule { param($t) Remove-OmniRegFileHeader -Content $t } $text
+        $out = & $script:RegScanModule { param($t) Get-OmniRegExportBody -Content $t } $text
         $out | Should -BeExactly $script:Body
     }
     It 'strips the header when the text starts with a byte-order mark (U+FEFF)' {
         $text = [string][char]0xFEFF + "Windows Registry Editor Version 5.00`r`n`r`n" + $script:Body
-        $out = & $script:RegScanModule { param($t) Remove-OmniRegFileHeader -Content $t } $text
+        $out = & $script:RegScanModule { param($t) Get-OmniRegExportBody -Content $t } $text
         $out | Should -BeExactly $script:Body
         $out.IndexOf([char]0xFEFF) | Should -Be -1
     }
     It 'leaves text without a header unchanged and tolerates empty input' {
-        (& $script:RegScanModule { param($t) Remove-OmniRegFileHeader -Content $t } $script:Body) | Should -BeExactly $script:Body
-        (& $script:RegScanModule { Remove-OmniRegFileHeader -Content '' }) | Should -BeExactly ''
+        (& $script:RegScanModule { param($t) Get-OmniRegExportBody -Content $t } $script:Body) | Should -BeExactly $script:Body
+        (& $script:RegScanModule { Get-OmniRegExportBody -Content '' }) | Should -BeExactly ''
     }
     It 'keeps the module source ASCII-only (a literal BOM breaks the regex on Windows PowerShell 5.1)' {
         $bytes = [System.IO.File]::ReadAllBytes((Join-Path (Split-Path $PSScriptRoot -Parent) 'src/Core/RegistryScan.psm1'))
