@@ -79,11 +79,14 @@ change.
   $installer = Join-Path $env:TEMP 'Install-OmniDiag.ps1'
   Invoke-WebRequest 'https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1' -OutFile $installer
   notepad $installer          # review it first
+  Unblock-File $installer
   & $installer
   ```
 
-  The script downloads and runs code with your rights: review it, and for managed
-  deployment pin a release and pass `-ExpectedSha256` (see [SECURITY.md](SECURITY.md)).
+  By default it installs the latest release and verifies the zip against that release's
+  `SHA256SUMS`, refusing to install on any mismatch. The script downloads and runs code
+  with your rights: review it, and for managed deployment pin a release with `-Ref` and
+  pass `-ExpectedSha256` (see [SECURITY.md](SECURITY.md)).
 
 How releases are built, signed, and verified: [docs/RELEASING.md](docs/RELEASING.md).
 
