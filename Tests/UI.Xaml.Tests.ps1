@@ -195,11 +195,59 @@ Describe 'GUI XAML loads under WPF' {
         if (-not $script:WpfSkip) { Add-Type -AssemblyName PresentationFramework, System.Xaml }
     }
 
-    It 'parses the shell into a WPF Window (Windows + STA only)' {
+    It 'parses the shell into a Grid with its resources and KeyBindings (Windows + STA only)' {
         if ($script:WpfSkip) { Set-ItResult -Skipped -Because $script:WpfSkip; return }
-        $w = [System.Windows.Markup.XamlReader]::Parse($script:ShellRaw)
-        $w | Should -BeOfType [System.Windows.Window]
-        foreach ($n in (& $script:Gui { $script:OmniShellControlNames })) { $w.FindName($n) | Should -Not -BeNullOrEmpty -Because $n }
+        $root = [System.Windows.Markup.XamlReader]::Parse($script:ShellRaw)
+        # Not a Window: it becomes the Content of the code-built frame window.
+        $root | Should -BeOfType [System.Windows.Controls.Grid]
+        foreach ($n in (& $script:Gui { $script:OmniShellControlNames })) { $root.FindName($n) | Should -Not -BeNullOrEmpty -Because $n }
+        $root.InputBindings.Count | Should -BeGreaterOrEqual 15
+        $root.Resources.Contains('OmniFocusVisual') | Should -BeTrue
+        $root.Resources.Contains([System.Windows.Controls.Button]) | Should -BeTrue
+    }
+
+    It 'builds the frame window in code, then swaps the shell in with names, resources, and shortcuts (Windows + STA only)' {
+        if ($script:WpfSkip) { Set-ItResult -Skipped -Because $script:WpfSkip; return }
+        $r = & $script:Gui {
+            $saved = $script:OmniUi
+            try {
+                $w = Initialize-OmniMainWindow -Theme Dark
+                $frameName = [System.Windows.Automation.AutomationProperties]::GetName($w)
+                $before = [bool]$script:OmniUi.ShellReady
+                # Shortcuts before the shell is ready are ignored, not errors.
+                Invoke-OmniShortcut -Action 'Nav2'
+                Invoke-OmniShortcut -Action 'Scan'
+                Complete-OmniShellLoad
+                [pscustomobject]@{
+                    FrameName   = $frameName
+                    Before      = $before
+                    After       = [bool]$script:OmniUi.ShellReady
+                    ShellError  = $script:OmniUi.ShellError
+                    IsShell     = [object]::ReferenceEquals($w.Content, $script:OmniUi.ShellRoot)
+                    Bindings    = $w.InputBindings.Count
+                    HasStyle    = $w.Resources.Contains([System.Windows.Controls.Button])
+                    DarkBg      = [string]$w.Resources['BrushWindowBg'].Color
+                    ShellBrush  = $script:OmniUi.ShellRoot.Resources.Contains('BrushWindowBg')
+                    BtnScan     = [bool]$script:OmniUi.Controls.BtnScan
+                }
+                try { $w.Close() } catch { $null = $_ }
+            } finally {
+                if ($script:OmniUi -and $script:OmniUi.HighContrastHandler) {
+                    try { [System.Windows.SystemParameters]::remove_StaticPropertyChanged($script:OmniUi.HighContrastHandler) } catch { $null = $_ }
+                }
+                $script:OmniUi = $saved
+            }
+        }
+        $r.FrameName | Should -Be 'OmniDiag'
+        $r.Before | Should -BeFalse
+        $r.ShellError | Should -BeNullOrEmpty
+        $r.After | Should -BeTrue
+        $r.IsShell | Should -BeTrue
+        $r.Bindings | Should -BeGreaterOrEqual 15
+        $r.HasStyle | Should -BeTrue
+        $r.ShellBrush | Should -BeFalse -Because 'the shell must not shadow the window theme brushes'
+        $r.DarkBg | Should -Be ('#FF' + (Get-OmniThemePalette -Name Dark)['BrushWindowBg'].TrimStart('#')).ToUpperInvariant()
+        $r.BtnScan | Should -BeTrue
     }
 
     It 'parses every section fragment on its own and finds its controls (Windows + STA only)' {

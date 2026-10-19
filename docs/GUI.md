@@ -35,7 +35,7 @@ Press **F1** (or the **?** button) in the window for this list.
 | Tab / Shift+Tab | Move between controls (top bar, then navigation, then the section). Inside lists and grids use the arrow keys |
 | Space | Toggle the checkbox in the focused grid cell (Diagnostics "On", Repair Center "Run") |
 
-Shortcuts are window-level `KeyBinding`s in `src/UI/MainWindow.xaml` (the window shell); each raises
+Shortcuts are `KeyBinding`s declared in `src/UI/MainWindow.xaml` (the window shell) and moved onto the window when it loads; each raises
 `NavigationCommands.GoToPage` with a parameter that `Invoke-OmniShortcut` dispatches.
 
 ## Export
@@ -94,40 +94,70 @@ Record the result (date, Windows version, pass/fail per item) in `docs/STATUS.md
 
 ## Startup time
 
-Target: first render under 2 s. The time from `Show-OmniDiagGui` (internally
-`Start-OmniGuiWindow`) to the window's first render is logged at Info to
-`OmniDiagData\logs\omnidiag-gui-*.jsonl` and exposed as the window's UI Automation
-ItemStatus (`StartupMs=<n>`).
+Target: under 2 s. There are **two numbers, and they are not the same thing**:
+
+- **First paint** (`StartupMs`): the window is on screen with the OmniDiag title, the
+  theme background, and a "Loading OmniDiag..." status. Nothing is clickable yet.
+- **Shell ready** (`ShellReadyMs`): the full window (top bar, navigation, Dashboard,
+  status bar) is in place, rendered, and interactive.
+
+Both are measured from `Show-OmniDiagGui` (internally `Start-OmniGuiWindow`), logged at
+Info to `OmniDiagData\logs\omnidiag-gui-*.jsonl` (with a Warn line for each one over
+2000 ms), and exposed as the window's UI Automation ItemStatus: `StartupMs=<n>` at first
+paint, then `StartupMs=<n>;ShellReadyMs=<m>`.
+
+Why two: CI measurements showed about 0.9 to 1.1 s of the startup is the XAML engine's
+cold start (the first `XamlReader.Parse` of anything), about 1.1 s the shell itself, and
+about 0.5 s the first layout and render. Shrinking the XAML cannot bring the total under
+2 s. So the window is first built **in code** (no XAML): first paint does not wait for
+the XAML engine, and the shell follows. The time to a fully interactive window is about
+the same as before (it is reported honestly as `ShellReadyMs`); what improves is how
+soon the user sees a responsive window instead of nothing.
 
 ### What loads when
 
-The XAML is split so first paint parses as little as possible:
+1. **Frame window** (`New-OmniFrameWindow`, code only): title, size, font,
+   `AutomationProperties` (Name "OmniDiag", AutomationId `OmniDiagMainWindow`), the theme
+   brushes (or the Windows high-contrast colors), and a centered "OmniDiag" plus a
+   "Loading OmniDiag..." status, a polite live region with its own accessible name.
+   Shown; its `ContentRendered` is first paint.
+2. **Shell** (`Complete-OmniShellLoad`, Background priority right after first paint):
+   `src/UI/MainWindow.xaml` is parsed. Its root is a `Grid`, not a `Window`: its shared
+   styles and KeyBindings are moved onto the frame window (the window's theme brushes win
+   over the XAML's Light-palette fallbacks), its x:Names are looked up on the shell root,
+   the top bar and navigation handlers are wired, and it becomes the window's Content.
+   The next Background callback marks `ShellReady` (`Complete-OmniShellReady`).
+3. **After the shell is ready** (Background): open the GUI log and record the timings, set
+   the help tooltip, register the group names, and load the Dashboard's Module Results
+   grid. Then (ApplicationIdle) one background runspace for System Information, the
+   repair catalog, and the scanner and group catalogs.
+4. **Sections**, on first navigation (click, arrow keys, Ctrl+1..6, Ctrl+F):
 
 | File | Contents | Loaded |
 |---|---|---|
-| `src/UI/MainWindow.xaml` | Shell: window, key bindings, brushes and the few shared styles (buttons, check boxes, combo boxes, list items, labels), top bar, navigation, the Dashboard (score, System Information, recommendations), status bar, and an empty `Border` host per section | Before first paint |
-| `src/UI/Sections/DashboardModules.xaml` | The Dashboard's Module Results grid | Right after first paint (Background priority) |
+| `src/UI/MainWindow.xaml` | Shell: key bindings, brush fallbacks and the few shared styles (buttons, check boxes, combo boxes, list items, labels), top bar, navigation, the Dashboard (score, System Information, recommendations), status bar, and an empty `Border` host per section | Right after first paint (step 2) |
+| `src/UI/Sections/DashboardModules.xaml` | The Dashboard's Module Results grid | Step 3 |
 | `src/UI/Sections/SectionStyles.xaml` | Data grid, grid row, and detail box styles (a `ResourceDictionary` merged into the window) | With the first section |
-| `src/UI/Sections/Groups.xaml`, `Findings.xaml`, `Diagnostics.xaml`, `Repair.xaml`, `LocalAi.xaml` | One section each | On first navigation to it (click, arrow keys, Ctrl+1..6, Ctrl+F) |
+| `src/UI/Sections/Groups.xaml`, `Findings.xaml`, `Diagnostics.xaml`, `Repair.xaml`, `LocalAi.xaml` | One section each | On first navigation to it |
 
-Each fragment is parsed once (`Import-OmniSection`), inserted into its host, and cached;
-its controls are looked up on the fragment and its handlers wired then
+Before the shell is ready no shortcut exists yet and any that races the swap is ignored
+(`Invoke-OmniShortcut`, the theme toggle, and the busy-state update check `ShellReady`);
+closing the window is always safe, and queued shell or startup work does nothing after
+close. If the shell XAML fails to load, the frame stays up and says so.
+
+Each section fragment is parsed once (`Import-OmniSection`), inserted into its host, and
+cached; its controls are looked up on the fragment and its handlers wired then
 (`Initialize-OmniSection`). Fragments are parsed on their own, so they use
 `DynamicResource` (never `StaticResource`) for the shell's brushes and styles. To add a
 control to a section, add it to the fragment and to that section's `Controls` list in
 `$script:OmniSections` (`src/UI/OmniDiagGui.psm1`); `Tests/UI.Xaml.Tests.ps1` checks that
-every name the code uses exists in the shell or a fragment.
-
-After first paint, in order: Background priority opens the GUI log, records the startup
-timing, sets the help tooltip, registers the group names, and loads the Module Results
-grid; ApplicationIdle starts one background runspace for System Information, the repair
-catalog, and the scanner and group catalogs. The elevation check for the Repair Center
-note runs when that section loads.
+every name the code uses exists in the shell or a fragment. The elevation check for the
+Repair Center note runs when that section loads.
 
 ### Phase breakdown
 
-The same log has a second Info line with the phase breakdown, in milliseconds since
-the GUI was started (each value is when that phase finished):
+The same log has a line with the phase breakdown, in milliseconds since the GUI was
+started (each value is when that phase finished), in this order:
 
 | Phase | Meaning |
 |---|---|
@@ -137,17 +167,37 @@ the GUI was started (each value is when that phase finished):
 | `ModuleImported` | PowerShell 7 only: OmniDiag imported in the STA runspace |
 | `InitializeStart` | window construction starts |
 | `WpfAssembliesLoaded` | WPF assemblies loaded (already loaded on PowerShell 7) |
-| `XamlEngineReady` | a trivial fragment parsed: the XAML engine's cold-start cost, measured apart from the shell |
-| `ShellParsed` | `MainWindow.xaml` (the shell) parsed into the window |
-| `XamlParsed` | all XAML needed for first paint parsed (same moment as `ShellParsed`; kept for older logs) |
-| `WindowConstructed` | shell controls looked up, handlers wired, initial state set |
+| `WindowConstructed` | the code-built frame window is ready to show |
 | `ShowCalled` | the window is shown |
-| `ContentRendered` | first render (= `StartupMs`) |
-| `Section<Name>Loaded` | after first render: a lazily loaded section finished loading (`SectionDashboardModulesLoaded`, `SectionGroupsLoaded`, ...); each load time is also logged on its own line |
+| `ContentRendered` | first paint of the frame (= `StartupMs`) |
+| `FramePainted` | same moment as `ContentRendered`, named for what it is |
+| `XamlEngineReady` | a trivial fragment parsed: the XAML engine's cold-start cost, measured apart from the shell |
+| `ShellParsed` | `MainWindow.xaml` (the shell) parsed |
+| `XamlParsed` | same moment as `ShellParsed` (kept for older logs) |
+| `ShellReady` | the shell is the window's Content, wired, and rendered (= `ShellReadyMs`) |
+| `Section<Name>Loaded` | a lazily loaded section finished loading (`SectionDashboardModulesLoaded`, `SectionGroupsLoaded`, ...); each load time is also logged on its own line |
 
-The UI Automation test (`Tests/UI.Accessibility.Tests.ps1`) prints the breakdown next to
-the first-render time; its clock starts at window construction, after the module import.
-It also visits every section (loading each one) and checks names and Tab order there.
-Other startup savings: the shell XAML is read once and parsed from text, the Light theme
-the XAML already declares is not applied a second time, and live-region announcements are
-skipped until the window is loaded.
+The UI Automation test (`Tests/UI.Accessibility.Tests.ps1`) prints both numbers and the
+breakdown (soft gate: a warning when either is over 2 s, never a failure); its clock
+starts at window construction, after the module import. It also visits every section
+(loading each one) and checks names and Tab order there.
+
+### Measuring (build/Measure-GuiStartup.ps1)
+
+`build/Measure-GuiStartup.ps1` runs fresh processes (PowerShell 7 and Windows PowerShell
+5.1, three runs each, median) and compares the current path with alternatives: the shell
+parsed synchronously before showing (`XamlShellSync`), a code-built frame alone
+(`CodeFrame`), the frame followed by the shell (`CodeFrameThenShell`), and the real
+launcher (`OmniDiag.ps1 -Gui`) measured from process start. CI runs it in the
+non-blocking `gui-startup` job; the table is in the job summary and `gui-startup.json` in
+the artifact.
+
+Test hooks used by it (no effect unless set):
+
+| Variable | Effect |
+|---|---|
+| `OMNIDIAG_GUI_EXIT_AFTER_RENDER=1` | close the window as soon as the shell is ready (the background startup runspace is not started) |
+| `OMNIDIAG_GUI_STARTUP_FILE=<path>` | when the shell is ready, write the timings (StartupMs, ShellReadyMs, process start, first-paint and shell-ready UTC times, all marks) to that file as JSON |
+
+Other startup savings: the shell XAML is read once and parsed from text, and live-region
+announcements are skipped until the window is loaded.

@@ -401,25 +401,24 @@ function Sync-OmniEffectiveTheme {
         Internal: apply the user's theme, or the high-contrast theme while Windows high
         contrast is on (the dark/light toggle is disabled then).
 
-    .PARAMETER Initial
-        Startup: MainWindow.xaml already holds the Light palette, so the Light theme is not
-        applied a second time (tests check the XAML brushes equal Get-OmniThemePalette Light).
+    .DESCRIPTION
+        The brushes always go on the window, so the code-built frame (shown before the
+        shell XAML loads) already has the right background, including high contrast.
+        The theme button and the score color are updated once the shell is in place.
     #>
-    param([switch] $Initial)
     $ui = $script:OmniUi
     if (-not $ui) { return }
     $ui.HighContrast = Test-OmniHighContrast
+    if ($ui.HighContrast) { Set-OmniTheme -Window $ui.Window -Name HighContrast } else { Set-OmniTheme -Window $ui.Window -Name $ui.Theme }
+    if (-not $ui.ShellReady) { return }
     $btn = $ui.Controls.BtnTheme
-    $label = Get-OmniThemeButtonLabel -Current $ui.Theme
-    $btn.Content = $label
+    $btn.Content = Get-OmniThemeButtonLabel -Current $ui.Theme
     $target = if ($ui.Theme -eq 'Dark') { 'light' } else { 'dark' }
     if ($ui.HighContrast) {
-        Set-OmniTheme -Window $ui.Window -Name HighContrast
         $btn.IsEnabled = $false
         $btn.ToolTip = 'High contrast is on, so OmniDiag uses your Windows high-contrast colors. Turn high contrast off to choose dark or light.'
         [System.Windows.Automation.AutomationProperties]::SetName($btn, "Switch to $target theme (unavailable in high contrast)")
     } else {
-        if (-not ($Initial -and $ui.Theme -eq 'Light')) { Set-OmniTheme -Window $ui.Window -Name $ui.Theme }
         $btn.IsEnabled = $true
         $btn.ToolTip = 'Toggle dark or light theme (Alt+T)'
         [System.Windows.Automation.AutomationProperties]::SetName($btn, "Switch to $target theme")
@@ -430,6 +429,7 @@ function Sync-OmniEffectiveTheme {
 function Invoke-OmniThemeToggle {
     <# .SYNOPSIS Internal: Alt+T / theme button - flip dark and light (no-op in high contrast). #>
     $ui = $script:OmniUi
+    if (-not $ui.ShellReady) { return }
     if ($ui.HighContrast) {
         Write-OmniStatus -Text 'High contrast is on: OmniDiag follows your Windows high-contrast colors.' -Announce
         return
@@ -517,6 +517,7 @@ function Test-OmniUiBusy {
 function Sync-OmniBusyState {
     <# .SYNOPSIS Internal: enable/disable actions from the current busy state (one place). #>
     $ui = $script:OmniUi
+    if (-not $ui.ShellReady) { return }   # nothing to enable before the shell is in place
     $c = $ui.Controls
     $scan = [bool]$ui.Scan
     $repair = [bool]$ui.Repair
@@ -1318,7 +1319,7 @@ function Invoke-OmniDeferredStartup {
         are rendered on the UI thread as each part arrives.
     #>
     $ui = $script:OmniUi
-    if (-not $ui -or $ui.StartupTask) { return }
+    if (-not $ui -or $ui.Closed -or -not $ui.ShellReady -or $ui.StartupTask) { return }
     $ui.StartupTask = Invoke-OmniUiTask -Name 'Startup' -Script $script:OmniStartupScript `
         -Arguments @{ ModulesPath = $ui.ModulesPath; RepairsPath = $ui.RepairsPath; GuiModule = (Join-Path $script:OmniUiRoot 'OmniDiagGui.psm1') } `
         -Context @{ SysInfo = $false; Repairs = $false; Catalog = $false } `
@@ -2122,6 +2123,8 @@ function Invoke-OmniShortcut {
     <# .SYNOPSIS Internal: dispatch a window KeyBinding (CommandParameter) to its action. #>
     param([AllowEmptyString()] [string] $Action)
     $ui = $script:OmniUi
+    # The KeyBindings arrive with the shell, but a shortcut can still race the swap.
+    if (-not $ui -or -not $ui.ShellReady) { return }
     switch -Regex ($Action) {
         '^Scan$'   { if ($ui.Controls.BtnScan.IsEnabled) { Invoke-OmniScanRequest } }
         '^Cancel$' { Request-OmniCancel }
@@ -2297,6 +2300,12 @@ function Write-OmniStartupLog {
         $phases = Format-OmniStartupTiming -Marks $ui.StartupTimings
         if ($phases) { $ui.Logger.Log('Info', "GUI startup phases (ms since entry): $phases", 'Gui', @{ StartupTimings = $ui.StartupTimings }) }
         if ($ms -gt 2000) { $ui.Logger.Log('Warn', "GUI first render took $ms ms, over the 2000 ms target.", 'Gui', @{ StartupMs = $ms }) }
+        $ready = $ui.ShellReadyMs
+        if ($null -ne $ready) {
+            # First paint (the frame) and fully interactive (the shell) are different numbers.
+            $ui.Logger.Log('Info', "GUI shell ready (interactive) in $ready ms (target: under 2000 ms).", 'Gui', @{ ShellReadyMs = $ready; TargetMs = 2000 })
+            if ($ready -gt 2000) { $ui.Logger.Log('Warn', "GUI shell took $ready ms to become ready, over the 2000 ms target.", 'Gui', @{ ShellReadyMs = $ready }) }
+        }
     } catch { $null = $_ }
 }
 
@@ -2306,12 +2315,13 @@ function Invoke-OmniPostRenderSetup {
         Internal: cheap UI-thread work that is not needed for first paint.
 
     .DESCRIPTION
-        Queued at Background priority from ContentRendered (before the ApplicationIdle
-        background task): open the GUI log and record the startup timing, set the help
-        tooltip, register the group names, and load the Dashboard's Module Results grid.
+        Queued at Background priority once the shell is ready (Complete-OmniShellReady,
+        before the ApplicationIdle background task): open the GUI log and record the
+        startup timing, set the help tooltip, register the group names, and load the
+        Dashboard's Module Results grid.
     #>
     $ui = $script:OmniUi
-    if (-not $ui -or $ui.PostRenderDone) { return }
+    if (-not $ui -or $ui.Closed -or -not $ui.ShellReady -or $ui.PostRenderDone) { return }
     $ui.PostRenderDone = $true
     try {
         $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
@@ -2328,17 +2338,221 @@ function Invoke-OmniPostRenderSetup {
     }
 }
 
+function Complete-OmniShellLoad {
+    <#
+    .SYNOPSIS
+        Internal: parse the shell (MainWindow.xaml) and make it the frame window's Content.
+
+    .DESCRIPTION
+        Queued at Background priority from the frame's ContentRendered. The shell root is
+        a Grid: its resources (shared styles; the frame already holds the theme brushes)
+        and its KeyBindings move onto the window, its x:Names are looked up on the shell
+        root (its own name scope), and the top bar and navigation handlers are wired.
+        On a parse failure the frame stays up and says so; nothing else runs.
+    #>
+    $ui = $script:OmniUi
+    if (-not $ui -or $ui.Closed -or $ui.ShellReady -or $ui.ShellRoot) { return }
+    $window = $ui.Window
+    $clock = $ui.StartupClock
+    try {
+        # Diagnostic split of the parse cost: a trivial fragment first measures the XAML
+        # engine's cold start (type system, theme lookups), separate from the shell's own size.
+        $null = [System.Windows.Markup.XamlReader]::Parse('<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"/>')
+        Add-OmniStartupMark -Name 'XamlEngineReady' -Clock $clock
+
+        # Parse the cached shell text directly (no XmlDocument round trip; the XAML has no
+        # inline text runs, so whitespace handling is the same).
+        $root = [System.Windows.Markup.XamlReader]::Parse((Get-OmniMainWindowXaml))
+        Add-OmniStartupMark -Name 'ShellParsed' -Clock $clock
+        # Everything the shell needs is parsed now (kept for continuity with older logs).
+        Add-OmniStartupMark -Name 'XamlParsed' -Clock $clock
+
+        # Shell resources -> window (keys the window already has, i.e. theme brushes, win),
+        # so implicit styles and DynamicResource lookups resolve from the window.
+        $shellResources = $root.Resources
+        foreach ($key in @($shellResources.Keys)) {
+            if (-not $window.Resources.Contains($key)) { $window.Resources[$key] = $shellResources[$key] }
+        }
+        $shellResources.Clear()
+        # KeyBindings -> window, so shortcuts work wherever focus is.
+        $bindings = @($root.InputBindings)
+        $root.InputBindings.Clear()
+        foreach ($b in $bindings) { [void]$window.InputBindings.Add($b) }
+
+        $controls = $ui.Controls
+        foreach ($n in $script:OmniShellControlNames) { $controls[$n] = $root.FindName($n) }
+        foreach ($n in $script:OmniLiveRegionControls) { if ($controls[$n]) { [void](Enable-OmniLiveRegion -Element $controls[$n]) } }
+
+        # --- Top bar ---------------------------------------------------------
+        $controls.BtnScan.Add_Click({ Invoke-OmniScanRequest })
+        $controls.BtnCancel.Add_Click({ Request-OmniScanCancel })
+        $controls.BtnExport.Add_Click({ Invoke-OmniExportRequest })
+        $controls.BtnTheme.Add_Click({ Invoke-OmniThemeToggle })
+        $controls.BtnHelp.Add_Click({ Show-OmniShortcutHelp })
+
+        # --- Navigation (loads a section on its first visit) -------------------
+        # Section handlers are wired by Initialize-OmniSection when each section loads.
+        $controls.NavList.Add_SelectionChanged({ Show-OmniNavPanel })
+
+        $ui.ShellRoot = $root
+        $window.Content = $root
+        $ui.ShellReady = $true
+        Sync-OmniEffectiveTheme
+        Sync-OmniBusyState
+        [System.Windows.Input.FocusManager]::SetFocusedElement($window, $controls.BtnScan)
+        if ($window.IsActive) { [void]$controls.BtnScan.Focus() }
+    } catch {
+        if (-not $ui.ShellReady) {
+            $ui.ShellError = $_.Exception.Message
+            $ui.FrameStatus.Text = "OmniDiag could not load its window: $($ui.ShellError)"
+            [System.Windows.Automation.AutomationProperties]::SetName($ui.FrameStatus, $ui.FrameStatus.Text)
+            Invoke-OmniLiveRegion -Element $ui.FrameStatus
+            return
+        }
+        # The shell is already in place; only a post-swap step failed. Carry on.
+        Write-OmniStatus -Text "Startup warning: $($_.Exception.Message)"
+    }
+    # Rendering runs above Background priority, so this lands after the shell's first frame.
+    [void]$window.Dispatcher.BeginInvoke(
+        [System.Windows.Threading.DispatcherPriority]::Background,
+        [Action] { Complete-OmniShellReady })
+}
+
+function Complete-OmniShellReady {
+    <#
+    .SYNOPSIS
+        Internal: the shell is in place and rendered - record ShellReady, then queue the
+        post-render setup and the background startup work.
+
+    .DESCRIPTION
+        ShellReadyMs is the "fully interactive" number; StartupMs stays the first paint of
+        the frame. Test hooks (no effect unless set): OMNIDIAG_GUI_STARTUP_FILE=<path>
+        writes the startup timings there as JSON; OMNIDIAG_GUI_EXIT_AFTER_RENDER=1 closes
+        the window once the shell is ready (used by build/Measure-GuiStartup.ps1).
+    #>
+    $ui = $script:OmniUi
+    if (-not $ui -or $ui.Closed -or $null -ne $ui.ShellReadyMs) { return }
+    $ms = -1
+    if ($ui.StartupClock) {
+        Add-OmniStartupMark -Name 'ShellReady' -Clock $ui.StartupClock
+        $ms = [int]$ui.StartupClock.Elapsed.TotalMilliseconds
+    }
+    $ui.ShellReadyUtc = [DateTime]::UtcNow
+    $ui.ShellReadyMs = $ms
+    try { [System.Windows.Automation.AutomationProperties]::SetItemStatus($ui.Window, "StartupMs=$($ui.StartupMs);ShellReadyMs=$ms") } catch { $null = $_ }
+    if ($env:OMNIDIAG_GUI_STARTUP_FILE) { Write-OmniStartupFile -Path $env:OMNIDIAG_GUI_STARTUP_FILE }
+
+    [void]$ui.Window.Dispatcher.BeginInvoke(
+        [System.Windows.Threading.DispatcherPriority]::Background,
+        [Action] { Invoke-OmniPostRenderSetup })
+    if (Test-OmniEnvFlag -Name 'OMNIDIAG_GUI_EXIT_AFTER_RENDER') {
+        [void]$ui.Window.Dispatcher.BeginInvoke(
+            [System.Windows.Threading.DispatcherPriority]::ApplicationIdle,
+            [Action] { try { $script:OmniUi.Window.Close() } catch { $null = $_ } })
+        return
+    }
+    [void]$ui.Window.Dispatcher.BeginInvoke(
+        [System.Windows.Threading.DispatcherPriority]::ApplicationIdle,
+        [Action] { Invoke-OmniDeferredStartup })
+}
+
+function Write-OmniStartupFile {
+    <# .SYNOPSIS Internal: OMNIDIAG_GUI_STARTUP_FILE hook - the startup timings as JSON (UTF-8, no BOM). #>
+    param([Parameter(Mandatory)] [string] $Path)
+    $ui = $script:OmniUi
+    try {
+        $processStart = $null
+        try { $processStart = [System.Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o') } catch { $processStart = $null }
+        $marks = [ordered]@{}
+        if ($ui.StartupTimings) { foreach ($k in @($ui.StartupTimings.Keys)) { $marks[[string]$k] = $ui.StartupTimings[$k] } }
+        $doc = [ordered]@{
+            StartupMs        = $ui.StartupMs
+            ShellReadyMs     = $ui.ShellReadyMs
+            ProcessStartUtc  = $processStart
+            FramePaintedUtc  = $(if ($ui.FramePaintedUtc) { $ui.FramePaintedUtc.ToString('o') } else { $null })
+            ShellReadyUtc    = $(if ($ui.ShellReadyUtc) { $ui.ShellReadyUtc.ToString('o') } else { $null })
+            PSEdition        = [string]$PSVersionTable.PSEdition
+            PSVersion        = [string]$PSVersionTable.PSVersion
+            Marks            = $marks
+        }
+        [System.IO.File]::WriteAllText($Path, ($doc | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
+    } catch { $null = $_ }
+}
+
+function Test-OmniEnvFlag {
+    <# .SYNOPSIS Internal: is this environment variable set to something other than '', 0, or false? #>
+    [OutputType([bool])]
+    param([Parameter(Mandatory)] [string] $Name)
+    $v = [string][Environment]::GetEnvironmentVariable($Name)
+    return [bool]($v -and $v -notin @('0', 'false'))
+}
+
+function New-OmniFrameWindow {
+    <#
+    .SYNOPSIS
+        Internal: the code-built frame window shown before any XAML is parsed.
+
+    .DESCRIPTION
+        No XAML parsing: a Window with the app's title, size, font, and accessibility
+        properties, and a centered "OmniDiag" title plus a "Loading OmniDiag..." status
+        (a polite live region with an AutomationProperties.Name). Its background and text
+        use the theme brush keys, which Sync-OmniEffectiveTheme puts on the window (also
+        in high contrast). The shell (MainWindow.xaml) replaces the Content once parsed.
+
+    .OUTPUTS
+        [pscustomobject] @{ Window; Status }
+    #>
+    $w = [System.Windows.Window]::new()
+    $w.Title = 'OmniDiag - One Tool. Complete Diagnostics.'
+    $w.Width = 1180; $w.Height = 760; $w.MinWidth = 900; $w.MinHeight = 560
+    $w.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
+    $w.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $w.FontSize = 13
+    $w.SetResourceReference([System.Windows.Controls.Control]::BackgroundProperty, 'BrushWindowBg')
+    $w.SetResourceReference([System.Windows.Controls.Control]::ForegroundProperty, 'BrushText')
+    [System.Windows.Automation.AutomationProperties]::SetName($w, 'OmniDiag')
+    [System.Windows.Automation.AutomationProperties]::SetAutomationId($w, 'OmniDiagMainWindow')
+    [System.Windows.Automation.AutomationProperties]::SetHelpText($w, 'Windows diagnostics. Press F1 for keyboard shortcuts.')
+
+    $panel = [System.Windows.Controls.StackPanel]::new()
+    $panel.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+    $panel.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $title = [System.Windows.Controls.TextBlock]::new()
+    $title.Text = 'OmniDiag'
+    $title.FontSize = 28
+    $title.FontWeight = [System.Windows.FontWeights]::Bold
+    $title.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+    $title.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'BrushText')
+    $status = [System.Windows.Controls.TextBlock]::new()
+    $status.Text = 'Loading OmniDiag...'
+    $status.Margin = [System.Windows.Thickness]::new(0, 8, 0, 0)
+    $status.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+    $status.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'BrushMuted')
+    [System.Windows.Automation.AutomationProperties]::SetName($status, 'Loading OmniDiag...')
+    [void]$panel.Children.Add($title)
+    [void]$panel.Children.Add($status)
+    $grid = [System.Windows.Controls.Grid]::new()
+    [void]$grid.Children.Add($panel)
+    $w.Content = $grid
+    [void](Enable-OmniLiveRegion -Element $status)
+    return [pscustomobject]@{ Window = $w; Status = $status }
+}
+
 function Initialize-OmniMainWindow {
     <#
     .SYNOPSIS
-        Internal: load the shell XAML, wire its handlers, and return the (not yet shown) window.
+        Internal: build the frame window, wire the window-level handlers, and return the
+        (not yet shown) window. The shell XAML loads after the frame's first paint.
 
     .DESCRIPTION
         Separate from Invoke-OmniWindow so tests can show the window modelessly. Must run
-        on an STA thread. Only the shell (MainWindow.xaml) is parsed here; every other
-        section loads on first navigation (Import-OmniSection). Anything not needed for
-        first paint runs after it: ContentRendered -> Background (Invoke-OmniPostRenderSetup)
-        -> ApplicationIdle (Invoke-OmniDeferredStartup, background runspace).
+        on an STA thread. No XAML is parsed here: the frame is built in code
+        (New-OmniFrameWindow), so first paint does not wait for the XAML engine. After
+        it: ContentRendered -> Background: Complete-OmniShellLoad (parse MainWindow.xaml,
+        move its resources and KeyBindings onto the window, make it the Content) ->
+        Background: Complete-OmniShellReady (ShellReady mark) -> Background:
+        Invoke-OmniPostRenderSetup -> ApplicationIdle: Invoke-OmniDeferredStartup
+        (background runspace). Every other section loads on first navigation.
     #>
     param(
         [string] $RootManifest, [string] $ModulesPath, [string] $RepairsPath,
@@ -2351,35 +2565,33 @@ function Initialize-OmniMainWindow {
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml -ErrorAction Stop
     Add-OmniStartupMark -Name 'WpfAssembliesLoaded' -Clock $StartupClock
 
-    # Diagnostic split of the parse cost: a trivial fragment first measures the XAML
-    # engine's cold start (type system, theme lookups), separate from the shell's own size.
-    $null = [System.Windows.Markup.XamlReader]::Parse('<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"/>')
-    Add-OmniStartupMark -Name 'XamlEngineReady' -Clock $StartupClock
+    $frame = New-OmniFrameWindow
+    $window = $frame.Window
 
-    # Parse the cached shell text directly (no XmlDocument round trip; the XAML has no
-    # inline text runs, so whitespace handling is the same).
-    $window = [System.Windows.Markup.XamlReader]::Parse((Get-OmniMainWindowXaml))
-    Add-OmniStartupMark -Name 'ShellParsed' -Clock $StartupClock
-    # Everything first paint needs is parsed now (kept for continuity with older logs).
-    Add-OmniStartupMark -Name 'XamlParsed' -Clock $StartupClock
-
-    # Section controls stay $null until their section loads (Import-OmniSection).
+    # Every control stays $null until the shell (or its section) loads.
     $controls = @{}
     foreach ($n in $script:OmniUiControlNames) { $controls[$n] = $null }
-    foreach ($n in $script:OmniShellControlNames) { $controls[$n] = $window.FindName($n) }
 
     # Shared GUI state (module scope so event handlers can reach it).
     $script:OmniUi = @{
         Window         = $window
+        FrameStatus    = $frame.Status
+        ShellRoot      = $null   # MainWindow.xaml root (a Grid), the window's Content once loaded
+        ShellReady     = $false  # true once the shell is the Content and wired
+        ShellError     = $null
+        Closed         = $false
         Controls       = $controls
         Theme          = $Theme
         HighContrast   = $false
         Manifest       = $RootManifest
         ModulesPath    = $ModulesPath
         RepairsPath    = $RepairsPath
-        Logger         = $null   # opened after first paint (Invoke-OmniPostRenderSetup)
+        Logger         = $null   # opened after the shell is ready (Invoke-OmniPostRenderSetup)
         StartupClock   = $StartupClock
-        StartupMs      = $null
+        StartupMs      = $null   # first paint (the frame's ContentRendered)
+        ShellReadyMs   = $null   # the shell is in place and rendered (fully interactive)
+        FramePaintedUtc = $null
+        ShellReadyUtc  = $null
         StartupTimings = $null   # phase -> ms (OrderedDictionary), set at first render
         StartupTask    = $null
         PostRenderDone = $false
@@ -2410,10 +2622,9 @@ function Initialize-OmniMainWindow {
     }
     $ui = $script:OmniUi
 
-    # Essentials only before first paint: the effective theme (high contrast) and the
-    # shell's live regions. Help tooltip, group names, log file: Invoke-OmniPostRenderSetup.
-    Sync-OmniEffectiveTheme -Initial
-    foreach ($n in $script:OmniLiveRegionControls) { if ($controls[$n]) { [void](Enable-OmniLiveRegion -Element $controls[$n]) } }
+    # The theme brushes (or the high-contrast SystemColors brushes) go on the frame now,
+    # so the very first paint already has the right background.
+    Sync-OmniEffectiveTheme
 
     # --- Timers (all on the UI thread) ---------------------------------
     $mkTimer = {
@@ -2428,7 +2639,10 @@ function Initialize-OmniMainWindow {
     $ui.AiTimer     = & $mkTimer 200 { Invoke-OmniAiPoll }
     $ui.TaskTimer   = & $mkTimer 150 { Invoke-OmniUiTaskPoll }
 
-    # --- Keyboard shortcuts: one CommandBinding for the XAML KeyBindings --
+    # --- Keyboard shortcuts: one CommandBinding for the shell's KeyBindings --
+    # The KeyBindings themselves arrive with the shell (Complete-OmniShellLoad moves them
+    # onto this window); until then no shortcut exists, and Invoke-OmniShortcut ignores
+    # anything that races the swap.
     $executed = [System.Windows.Input.ExecutedRoutedEventHandler] {
         param($eventSender, $e)
         $e.Handled = $true
@@ -2441,17 +2655,6 @@ function Initialize-OmniMainWindow {
     }
     [void]$window.CommandBindings.Add([System.Windows.Input.CommandBinding]::new(
         [System.Windows.Input.NavigationCommands]::GoToPage, $executed, $canExecute))
-
-    # --- Top bar ---------------------------------------------------------
-    $controls.BtnScan.Add_Click({ Invoke-OmniScanRequest })
-    $controls.BtnCancel.Add_Click({ Request-OmniScanCancel })
-    $controls.BtnExport.Add_Click({ Invoke-OmniExportRequest })
-    $controls.BtnTheme.Add_Click({ Invoke-OmniThemeToggle })
-    $controls.BtnHelp.Add_Click({ Show-OmniShortcutHelp })
-
-    # --- Navigation (loads a section on its first visit) -------------------
-    # Section handlers are wired by Initialize-OmniSection when each section loads.
-    $controls.NavList.Add_SelectionChanged({ Show-OmniNavPanel })
 
     # --- High contrast: follow the Windows setting live --------------------
     # SystemParameters.StaticPropertyChanged fires (on this UI thread) when the setting
@@ -2473,28 +2676,26 @@ function Initialize-OmniMainWindow {
         if ($ui.HighContrast -or (Test-OmniHighContrast)) { Sync-OmniEffectiveTheme }
     })
 
-    # --- First paint: measure startup, then the deferred work ----------------
+    # --- First paint (the frame): measure it, then load the shell ------------
     $window.Add_ContentRendered({
         $ui = $script:OmniUi
         if ($null -ne $ui.StartupMs) { return }
         $ms = -1
         if ($ui.StartupClock) {
             Add-OmniStartupMark -Name 'ContentRendered' -Clock $ui.StartupClock
-            # The clock keeps running: section loads are marked on it afterwards.
+            Add-OmniStartupMark -Name 'FramePainted' -Clock $ui.StartupClock
+            # The clock keeps running: the shell and section loads are marked on it afterwards.
             $ms = [int]$ui.StartupClock.Elapsed.TotalMilliseconds
         }
+        $ui.FramePaintedUtc = [DateTime]::UtcNow
         $ui.StartupTimings = $script:OmniStartupMarks
         $ui.StartupMs = $ms
         # Hidden diagnostic: readable through UI Automation (ItemStatus) by tests and tools.
         try { [System.Windows.Automation.AutomationProperties]::SetItemStatus($ui.Window, "StartupMs=$ms") } catch { $null = $_ }
-        # Not needed for first paint: cheap UI-thread setup first (Background), then the
-        # slow work in a background runspace (ApplicationIdle).
+        # The shell parses at Background priority, after this frame is on screen.
         [void]$ui.Window.Dispatcher.BeginInvoke(
             [System.Windows.Threading.DispatcherPriority]::Background,
-            [Action] { Invoke-OmniPostRenderSetup })
-        [void]$ui.Window.Dispatcher.BeginInvoke(
-            [System.Windows.Threading.DispatcherPriority]::ApplicationIdle,
-            [Action] { Invoke-OmniDeferredStartup })
+            [Action] { Complete-OmniShellLoad })
     })
 
     # --- Clean up on close ----------------------------------------------
@@ -2532,13 +2733,15 @@ function Initialize-OmniMainWindow {
     })
     $window.Add_Closed({
         $ui = $script:OmniUi
+        # Queued shell / startup work checks this and does nothing after close.
+        if ($ui) { $ui.Closed = $true }
         if ($ui -and $ui.HighContrastHandler) {
             try { [System.Windows.SystemParameters]::remove_StaticPropertyChanged($ui.HighContrastHandler) } catch { $null = $_ }
             $ui.HighContrastHandler = $null
         }
     })
 
-    Sync-OmniBusyState
+    # The frame is ready to show; the shell and its controls come after first paint.
     Add-OmniStartupMark -Name 'WindowConstructed' -Clock $StartupClock
     return $window
 }

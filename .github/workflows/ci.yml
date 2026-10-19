@@ -252,6 +252,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  gui-startup:
+    name: GUI startup (non-blocking)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # Measures GUI first paint and "shell ready" in fresh processes for PowerShell 7 and
+    # Windows PowerShell 5.1 (median of three), for several window-building strategies and
+    # the real launcher (build/Measure-GuiStartup.ps1). Report only: never fails the workflow.
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Measure GUI startup (pwsh and powershell.exe)
+        # Writes the table to $GITHUB_STEP_SUMMARY and gui-startup.json to the output folder.
+        run: ./build/Measure-GuiStartup.ps1 -Runs 3 -OutputDirectory test-results/gui-startup
+      - name: Upload GUI startup results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gui-startup
+          path: test-results/gui-startup/
+          if-no-files-found: ignore
+          retention-days: 30
+
   package:
     name: Portable package
     needs: [lint, test]
