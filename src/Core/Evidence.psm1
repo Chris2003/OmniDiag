@@ -236,12 +236,23 @@ function Import-OmniSession {
             $item.Length, ($script:OmniSessionImportMaxBytes / 1MB), $item.FullName))
     }
 
-    if ($item.Extension -eq '.zip') {
-        # Validated, size-bounded read: nothing is extracted to disk, and a package with
-        # unsafe entry names, too many entries, or an oversized data.json is refused.
-        $json = Read-OmniZipEntryText -Path $item.FullName -EntryName 'data.json'
-    } else {
-        $json = [System.IO.File]::ReadAllText($item.FullName)
+    # Reading is part of the import contract too: a corrupt or refused package, a missing
+    # data.json, or an unreadable file is the same InvalidDataException as bad content.
+    try {
+        if ($item.Extension -eq '.zip') {
+            # Validated, size-bounded read: nothing is extracted to disk, and a package with
+            # unsafe entry names, too many entries, or an oversized data.json is refused.
+            $json = Read-OmniZipEntryText -Path $item.FullName -EntryName 'data.json'
+        } else {
+            $json = [System.IO.File]::ReadAllText($item.FullName)
+        }
+    } catch {
+        if ($_.Exception -is [System.IO.InvalidDataException] -and [string]$_.FullyQualifiedErrorId -like 'OmniDiag.SessionImportInvalid*') { throw $_ }
+        $inner = $_.Exception
+        if ($inner -is [System.Management.Automation.MethodInvocationException] -and $null -ne $inner.InnerException) { $inner = $inner.InnerException }
+        $message = [string]$inner.Message
+        if ($message.IndexOf($item.FullName, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { $message = "Cannot read the saved session or report package: $message`: $($item.FullName)" }
+        throw (New-OmniSessionImportError -Path $item.FullName -Inner $inner -Message $message)
     }
 
     # Everything below either returns a well-formed session or throws exactly one error
@@ -267,6 +278,8 @@ function Import-OmniSession {
 # rejected before the JSON is parsed (saved sessions are at most ~20 levels deep).
 $script:OmniSessionImportMaxBytes = 64MB
 $script:OmniSessionImportMaxDepth = 100
+# Innermost-pair passes in Test-OmniJsonNestingDepth before the run-by-run walk.
+$script:OmniJsonDepthPasses = 8
 
 function New-OmniSessionImportError {
     <#
@@ -288,26 +301,54 @@ function Test-OmniJsonNestingDepth {
     .DESCRIPTION
         Runs before ConvertFrom-Json, so a hostile file (thousands of nested brackets)
         is rejected the same way on Windows PowerShell 5.1 and PowerShell 7 and never
-        reaches a recursive parser. String literals are removed first (brackets inside
-        strings do not nest); the atomic group and the optional closing quote keep that
-        pass linear even for an unterminated string. What remains is reduced to its
-        brackets, and innermost pairs are removed once per level.
+        reaches a recursive parser. The work is linear in the size of the text:
+
+          1. String literals are removed (brackets inside strings do not nest). The atomic
+             group and the optional closing quote keep this one pass linear, also for an
+             unterminated string and for escapes.
+          2. Everything but brackets is removed, and a run of more than MaxDepth opening
+             brackets is rejected at once.
+          3. Innermost empty pairs ([] {}) are removed, at most a fixed number of passes
+             ($script:OmniJsonDepthPasses). Every pass removes the innermost level of every
+             group at the same time, so it lowers the maximum depth by exactly one; flat
+             data (arrays of small objects) disappears completely here.
+          4. What remains is walked run by run ([regex]::Matches over runs of opening or
+             closing brackets, so PowerShell iterates over runs, not characters) with a
+             depth counter that exits as soon as the depth exceeds MaxDepth.
+
+        Unbalanced brackets are not judged here: the text is not valid JSON, and
+        ConvertFrom-Json reports it.
     #>
     param([string] $Json, [int] $MaxDepth)
     $timeout = [TimeSpan]::FromSeconds(30)
     $none = [System.Text.RegularExpressions.RegexOptions]::None
     $skeleton = [regex]::Replace($Json, '"(?>(?:[^"\\]+|\\[\s\S])*)"?', '', $none, $timeout)
     $skeleton = [regex]::Replace($skeleton, '[^\[\]{}]+', '', $none, $timeout)
-    $run = '[\[{]{' + ($MaxDepth + 1) + '}'
-    for ($level = 0; $level -le $MaxDepth; $level++) {
-        if ($skeleton.Length -eq 0) { return $true }
-        if ([regex]::IsMatch($skeleton, $run, $none, $timeout)) { return $false }
+    if ($skeleton.Length -eq 0) { return $true }
+    if ([regex]::IsMatch($skeleton, ('[\[{]{' + ($MaxDepth + 1) + '}'), $none, $timeout)) { return $false }
+
+    $levels = 0
+    while ($skeleton.Length -gt 0 -and $levels -lt $script:OmniJsonDepthPasses) {
         $next = [regex]::Replace($skeleton, '\{\}|\[\]', '', $none, $timeout)
-        # Unbalanced brackets: not valid JSON; ConvertFrom-Json reports it.
-        if ($next.Length -eq $skeleton.Length) { return $true }
+        if ($next.Length -eq $skeleton.Length) { break }
         $skeleton = $next
+        $levels++
     }
-    return ($skeleton.Length -eq 0)
+    if ($levels -gt $MaxDepth) { return $false }
+    if ($skeleton.Length -eq 0) { return $true }
+
+    $depth = 0
+    foreach ($run in [regex]::Matches($skeleton, '[\[{]+|[\]}]+', $none, $timeout)) {
+        $ch = $skeleton[$run.Index]
+        if ($ch -eq '[' -or $ch -eq '{') {
+            $depth += $run.Length
+            if ($depth + $levels -gt $MaxDepth) { return $false }
+        } else {
+            $depth -= $run.Length
+            if ($depth -lt 0) { return $true }
+        }
+    }
+    return $true
 }
 
 function Test-OmniImportScalar {
