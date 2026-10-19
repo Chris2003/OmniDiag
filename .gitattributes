@@ -1,0 +1,6 @@
+# Release reproducibility (docs/RELEASING.md): check out every file byte-for-byte as it is
+# stored in git, on every OS - no CRLF conversion, whatever core.autocrlf says. The
+# repository stores LF everywhere; PowerShell and the .cmd launchers (which avoid
+# goto/labels for exactly this reason) run fine with LF. The portable zip packages the
+# checked-out bytes, so this is what makes Windows and Linux checkouts package the same.
+* -text

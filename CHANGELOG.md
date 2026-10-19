@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased (Phase 5)
+
+### Release engineering (docs/RELEASING.md)
+- **Reproducible portable zip:** `build/Build-Portable.ps1` writes the zip with
+  `System.IO.Compression` (sorted entries, forward-slash names, fixed timestamps from
+  `SOURCE_DATE_EPOCH` or the HEAD commit time, fixed compression level, no OS attributes),
+  packages git-tracked files only, and takes `-Version`. `.gitattributes` keeps checkouts
+  byte-identical to git on every OS. CI job `reproducible` builds twice and compares.
+- **`SHA256SUMS`** (`build/New-ReleaseManifest.ps1`) and a **CycloneDX 1.5 SBOM**
+  (`build/New-Sbom.ps1`, no external tools) for every release.
+- **Code-signing hook** `build/Sign.ps1`: Authenticode-signs every script and a signed file
+  catalog (`OmniDiag.cat`) when a certificate is provided, before zipping; does nothing
+  otherwise. CI job `signing` verifies it with a throwaway certificate.
+- **Release on tag:** `.github/workflows/release.yml` checks the tag against the module
+  version, runs the tests, signs (when configured), builds the zip (and the MSI / winget
+  manifest when available), SBOM, and `SHA256SUMS`, and publishes a GitHub release with
+  notes from this file (`build/Get-ReleaseNotes.ps1`).
+- **`install.ps1` installs the latest release** by default and verifies the zip against the
+  release's `SHA256SUMS` (fails closed); `-Ref` keeps the source-archive path. The quick
+  install URL is now `https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1`.
+
 ## Unreleased (Phase 4)
 
 ### Security review (docs/SECURITY-REVIEW.md)
