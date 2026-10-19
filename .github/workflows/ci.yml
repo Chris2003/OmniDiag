@@ -70,6 +70,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: OS info
+        # Proves the edition each leg ran on (docs/VERIFICATION.md): ProductType 1 = client, 3 = server.
+        if: runner.os == 'Windows'
+        run: |
+          $os = Get-CimInstance -ClassName Win32_OperatingSystem
+          $kind = switch ([int]$os.ProductType) { 1 { 'client' } 2 { 'domain controller' } 3 { 'server' } default { 'unknown' } }
+          $line = 'OS: {0} | Version {1} (build {2}) | ProductType {3} ({4}) | {5} | {6} {7}' -f $os.Caption, $os.Version, $os.BuildNumber, $os.ProductType, $kind, $os.OSArchitecture, $PSVersionTable.PSEdition, $PSVersionTable.PSVersion
+          Write-Host $line
+          [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "$line`n`n", [System.Text.UTF8Encoding]::new($false))
       - name: Install Pester
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -92,18 +101,99 @@ jobs:
         run: |
           $params = @{ TestResultPath = 'test-results/testResults.xml' }
           if ('${{ matrix.coverage }}' -eq 'true') {
-            # Phase 1: coverage is reported, not enforced (no -EnforceCoverage).
+            # Phase 4 gate: src/Core, src/Repair, and overall at 80% or the job fails.
+            # src/Reporting is reported only. Table: job summary; data: coverage-summary.json.
             $params.Coverage = $true
             $params.CoverageOutputPath = 'test-results/coverage.xml'
             $params.CoverageTarget = 80
+            $params.CoverageTargets = @{ 'src/Core' = 80; 'src/Repair' = 80 }
+            $params.EnforceCoverage = $true
           }
           ./build/Invoke-Tests.ps1 @params
+          exit $LASTEXITCODE
+      - name: Elevated report has the elevation-only sections
+        # The runner is elevated: no module may be skipped for RequiresElevation and no
+        # '*-requires-elevation' notice may appear (the standard-user job checks the opposite).
+        if: matrix.coverage
+        run: |
+          & .\OmniDiag.cmd report --format json,html --output test-results\elevated-report
+          $reportExit = $LASTEXITCODE
+          ./build/Test-PrivilegeReport.ps1 -Expect Elevated -ReportDirectory test-results/elevated-report -ExitCode $reportExit -OutputDirectory test-results/privilege-check
           exit $LASTEXITCODE
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-${{ matrix.os }}-${{ matrix.shell }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  standard-user:
+    name: Standard user (windows-latest, pwsh)
+    # Phase 4: the least-privilege leg. build/Invoke-AsStandardUser.ps1 creates a throwaway
+    # local account (Users only, random in-memory password, never printed), runs the Pester
+    # suite, 'report', and 'scan --format json' as that account (Start-Process -Credential,
+    # falling back to a scheduled task), and fails loudly if a child turns out elevated.
+    # build/Test-PrivilegeReport.ps1 then validates exit codes, schema, HTML, and structured
+    # elevation skips, and compares with a report made elevated (as the runner) on the same VM.
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: OS info
+        run: |
+          $os = Get-CimInstance -ClassName Win32_OperatingSystem
+          $kind = switch ([int]$os.ProductType) { 1 { 'client' } 2 { 'domain controller' } 3 { 'server' } default { 'unknown' } }
+          $line = 'OS: {0} | Version {1} (build {2}) | ProductType {3} ({4}) | {5} | {6} {7}' -f $os.Caption, $os.Version, $os.BuildNumber, $os.ProductType, $kind, $os.OSArchitecture, $PSVersionTable.PSEdition, $PSVersionTable.PSVersion
+          Write-Host $line
+          [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "$line`n`n", [System.Text.UTF8Encoding]::new($false))
+      - name: Install Pester
+        run: |
+          # PowerShell Gallery lookups occasionally fail on hosted runners; retry before failing.
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+              break
+            } catch {
+              if ($attempt -eq 3) { throw }
+              Write-Warning "Install-Module Pester failed (attempt $attempt): $($_.Exception.Message)"
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+      - name: Run tests, report, and scan as a standard user
+        run: |
+          # Tokens: {pwsh} this PowerShell, {cmd} cmd.exe, {repo} the account's copy of the
+          # repository, {out} an empty folder per step. Docs: docs/CLI.md ('report', 'scan').
+          $steps = @(
+            @{ Name = 'pester'; FilePath = '{pwsh}'; TimeoutMinutes = 45
+               Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{repo}\build\Invoke-Tests.ps1" -TestResultPath "{out}\testResults.xml"' }
+            @{ Name = 'report'; FilePath = '{cmd}'; TimeoutMinutes = 15
+               Arguments = '/d /s /c ""{repo}\OmniDiag.cmd" report --format json,html --output "{out}""' }
+            @{ Name = 'scan'; FilePath = '{cmd}'; TimeoutMinutes = 15
+               Arguments = '/d /s /c ""{repo}\OmniDiag.cmd" scan --format json"' }
+          )
+          ./build/Invoke-AsStandardUser.ps1 -Step $steps -ShareModule Pester -OutputDirectory test-results/standard-user
+          exit $LASTEXITCODE
+      - name: Validate the standard-user run and compare with an elevated report
+        run: |
+          # Same VM, same build, as the (elevated) runner account.
+          & .\OmniDiag.cmd report --format json,html --output test-results\elevated-report
+          $elevatedExit = $LASTEXITCODE
+          ./build/Test-PrivilegeReport.ps1 -Expect Standard -RunResultPath test-results/standard-user/results.json `
+            -CompareWithReportDirectory test-results/elevated-report -CompareExitCode $elevatedExit `
+            -OutputDirectory test-results/privilege-check
+          exit $LASTEXITCODE
+      - name: Upload standard-user results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: standard-user-results
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
@@ -162,6 +252,60 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  gui-startup:
+    name: GUI startup (non-blocking)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # Measures GUI first paint and "shell ready" in fresh processes for PowerShell 7 and
+    # Windows PowerShell 5.1 (median of three), for several window-building strategies and
+    # the real launcher (build/Measure-GuiStartup.ps1). Report only: never fails the workflow.
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Measure GUI startup (pwsh and powershell.exe)
+        # Writes the table to $GITHUB_STEP_SUMMARY and gui-startup.json to the output folder.
+        run: ./build/Measure-GuiStartup.ps1 -Runs 3 -OutputDirectory test-results/gui-startup
+      - name: Upload GUI startup results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gui-startup
+          path: test-results/gui-startup/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  screenshots:
+    name: GUI screenshots (non-blocking)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    # Renders the real window with a synthetic demo session (host DEMO-PC, no runner data)
+    # and captures Dashboard (light + dark), Groups, a group, All Findings, and Repair Center
+    # at 1280x800 (build/New-Screenshots.ps1). Maintainers commit the PNGs to docs/images/.
+    # Report only: never fails the workflow.
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Render screenshots
+        run: ./build/New-Screenshots.ps1 -OutputDirectory docs/images
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: screenshots
+          path: docs/images/*.png
+          if-no-files-found: warn
+          retention-days: 30
+
   package:
     name: Portable package
     needs: [lint, test]
@@ -189,6 +333,110 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  reproducible:
+    name: Reproducible portable zip
+    # Phase 5 gate: two clean checkouts of the same commit, built separately on the same
+    # host with PowerShell 7, must produce byte-identical zips (docs/RELEASING.md). Blocking.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: build-a
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: build-b
+      - name: Build twice and compare SHA-256
+        run: |
+          # No SOURCE_DATE_EPOCH: each build takes the HEAD commit time from its own checkout.
+          $outA = Join-Path $env:RUNNER_TEMP 'repro-a'
+          $outB = Join-Path $env:RUNNER_TEMP 'repro-b'
+          $a = & ./build-a/build/Build-Portable.ps1 -OutputDirectory $outA
+          $b = & ./build-b/build/Build-Portable.ps1 -OutputDirectory $outB
+          $runtime = [System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription
+          $summary = "### Reproducible portable zip`n`nPowerShell $($PSVersionTable.PSVersion), $runtime`n`n| Build | Zip | SHA-256 |`n|---|---|---|`n" +
+            "| A | $(Split-Path $a.Package -Leaf) | ``$($a.Sha256)`` |`n| B | $(Split-Path $b.Package -Leaf) | ``$($b.Sha256)`` |`n"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary -Encoding utf8
+          if ($a.Sha256 -ne $b.Sha256) {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $za = [System.IO.Compression.ZipFile]::OpenRead($a.Package); $zb = [System.IO.Compression.ZipFile]::OpenRead($b.Package)
+            try {
+              $ea = @($za.Entries | ForEach-Object { '{0} {1} {2} {3}' -f $_.FullName, $_.Length, $_.Crc32, $_.LastWriteTime })
+              $eb = @($zb.Entries | ForEach-Object { '{0} {1} {2} {3}' -f $_.FullName, $_.Length, $_.Crc32, $_.LastWriteTime })
+              Compare-Object $ea $eb | Format-Table -AutoSize | Out-String -Width 400 | Write-Host
+            } finally { $za.Dispose(); $zb.Dispose() }
+            throw "The two builds differ: $($a.Sha256) vs $($b.Sha256)."
+          }
+          Write-Host "Byte-identical: $($a.Sha256)"
+
+  signing:
+    name: Code signing (throwaway certificate)
+    # Phase 5 gate: build/Sign.ps1 signs every script and a file catalog BEFORE zipping, and
+    # every signature verifies. A throwaway self-signed code-signing certificate is created
+    # in CurrentUser\My and trusted on this runner only (LocalMachine Root and
+    # TrustedPublisher; the runner is elevated, so no UI prompt), then removed from every
+    # store. Blocking.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create and trust a throwaway code-signing certificate
+        run: |
+          $created = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=OmniDiag CI throwaway code signing' `
+            -CertStoreLocation Cert:\CurrentUser\My -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddDays(1)
+          # Re-read from the store (a live X509Certificate2 even if the PKI module ran out of process).
+          $cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$($created.Thumbprint)"
+          $public = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($cert.RawData)
+          foreach ($storeName in 'Root', 'TrustedPublisher') {
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'LocalMachine')
+            $store.Open('ReadWrite')
+            try { $store.Add($public) } finally { $store.Close() }
+          }
+          "OMNIDIAG_CI_CERT_THUMBPRINT=$($cert.Thumbprint)" | Add-Content -LiteralPath $env:GITHUB_ENV
+          Write-Host "Throwaway certificate $($cert.Thumbprint) created and trusted on this runner."
+      - name: Sign a portable build (before zipping) and verify every signature and the catalog
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'signed'
+          $r = ./build/Build-Portable.ps1 -OutputDirectory $out -KeepStaging -Sign -CertificateThumbprint $env:OMNIDIAG_CI_CERT_THUMBPRINT
+          if (-not $r.Signed) { throw 'Build-Portable.ps1 -Sign did not sign the package.' }
+          # 1. The signed staging folder.
+          ./build/Test-ReleaseSignature.ps1 -Path $r.Staging -ExpectedThumbprint $env:OMNIDIAG_CI_CERT_THUMBPRINT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # 2. What users get: the zip, extracted.
+          $extract = Join-Path $env:RUNNER_TEMP 'signed-extract'
+          Expand-Archive -LiteralPath $r.Package -DestinationPath $extract -Force
+          ./build/Test-ReleaseSignature.ps1 -Path (Join-Path $extract (Split-Path $r.Staging -Leaf)) -ExpectedThumbprint $env:OMNIDIAG_CI_CERT_THUMBPRINT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # 3. The signed module still loads.
+          Import-Module (Join-Path $r.Staging 'src/OmniDiag.psd1') -Force
+          "### Code signing`n`n$((Get-Module OmniDiag).Version): every script and the catalog are Valid (throwaway certificate)." |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+      - name: Remove the throwaway certificate from every store
+        if: always()
+        run: |
+          $thumb = $env:OMNIDIAG_CI_CERT_THUMBPRINT
+          if (-not $thumb) { Write-Host 'No certificate was created.'; return }
+          # Private key first (CurrentUser\My), then every remaining copy of the certificate.
+          if (Test-Path "Cert:\CurrentUser\My\$thumb") { Remove-Item "Cert:\CurrentUser\My\$thumb" -DeleteKey }
+          foreach ($loc in @(@{ Name = 'Root'; Location = 'LocalMachine' }, @{ Name = 'TrustedPublisher'; Location = 'LocalMachine' }, @{ Name = 'My'; Location = 'CurrentUser' })) {
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($loc.Name, $loc.Location)
+            $store.Open('ReadWrite')
+            try {
+              foreach ($c in @($store.Certificates.Find('FindByThumbprint', $thumb, $false))) { $store.Remove($c) }
+            } finally { $store.Close() }
+          }
+          Write-Host "Removed $thumb from LocalMachine\Root, LocalMachine\TrustedPublisher, and CurrentUser\My."
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'
@@ -207,3 +455,151 @@ jobs:
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
+
+  installer:
+    name: Installer (per-user MSI + winget manifest)
+    # Phase 5, decision 7 (docs/INSTALLER.md). Builds the x64 and arm64 MSIs with WiX
+    # Toolset 5.0.2 (build-time only, MS-RL; v6+ is not used: it adds the Open Source
+    # Maintenance Fee). build/Test-MsiInstall.ps1 installs the x64 MSI with msiexec /qn,
+    # checks files, HKCU-only ARP, shortcuts, the user PATH, and 'omnidiag version' in a
+    # NEW shell, uninstalls, and checks everything is gone - once as the runner and once as
+    # a throwaway standard user (build/Invoke-AsStandardUser.ps1), which proves no admin is
+    # needed. The winget manifest is validated against the official v1.6.0 JSON schemas.
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install WiX Toolset 5.0.2 (build-time tool, not shipped)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tools = Join-Path $env:USERPROFILE '.dotnet\tools'
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $tools -Encoding utf8
+          & (Join-Path $tools 'wix.exe') --version
+      - name: Build the MSIs (x64, arm64)
+        run: |
+          $v = [version](Import-PowerShellDataFile -Path src/OmniDiag.psd1).ModuleVersion
+          $version = '{0}.{1}.{2}' -f $v.Major, $v.Minor, [math]::Max($v.Build, 0)
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "OMNIDIAG_MSI_VERSION=$version" -Encoding utf8
+          $msis = @(./build/Build-Msi.ps1 -Version $version -OutputDirectory dist)
+          if ($LASTEXITCODE -ne 0 -or $msis.Count -ne 2) { Write-Host "::error::Build-Msi failed (exit $LASTEXITCODE, $($msis.Count) MSIs)"; exit 1 }
+          $md = "### MSI`n`n| File | ProductCode | Size (KB) | SHA256 |`n|---|---|---:|---|`n"
+          foreach ($m in $msis) { $md += "| $($m.FileName) | ``$($m.ProductCode)`` | $($m.SizeKB) | ``$($m.Sha256)`` |`n" }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $md -Encoding utf8
+      - name: ICE validation (report only)
+        continue-on-error: true
+        run: |
+          $failed = 0
+          foreach ($msi in Get-ChildItem dist -Filter *.msi) {
+            Write-Host "wix msi validate $($msi.Name)"
+            wix msi validate $msi.FullName
+            if ($LASTEXITCODE -ne 0) { $failed++ }
+          }
+          exit $failed
+      - name: Install, verify, and uninstall as the runner
+        run: |
+          ./build/Test-MsiInstall.ps1 -MsiPath "dist/OmniDiag-$env:OMNIDIAG_MSI_VERSION-x64.msi" -OutputDirectory test-results/msi-runner
+          exit $LASTEXITCODE
+      - name: Install, verify, and uninstall as a standard user (no admin)
+        run: |
+          # Only what the step needs: the test script, its helper module, and the MSI.
+          $src = Join-Path $env:RUNNER_TEMP 'msi-su-src'
+          New-Item -ItemType Directory -Path (Join-Path $src 'build') -Force | Out-Null
+          Copy-Item build/Test-MsiInstall.ps1, build/OmniDiag.Installer.psm1 -Destination (Join-Path $src 'build')
+          Copy-Item "dist/OmniDiag-$env:OMNIDIAG_MSI_VERSION-x64.msi" -Destination (Join-Path $src 'OmniDiag-x64.msi')
+          $steps = @(
+            @{ Name = 'msi'; FilePath = '{pwsh}'; TimeoutMinutes = 20
+               Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{repo}\build\Test-MsiInstall.ps1" -MsiPath "{repo}\OmniDiag-x64.msi" -OutputDirectory "{out}"' }
+          )
+          ./build/Invoke-AsStandardUser.ps1 -Step $steps -SourcePath $src -OutputDirectory test-results/msi-standard-user
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $run = Get-Content -LiteralPath test-results/msi-standard-user/results.json -Raw | ConvertFrom-Json
+          $step = @($run.steps | Where-Object { $_.name -eq 'msi' })[0]
+          Get-Content -LiteralPath test-results/msi-standard-user/msi/stdout.txt -ErrorAction SilentlyContinue
+          if (-not $step -or $step.exitCode -ne 0) {
+            Get-Content -LiteralPath test-results/msi-standard-user/msi/stderr.txt -ErrorAction SilentlyContinue
+            Write-Host "::error::The standard-user MSI test failed (exit $(if ($step) { $step.exitCode } else { 'none' }))."
+            exit 1
+          }
+      - name: Generate the winget manifest
+        run: |
+          $msis = @(Get-ChildItem dist -Filter "OmniDiag-$env:OMNIDIAG_MSI_VERSION-*.msi" | ForEach-Object FullName)
+          ./build/New-WingetManifest.ps1 -Version $env:OMNIDIAG_MSI_VERSION -InstallerPath $msis -OutputDirectory dist/winget
+          exit $LASTEXITCODE
+      - name: Download the official winget v1.6.0 manifest schemas
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'winget-schemas'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          foreach ($type in 'version', 'installer', 'defaultLocale') {
+            $name = "manifest.$type.1.6.0.json"
+            $url = "https://raw.githubusercontent.com/microsoft/winget-cli/master/schemas/JSON/manifests/v1.6.0/$name"
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try { Invoke-WebRequest -Uri $url -OutFile (Join-Path $dir $name) -UseBasicParsing; break }
+              catch { if ($attempt -eq 3) { throw }; Start-Sleep -Seconds (5 * $attempt) }
+            }
+          }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "WINGET_SCHEMA_DIR=$dir" -Encoding utf8
+      - name: Validate the winget manifest (schemas, consistency, determinism)
+        run: |
+          ./build/Test-WingetManifest.ps1 -ManifestDirectory dist/winget -SchemaDirectory $env:WINGET_SCHEMA_DIR -InstallerDirectory dist
+          exit $LASTEXITCODE
+      - name: winget validate (when winget is available; report only)
+        continue-on-error: true
+        run: |
+          if (Get-Command winget -ErrorAction SilentlyContinue) {
+            winget validate --manifest dist/winget
+            exit $LASTEXITCODE
+          }
+          Write-Host 'winget is not installed on this runner image; schema validation above is the gate.'
+      - name: Upload installer artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omnidiag-installer
+          path: |
+            dist/*.msi
+            dist/winget/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  installer-arm64:
+    name: Installer (arm64 MSI on windows-11-arm, soft)
+    # The arm64 MSI installs natively on Windows 11 ARM64 (decision 6). Soft until it has
+    # been green on the ARM runner image: report only, never fails the workflow.
+    runs-on: windows-11-arm
+    timeout-minutes: 40
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install WiX Toolset 5.0.2 (build-time tool, not shipped)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $env:USERPROFILE '.dotnet\tools') -Encoding utf8
+      - name: Build the arm64 MSI, install, verify, and uninstall
+        run: |
+          $v = [version](Import-PowerShellDataFile -Path src/OmniDiag.psd1).ModuleVersion
+          $version = '{0}.{1}.{2}' -f $v.Major, $v.Minor, [math]::Max($v.Build, 0)
+          ./build/Build-Msi.ps1 -Version $version -OutputDirectory dist -Platform arm64 | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/Test-MsiInstall.ps1 -MsiPath "dist/OmniDiag-$version-arm64.msi" -OutputDirectory test-results/msi-arm64
+          exit $LASTEXITCODE
+      - name: Upload arm64 installer results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omnidiag-installer-arm64
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14

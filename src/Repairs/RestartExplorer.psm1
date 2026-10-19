@@ -36,7 +36,10 @@ function Invoke-OmniRepairAction {
         Stop-Process -Name 'explorer' -Force -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 600
         if (-not (Get-Process -Name 'explorer' -ErrorAction SilentlyContinue)) {
-            Start-Process 'explorer.exe'
+            # Pinned to the Windows folder: a bare 'explorer.exe' could resolve to a copy
+            # planted in PATH or the working directory and run it with the repair's rights.
+            $windir = if ($env:SystemRoot) { $env:SystemRoot } else { $env:windir }
+            Start-Process -FilePath (Join-Path $windir 'explorer.exe')
         }
     } | Out-Null
     return (Complete-OmniRepairResult -Result $r)

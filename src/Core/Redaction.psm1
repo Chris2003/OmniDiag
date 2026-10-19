@@ -39,6 +39,12 @@ $script:OmniRedactPseudonymRegex = [regex]::new(
     '^(?:HOST|USER|DOMAIN|PATH|SID|IP|IPV6|MAC|TERM)-(?:[1-9][0-9]*|[0-9A-F]{8})(?![0-9A-Za-z])',
     [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
 
+# An identifier glued to an escape sequence is still an identifier: '%5Cjdoe' (URL-encoded),
+# '\u0022jdoe' or '\njdoe' (JSON-escaped text kept as a string, e.g. raw tool output or a log
+# line). The detectors below accept a match start right after %XX, \uXXXX, \n, \r, or \t, where
+# the plain 'no letter or digit before' boundary would otherwise reject it.
+$script:OmniRedactEscapeBoundary = '(?<=%[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|\\[nrt])'
+
 # Profile folders: \Users\<name>\, /home/<name>/, \Documents and Settings\<name>\.
 # The separators allow doubled backslashes, so JSON-escaped text (log lines) matches too.
 # A backslash prefix matches anywhere (\Device\HarddiskVolume3\Users\x, \\fs01\Users\x);
@@ -51,13 +57,13 @@ $script:OmniRedactProfileRegex = [regex]::new(
 # Machine / domain / Entra ID account SIDs. Other well-known SIDs (S-1-5-18, S-1-5-32-544,
 # service SIDs S-1-5-80-...) do not match.
 $script:OmniRedactSidRegex = [regex]::new(
-    '(?<![A-Za-z0-9-])S-1-(?:5-21|12-1)(?:-\d+){3,4}(?!\d)', $script:OmniRedactRegexOptions)
+    ('(?:(?<![A-Za-z0-9-])|' + $script:OmniRedactEscapeBoundary + ')S-1-(?:5-21|12-1)(?:-\d+){3,4}(?!\d)'), $script:OmniRedactRegexOptions)
 
 # MAC addresses: six hex pairs with a consistent ':' or '-' separator. A label glued on with
 # ':' (MAC:00-11-..., BSSID:aa:bb:...) or a trailing ':' still matches; a seventh standalone
 # hex pair before or after (EUI-64, IPv6 with two-digit groups) does not.
 $script:OmniRedactMacRegex = [regex]::new(
-    '(?<![0-9A-Za-z])(?<!(?<![0-9A-Za-z])[0-9A-F]{2}[:-])[0-9A-F]{2}([:-])(?:[0-9A-F]{2}\1){4}[0-9A-F]{2}(?![0-9A-Za-z])(?![:-][0-9A-F]{2}(?![0-9A-Za-z]))',
+    ('(?:(?<![0-9A-Za-z])|' + $script:OmniRedactEscapeBoundary + ')(?<!(?<![0-9A-Za-z])[0-9A-F]{2}[:-])[0-9A-F]{2}([:-])(?:[0-9A-F]{2}\1){4}[0-9A-F]{2}(?![0-9A-Za-z])(?![:-][0-9A-F]{2}(?![0-9A-Za-z]))'),
     $script:OmniRedactRegexOptions)
 
 # IPv6 candidates (at least two colons); every candidate is validated by IPAddress.TryParse
@@ -66,12 +72,12 @@ $script:OmniRedactMacRegex = [regex]::new(
 # never starts inside a colon chain (after a standalone 1-4 digit hex group and ':').
 # A trailing ':' (Pinging 2001:db8::5: ...) is split off in Get-OmniRedactionMatchReplacement.
 $script:OmniRedactIPv6Regex = [regex]::new(
-    '(?<![0-9A-Za-z.\])])(?<!(?<![0-9A-Za-z])[0-9A-F]{1,4}:)(?=[0-9A-F]*:[0-9A-F]*:)[0-9A-F:]+(?:(?<=:)(?:\d{1,3}\.){3}\d{1,3})?(?:%[0-9A-Za-z]+)?(?![0-9A-Za-z:]|\.\d)',
+    ('(?:(?<![0-9A-Za-z.\])])|' + $script:OmniRedactEscapeBoundary + ')(?<!(?<![0-9A-Za-z])[0-9A-F]{1,4}:)(?=[0-9A-F]*:[0-9A-F]*:)[0-9A-F:]+(?:(?<=:)(?:\d{1,3}\.){3}\d{1,3})?(?:%[0-9A-Za-z]+)?(?![0-9A-Za-z:]|\.\d)'),
     $script:OmniRedactRegexOptions)
 
 # IPv4 dotted quads (no leading/trailing dotted digits, so 10.0.19045.1 is not an address).
 $script:OmniRedactIPv4Regex = [regex]::new(
-    '(?<![0-9A-Za-z.])(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?![0-9A-Za-z]|\.\d)',
+    ('(?:(?<![0-9A-Za-z.])|' + $script:OmniRedactEscapeBoundary + ')(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?![0-9A-Za-z]|\.\d)'),
     $script:OmniRedactRegexOptions)
 
 # Well-known, non-identifying names that are never registered as terms (documented).
@@ -254,7 +260,7 @@ function Get-OmniRedactionTermRegex {
     $names = [string[]]@($Context.Terms.Keys)
     $sorted = @($names | Sort-Object -Property @{ Expression = { $_.Length }; Descending = $true }, @{ Expression = { $_ } })
     $parts = foreach ($t in $sorted) {
-        $pre = if ($t[0] -match '[A-Za-z0-9]') { '(?<![A-Za-z0-9])' } else { '' }
+        $pre = if ($t[0] -match '[A-Za-z0-9]') { '(?:(?<![A-Za-z0-9])|' + $script:OmniRedactEscapeBoundary + ')' } else { '' }
         $post = if ($t[$t.Length - 1] -match '[A-Za-z0-9]') { '(?![A-Za-z0-9])' } else { '' }
         $pre + [regex]::Escape($t) + $post
     }
@@ -294,9 +300,31 @@ function ConvertTo-OmniRedactionIPv6Address {
     return $addr
 }
 
+function Resolve-OmniRedactionIPv6Candidate {
+    <#
+    .SYNOPSIS
+        Internal: splits an IPv6 candidate into the address, its zone index ('%12'), and a
+        trailing sentence colon; $null when the candidate is no IPv6 address.
+    #>
+    param([string] $Candidate)
+    $zone = ''
+    $core = $Candidate
+    $pct = $Candidate.IndexOf('%')
+    if ($pct -ge 0) { $zone = $Candidate.Substring($pct); $core = $Candidate.Substring(0, $pct) }
+    $addr = ConvertTo-OmniRedactionIPv6Address -Text $core
+    $tail = ''
+    if ($null -eq $addr -and $zone -eq '' -and $core.EndsWith(':') -and -not $core.EndsWith('::')) {
+        # 'Pinging 2001:db8::5: Request timed out' - the colon belongs to the sentence.
+        $addr = ConvertTo-OmniRedactionIPv6Address -Text $core.Substring(0, $core.Length - 1)
+        $tail = ':'
+    }
+    if ($null -eq $addr) { return $null }
+    return @{ Address = $addr; Zone = $zone; Tail = $tail }
+}
+
 function Get-OmniRedactionMatchReplacement {
     <# .SYNOPSIS Internal: the replacement text for one pattern match, or $null to keep it. #>
-    param($Context, [string] $Kind, [System.Text.RegularExpressions.Match] $Match)
+    param($Context, [string] $Kind, [System.Text.RegularExpressions.Match] $Match, [string] $Text = '')
     $v = $Match.Value
     switch ($Kind) {
         'Term' {
@@ -319,25 +347,26 @@ function Get-OmniRedactionMatchReplacement {
             return Get-OmniRedactionPseudonym -Context $Context -Category 'Mac' -Key $norm -Original $norm
         }
         'IPv6' {
-            $zone = ''
-            $core = $v
-            $pct = $v.IndexOf('%')
-            if ($pct -ge 0) { $zone = $v.Substring($pct); $core = $v.Substring(0, $pct) }
-            $addr = ConvertTo-OmniRedactionIPv6Address -Text $core
-            $tail = ''
-            if ($null -eq $addr -and $zone -eq '' -and $core.EndsWith(':') -and -not $core.EndsWith('::')) {
-                # 'Pinging 2001:db8::5: Request timed out' - the colon belongs to the sentence.
-                $addr = ConvertTo-OmniRedactionIPv6Address -Text $core.Substring(0, $core.Length - 1)
-                $tail = ':'
+            $lead = ''
+            $hit = $null
+            if ($Match.Index -gt 0 -and $Text.Length -gt $Match.Index -and $Text[$Match.Index - 1] -eq '%' -and
+                $v.Length -gt 2 -and $v.Substring(0, 2) -match '^[0-9A-Fa-f]{2}$') {
+                # URL-encoded text ('%20fe80::1', '%3A2001:db8::5', '%5Bab::1%5D'): the two hex
+                # digits after '%' belong to the escape, not to the address. Tried first, because
+                # '5Bab::1' would parse too and give the same host a different pseudonym.
+                $hit = Resolve-OmniRedactionIPv6Candidate -Candidate $v.Substring(2)
+                if ($null -ne $hit) { $lead = $v.Substring(0, 2) }
             }
-            if ($null -eq $addr) { return $null }
+            if ($null -eq $hit) { $hit = Resolve-OmniRedactionIPv6Candidate -Candidate $v }
+            if ($null -eq $hit) { return $null }
+            $addr = $hit.Address
             $bytes = $addr.GetAddressBytes()
             if ($bytes[0] -eq 0xFF) { return $null }                          # multicast
             if ([System.Net.IPAddress]::IsLoopback($addr)) { return $null }     # ::1
             if (@($bytes | Where-Object { $_ -ne 0 }).Count -eq 0) { return $null } # ::
             $key = $addr.ToString().ToLowerInvariant()
             $pi = $key.IndexOf('%'); if ($pi -ge 0) { $key = $key.Substring(0, $pi) }
-            return (Get-OmniRedactionPseudonym -Context $Context -Category 'IPv6' -Key $key -Original $key) + $zone + $tail
+            return $lead + (Get-OmniRedactionPseudonym -Context $Context -Category 'IPv6' -Key $key -Original $key) + $hit.Zone + $hit.Tail
         }
         'IPv4' {
             if (Test-OmniRedactionKeepIPv4 -Value $v) { return $null }
@@ -356,7 +385,7 @@ function Invoke-OmniRedactionPattern {
     $last = 0
     $changed = $false
     foreach ($m in $found) {
-        $rep = Get-OmniRedactionMatchReplacement -Context $Context -Kind $Kind -Match $m
+        $rep = Get-OmniRedactionMatchReplacement -Context $Context -Kind $Kind -Match $m -Text $Text
         if ($null -eq $rep) { continue }
         [void]$sb.Append($Text, $last, $m.Index - $last)
         [void]$sb.Append([string]$rep)
@@ -473,6 +502,44 @@ function Find-OmniRedactionProfileName {
     }
 }
 
+# Get-OmniFindingAutoId (Core/Models), resolved on first use; $false when unavailable.
+$script:OmniFindingAutoIdCommand = $null
+
+function ConvertTo-OmniRedactionAutoId {
+    <# .SYNOPSIS Internal: the id New-OmniFinding generates from a component and a title. #>
+    param([AllowEmptyString()][string] $Component, [AllowEmptyString()][string] $Title)
+    # One definition (Core/Models Get-OmniFindingAutoId); the inline rule is the same and is
+    # only used when this module is imported on its own.
+    if ($null -eq $script:OmniFindingAutoIdCommand) {
+        $cmd = Get-Command -Name 'Get-OmniFindingAutoId' -CommandType Function -ErrorAction SilentlyContinue
+        $script:OmniFindingAutoIdCommand = if ($cmd) { $cmd } else { $false }
+    }
+    if ($script:OmniFindingAutoIdCommand) { return (& $script:OmniFindingAutoIdCommand -Component $Component -Title $Title) }
+    return ((('{0}|{1}' -f $Component, $Title).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
+}
+
+function Get-OmniRedactionAutoIdProperty {
+    <#
+    .SYNOPSIS
+        Internal: when an object is a finding whose id was generated from its component and
+        title, returns the property names and the original texts; otherwise $null.
+    #>
+    param($InputObject)
+    $found = @{}
+    foreach ($p in $InputObject.PSObject.Properties) {
+        $n = [string]$p.Name
+        if ($n -eq 'Id' -or $n -eq 'Title' -or $n -eq 'Component') {
+            $v = $null
+            try { $v = $p.Value } catch { $v = $null }
+            if ($v -isnot [string]) { return $null }
+            $found[$n.ToLowerInvariant()] = @{ Name = $n; Value = $v }
+        }
+    }
+    if ($found.Count -ne 3 -or [string]::IsNullOrEmpty($found['id'].Value)) { return $null }
+    if ($found['id'].Value -cne (ConvertTo-OmniRedactionAutoId -Component $found['component'].Value -Title $found['title'].Value)) { return $null }
+    return @{ Id = $found['id'].Name; Component = $found['component'].Value; Title = $found['title'].Value }
+}
+
 function ConvertTo-OmniRedactedValue {
     <# .SYNOPSIS Internal: recursive deep copy with redaction (see ConvertTo-OmniRedacted). #>
     param($Value, $Context, [int] $Depth = 0)
@@ -535,12 +602,24 @@ function ConvertTo-OmniRedactedValue {
             if ([string]$p.MemberType -eq 'Property' -and $p.IsGettable) { $props.Add($p) }
         }
     }
+    # A finding id generated from its component and title (New-OmniFinding, report v1)
+    # holds that text in kebab case, where an identifier is no longer delimited
+    # ('%22host%22' -> '22host-22', '10.1.2.3' -> '10-1-2-3'). Such an id is rebuilt from the
+    # redacted component and title instead of being redacted as text.
+    $autoId = $null
+    if ($isCustom) { $autoId = Get-OmniRedactionAutoIdProperty -InputObject $Value }
+    $autoIdName = $null
     foreach ($p in $props) {
         $v = $null
         try { $v = $p.Value } catch { $v = $null }
         $name = Get-OmniRedactedString -Text ([string]$p.Name) -Context $Context
         if ($ordered.Contains($name)) { $base = $name; $i = 2; while ($ordered.Contains($name)) { $name = '{0} ({1})' -f $base, $i; $i++ } }
+        if ($null -ne $autoId -and [string]$p.Name -eq $autoId.Id) { $ordered[$name] = $null; $autoIdName = $name; continue }
         $ordered[$name] = ConvertTo-OmniRedactedValue -Value $v -Context $Context -Depth ($Depth + 1)
+    }
+    if ($null -ne $autoIdName) {
+        $ordered[$autoIdName] = ConvertTo-OmniRedactionAutoId -Component (Get-OmniRedactedString -Text $autoId.Component -Context $Context) `
+            -Title (Get-OmniRedactedString -Text $autoId.Title -Context $Context)
     }
     $copy = [pscustomobject]$ordered
     if ($isCustom) {

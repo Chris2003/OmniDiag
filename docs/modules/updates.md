@@ -66,7 +66,9 @@ also run Windows Health.
 **Windows Update.** Hotfix count and newest `InstalledOn` (Warning after 60 days), and the
 `wuauserv` status.
 
-**Update Rings.** Windows Update for Business and MDM update policy values.
+**Update Rings.** Collects the Windows Update for Business and MDM update policy values
+(metrics `PolicyValueCount`, `PolicyValues`) and flags any non-zero value whose name
+contains `Pause` (metric `PauseValueCount`). Information only; it never raises a Warning.
 
 ### Repairs
 
@@ -84,7 +86,7 @@ The documented `RunDism` option never existed and is gone from the help.)
 | Windows Health | Registry markers `...\Component Based Servicing\RebootPending`, `...\WindowsUpdate\Auto Update\RebootRequired`, `Session Manager\PendingFileRenameOperations`; `Win32_PnPEntity`; `Win32_Service`; `Get-Service wuauserv`; `Win32_StartupCommand` |
 | System Health | File timestamp of `%SystemRoot%\Logs\CBS\CBS.log` |
 | Windows Update | `Get-HotFix`; `Get-Service wuauserv` |
-| Update Rings | Policy registry keys |
+| Update Rings | Registry `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate` and `HKLM\SOFTWARE\Microsoft\PolicyManager\current\device\Update` (all values) |
 
 Result codes, operations, and HRESULTs are numeric, so nothing depends on the display
 language. Update titles are shown as Windows stores them (localized).
@@ -111,7 +113,7 @@ or an installer. The CI no-network job audits this on every build.
 | Update History | Update failed to install: KB... (`update-history-failed-<kb, UpdateID, or title>`) | Warning / Information | Failed or aborted inside the time range; Information when it installed later |
 | Update History | Windows Update history summary (`update-history-summary`) | Information | Every run with history |
 | Update History | Failed-update history not available (`update-history-com-unavailable`) | Information | COM API unavailable; last install graded from `Get-HotFix` |
-| Update History | Update history not available (`update-history-not-available`) | Information | Neither source readable (non-Windows) |
+| Update History | Update history not available (`update-history-not-available`) | Information | Neither source readable, or `Get-HotFix` has no install date (non-Windows) |
 | Windows Health | A system restart is pending (`windows-health-pending-reboot`) | Warning | Any reboot marker present |
 | Windows Health | Windows Update service is disabled (`windows-health-wuauserv-disabled`) | Warning | `wuauserv` start type Disabled |
 | Windows Health | Windows health checks passed | Pass | None of the above |
@@ -119,6 +121,9 @@ or an installer. The CI no-network job audits this on every build.
 | System Health | Servicing log not found (`system-health-servicing-log-not-found`) | Information | CBS log missing or unreadable |
 | Windows Update | Most recent update is N days old | Warning | Newest hotfix older than 60 days |
 | Windows Update | Windows Update posture healthy | Pass | Otherwise |
+| Update Rings | Windows Update pause policy is present | Information | A policy value whose name contains `Pause` is set (non-zero) |
+| Update Rings | No managed update-ring policy detected locally | Information | Neither policy key has any value |
+| Update Rings | Managed update policy detected | Pass | Policy values present and none is a pause value |
 
 ## Platforms
 

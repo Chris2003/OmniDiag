@@ -17,6 +17,12 @@ quick installer only uses the network to download that same application folder.
 
 - Windows 10 / 11 / Server 2019+ (x64)
 - Windows PowerShell 5.1 (built in on every supported Windows) **or** PowerShell 7+
+  - The launchers never look PowerShell up through `PATH` or the current folder. They use
+    `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`, or `pwsh.exe` when it
+    is installed at `%ProgramFiles%\PowerShell\7\` (also the `%ProgramW6432%` and
+    `%ProgramFiles(x86)%` equivalents). A Microsoft Store / MSIX pwsh, a `7-preview`
+    build, a per-user install, or any other custom location is **not** used; the launchers
+    fall back to Windows PowerShell 5.1 (see docs/SECURITY-REVIEW.md, item 3).
 - Administrator rights are **optional** — without them, admin-only checks and
   repairs are skipped gracefully and everything else still runs.
 
@@ -31,18 +37,31 @@ network access, so PDF works even on locked-down machines.
 From PowerShell or Windows Terminal:
 
 ```powershell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/Chris2003/OmniDiag/main/install.ps1')))
+& ([scriptblock]::Create((irm 'https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1')))
 ```
 
-The bootstrap downloads a whitelisted application surface from GitHub, validates
-required launcher/module/UI files, optionally verifies `-ExpectedSha256`, recursively
-uses `Unblock-File`, installs to `%LOCALAPPDATA%\Programs\OmniDiag`, and opens the GUI.
-An existing installation is moved to a dated backup. It does not elevate or change
-the machine-wide execution policy. Use `-NoLaunch` for automated deployment.
+The bootstrap resolves the latest release tag through the GitHub releases API, downloads
+that release's portable zip and `SHA256SUMS`, and **verifies the zip's SHA-256
+automatically** - it stops if `SHA256SUMS` is missing, does not list the zip, or does not
+match. It then refuses unsafe archive entries, validates the required
+launcher/module/UI files, recursively uses `Unblock-File`, installs to
+`%LOCALAPPDATA%\Programs\OmniDiag`, and opens the GUI. An existing installation is moved
+to a dated backup. It does not elevate or change the machine-wide execution policy. Use
+`-NoLaunch` for automated deployment.
 
 Because the one-liner executes remote code, review `install.ps1` before running it.
-Enterprise deployments should pin `-Ref` to an approved tag or commit instead of
-tracking `main`.
+Enterprise deployments should pin an approved version: download that release's
+`OmniDiag-<version>-portable.zip` and `SHA256SUMS` and verify them
+([docs/RELEASING.md](docs/RELEASING.md#verifying-a-release)), or run
+`install.ps1 -Ref v<version> -ExpectedSha256 <hash>` (installs from the tag's source
+archive; the hash is the SHA-256 of that archive).
+
+### Per-user MSI
+
+Prefer a regular installation? The per-user MSI (and winget) installs the same files to
+`%LOCALAPPDATA%\Programs\OmniDiag` without admin rights, adds Start menu entries and the
+`omnidiag` command, and keeps data in `%LOCALAPPDATA%\OmniDiag\Data` instead of next to
+the tool. It is not zero-footprint by design. See [docs/INSTALLER.md](docs/INSTALLER.md).
 
 ### Extracted portable package
 
@@ -98,6 +117,9 @@ cache to the profile.
 
 If the tool folder is read-only (e.g. write-protected media), OmniDiag warns you and
 falls back to `%TEMP%\OmniDiag`. Set `OMNIDIAG_DATA` to choose another location.
+An MSI-installed copy (it carries a `.omnidiag-installed` marker; the portable package
+never does) uses `%LOCALAPPDATA%\OmniDiag\Data` instead; see
+[docs/INSTALLER.md](docs/INSTALLER.md#where-data-goes-installed-mode).
 
 ### What zero footprint can't cover
 

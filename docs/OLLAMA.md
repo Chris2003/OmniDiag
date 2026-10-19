@@ -108,7 +108,18 @@ Test-OmniOllama -Model gemma4:e2b
 - Finding text can mention people and devices (for example a certificate subject or a
   printer name). Before it is sent, e-mail addresses, distinguished-name parts
   (`CN=`, `E=`, `OU=`, …), and the local user, computer, and domain names are replaced
-  with placeholders. Other device names (printers, disks) can still appear.
+  with placeholders. Everything sent about the session - finding text and IDs, the plan
+  name, your question, approved runbook text, and earlier turns of a conversation - is
+  then redacted like a shared report ([REDACTION.md](REDACTION.md)): host, user, and domain
+  names, profile paths, SIDs, and IPv4/IPv6/MAC addresses become pseudonyms (`HOST-1`,
+  `IP-1`, ...). Finding IDs the model cites are mapped back to the session's own IDs.
+  Names that cannot be derived from the session (printers, disks) can still appear.
+- Model output is untrusted text. Before it is returned or shown in the console or GUI,
+  every string is stripped of terminal control sequences (ANSI/VT CSI and OSC sequences such
+  as color, cursor, window-title, and hyperlink codes, including 8-bit forms), other control
+  characters except tab and line feed (a lone carriage return cannot overwrite a line), and
+  Unicode bidirectional-override and invisible formatting characters. The same applies to
+  model names and error text returned by the local server.
 - Model output is never executed. Citations to findings that weren't supplied are dropped
   and listed as unverified, and the "get approval before changing the device" advisory is
   always shown, whatever the model says.

@@ -43,17 +43,120 @@ function Protect-OmniPromptText {
     .DESCRIPTION
         Finding titles can embed certificate subjects, e-mail addresses, and the local
         user or computer name. These are replaced with neutral placeholders before the
-        text is projected into a prompt; finding IDs are left intact so citations still
-        resolve against the local session.
+        text is projected into a prompt. With -Context (a redaction context) the text is
+        then redacted like a shared report. Finding IDs are redacted separately
+        (Get-OmniPromptFindingId) and mapped back, so citations still resolve against
+        the local session.
     #>
-    param([string] $Text, [string[]] $Identity = @())
+    param([string] $Text, [string[]] $Identity = @(), $Context)
     if ([string]::IsNullOrEmpty($Text)) { return $Text }
     $out = $Text -replace '[\w.+-]+@[\w-]+(\.[\w-]+)+', '<email>'
     $out = $out -replace '(?i)\b(CN|E|OU|O|DC|UID)=([^,;)]+)', '$1=<redacted>'
     foreach ($name in @($Identity | Where-Object { $_ -and $_.Length -ge 3 } | Sort-Object Length -Descending)) {
         $out = $out -replace [regex]::Escape($name), '<host-identity>'
     }
+    # The report redaction (docs/REDACTION.md) on top: host, user, and domain names,
+    # profile paths, SIDs, and IPv4/IPv6/MAC addresses become stable pseudonyms.
+    if ($null -ne $Context) { $out = [string](ConvertTo-OmniRedacted -InputObject $out -Context $Context) }
     return $out
+}
+
+function New-OmniPromptRedactionContext {
+    <#
+    .SYNOPSIS
+        Internal: the redaction context for everything sent to the model about a session
+        (built from the session and this machine's environment, as Export-OmniReport
+        -Redact does).
+    #>
+    param([pscustomobject] $Session)
+    return (New-OmniRedactionContext -Session $Session)
+}
+
+function ConvertTo-OmniPromptAutoId {
+    <# .SYNOPSIS Internal: the id New-OmniFinding generates from a component and a title. #>
+    param([AllowEmptyString()][string] $Component, [AllowEmptyString()][string] $Title)
+    # One rule for auto ids: Get-OmniFindingAutoId (Models.psm1) when loaded; the same formula otherwise.
+    if (Get-Command -Name Get-OmniFindingAutoId -ErrorAction SilentlyContinue) { return (Get-OmniFindingAutoId -Component $Component -Title $Title) }
+    return ((('{0}|{1}' -f $Component, $Title).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
+}
+
+function Get-OmniPromptFindingId {
+    <#
+    .SYNOPSIS
+        Internal: the finding id as sent to the model; IdMap remembers the original for
+        citations.
+
+    .DESCRIPTION
+        An id generated from the component and title (New-OmniFinding) holds that text in
+        kebab case, where an address or name is no longer delimited (10.1.2.3 reads
+        10-1-2-3). Such an id is rebuilt from the redacted component and title - the same
+        id the redacted report shows (Redaction.psm1). Any other id is redacted as text.
+        An id that was already sent keeps the form it was sent in.
+    #>
+    param([string] $Id, [string] $Component, [string] $Title, $Context, [System.Collections.IDictionary] $IdMap)
+    if ([string]::IsNullOrEmpty($Id)) { return $Id }
+    if ($null -ne $IdMap) {
+        foreach ($k in @($IdMap.Keys)) { if ([string]$IdMap[$k] -ceq $Id) { return [string]$k } }
+    }
+    $sent = $Id
+    if ($null -ne $Context) {
+        if ($PSBoundParameters.ContainsKey('Title') -and $Id -ceq (ConvertTo-OmniPromptAutoId -Component $Component -Title $Title)) {
+            $sent = ConvertTo-OmniPromptAutoId -Component ([string](ConvertTo-OmniRedacted -InputObject $Component -Context $Context)) `
+                -Title ([string](ConvertTo-OmniRedacted -InputObject $Title -Context $Context))
+        } else {
+            $sent = [string](ConvertTo-OmniRedacted -InputObject $Id -Context $Context)
+        }
+    }
+    if ($null -ne $IdMap -and -not [string]::IsNullOrEmpty($sent) -and -not $IdMap.Contains($sent)) { $IdMap[$sent] = $Id }
+    return $sent
+}
+
+function ConvertTo-OmniSafeDisplayText {
+    <#
+    .SYNOPSIS
+        Internal: model output made safe to show in a console or the GUI.
+
+    .DESCRIPTION
+        A local model can echo or invent terminal control sequences. This removes ANSI /
+        VT escape sequences (CSI, OSC such as window-title or hyperlink sequences, DCS and
+        other string controls, and the 8-bit C1 forms), every other C0 / C1 control
+        character except TAB and LF, DEL, and the Unicode bidirectional-override and
+        invisible formatting characters that can disguise text. CRLF and the Unicode line
+        and paragraph separators become LF, so a lone CR cannot overwrite a line.
+    #>
+    param([AllowNull()] $Text)
+    if ($null -eq $Text) { return $null }
+    $s = [string]$Text
+    if ($s.Length -eq 0) { return $s }
+    $s = [regex]::Replace($s, '(?:\x1B\[|\x9B)[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]?', '')
+    $s = [regex]::Replace($s, '(?:\x1B[\]PX^_]|[\x90\x98\x9D\x9E\x9F])[\s\S]*?(?:\x07|\x1B\\|\x9C|$)', '')
+    $s = [regex]::Replace($s, '\x1B[\s\S]?', '')
+    $s = $s.Replace("`r`n", "`n")
+    $s = [regex]::Replace($s, '[\u0085\u2028\u2029]', "`n")
+    $s = [regex]::Replace($s, '[\x00-\x08\x0B-\x1F\x7F-\x9F\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]', '')
+    return $s
+}
+
+function ConvertTo-OmniSafeModelOutput {
+    <#
+    .SYNOPSIS
+        Internal: applies ConvertTo-OmniSafeDisplayText to every string in parsed model
+        output (objects and arrays from ConvertFrom-Json), in place; returns the value.
+    #>
+    param([AllowNull()] $Value, [int] $Depth = 0)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [string]) { return (ConvertTo-OmniSafeDisplayText $Value) }
+    if ($Depth -gt 16) { return $Value }
+    if ($Value -is [array]) {
+        for ($i = 0; $i -lt $Value.Length; $i++) { $Value[$i] = ConvertTo-OmniSafeModelOutput -Value $Value[$i] -Depth ($Depth + 1) }
+        return , $Value
+    }
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($p in @($Value.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' })) {
+            $p.Value = ConvertTo-OmniSafeModelOutput -Value $p.Value -Depth ($Depth + 1)
+        }
+    }
+    return $Value
 }
 
 function Get-OmniPromptIdentity {
@@ -80,10 +183,10 @@ function Test-OmniOllama {
     if ($Model -match '(^|[:-])cloud($|[:-])') { throw 'Cloud-tag Ollama models are disabled; choose a locally installed model.' }
     try {
         $response = Invoke-OmniOllamaRequest -Method GET -Uri "$base/api/tags" -Transport $Transport
-        $models = @($response.models | ForEach-Object { if ($_.model) { [string]$_.model } else { [string]$_.name } })
+        $models = @($response.models | ForEach-Object { if ($_.model) { ConvertTo-OmniSafeDisplayText ([string]$_.model) } else { ConvertTo-OmniSafeDisplayText ([string]$_.name) } })
         return [pscustomobject]@{ PSTypeName='OmniDiag.OllamaStatus'; Available=$true; Endpoint=$base; Model=$Model; ModelPresent=($models -contains $Model); Models=$models; Error=$null }
     } catch {
-        return [pscustomobject]@{ PSTypeName='OmniDiag.OllamaStatus'; Available=$false; Endpoint=$base; Model=$Model; ModelPresent=$false; Models=@(); Error=$_.Exception.Message }
+        return [pscustomobject]@{ PSTypeName='OmniDiag.OllamaStatus'; Available=$false; Endpoint=$base; Model=$Model; ModelPresent=$false; Models=@(); Error=(ConvertTo-OmniSafeDisplayText $_.Exception.Message) }
     }
 }
 
@@ -104,17 +207,20 @@ function Invoke-OmniOllamaAnalysis {
     if (-not $status.ModelPresent) { throw "Model '$Model' is not installed locally. Run: ollama pull $Model" }
 
     $identity = Get-OmniPromptIdentity -Session $Session
+    # Everything about the session that reaches the model is redacted (docs/OLLAMA.md).
+    $redaction = New-OmniPromptRedactionContext -Session $Session
+    $idMap = @{}
     $findings = @(
         foreach ($result in @($Session.Results)) {
             foreach ($finding in @($result.Findings)) {
                 if (-not $finding -or $finding.Severity -eq 'Pass') { continue }
                 [ordered]@{
-                    id = [string]$finding.Id
+                    id = Get-OmniPromptFindingId -Id ([string]$finding.Id) -Component ([string]$finding.Component) -Title ([string]$finding.Title) -Context $redaction -IdMap $idMap
                     severity = [string]$finding.Severity
-                    component = Protect-OmniPromptText ([string]$finding.Component) $identity
-                    title = Protect-OmniPromptText ([string]$finding.Title) $identity
-                    likelyCause = Protect-OmniPromptText ([string]$finding.LikelyCause) $identity
-                    recommendation = Protect-OmniPromptText ([string]$finding.Recommendation) $identity
+                    component = Protect-OmniPromptText ([string]$finding.Component) $identity $redaction
+                    title = Protect-OmniPromptText ([string]$finding.Title) $identity $redaction
+                    likelyCause = Protect-OmniPromptText ([string]$finding.LikelyCause) $identity $redaction
+                    recommendation = Protect-OmniPromptText ([string]$finding.Recommendation) $identity $redaction
                 }
             }
         }
@@ -123,7 +229,7 @@ function Invoke-OmniOllamaAnalysis {
     $evidence = [ordered]@{
         healthScore = if ($Session.Summary) { $Session.Summary.Score } else { $null }
         grade = if ($Session.Summary) { $Session.Summary.Grade } else { $null }
-        scanPlan = if ($Session.PSObject.Properties['ScanPlan']) { $Session.ScanPlan.Name } else { $null }
+        scanPlan = if ($Session.PSObject.Properties['ScanPlan'] -and $Session.ScanPlan) { Protect-OmniPromptText ([string]$Session.ScanPlan.Name) $identity $redaction } else { $null }
         findings = @($findings)
     }
     $schema = [ordered]@{
@@ -138,11 +244,14 @@ function Invoke-OmniOllamaAnalysis {
         required=@('summary','priorities','correlations','nextSteps','limitations')
     }
     $system = 'You are an evidence-grounded IT troubleshooting assistant. Use only the supplied OmniDiag evidence. Cite finding IDs for every priority, correlation, and next step. Clearly state uncertainty. Never claim a repair ran, never invent missing facts, never request secrets, and never recommend bypassing security controls. Mutating steps must set requiresApproval=true.'
-    $prompt = "Technician question:`n$Question`n`nOmniDiag evidence JSON:`n$($evidence | ConvertTo-Json -Depth 8 -Compress)"
+    $prompt = "Technician question:`n$(Protect-OmniPromptText $Question $identity $redaction)`n`nOmniDiag evidence JSON:`n$($evidence | ConvertTo-Json -Depth 8 -Compress)"
     $body = [ordered]@{ model=$Model; system=$system; prompt=$prompt; stream=$false; think=$false; format=$schema; keep_alive='5m'; options=@{ temperature=0.1; num_predict=900 } }
     $response = Invoke-OmniOllamaRequest -Method POST -Uri "$($status.Endpoint)/api/generate" -Body $body -Transport $Transport
     if (-not $response -or -not $response.PSObject.Properties['response'] -or -not $response.response) { throw 'Ollama returned no analysis content.' }
-    try { $analysis = $response.response | ConvertFrom-Json -ErrorAction Stop } catch { throw "Ollama returned invalid structured JSON: $($_.Exception.Message)" }
+    try { $analysis = $response.response | ConvertFrom-Json -ErrorAction Stop } catch { throw "Ollama returned invalid structured JSON: $(ConvertTo-OmniSafeDisplayText $_.Exception.Message)" }
+    if ($analysis -isnot [System.Management.Automation.PSCustomObject]) { throw 'Ollama returned invalid structured JSON: not an object.' }
+    # Model output is untrusted text: no terminal control sequences reach the console or GUI.
+    $analysis = ConvertTo-OmniSafeModelOutput -Value $analysis
     foreach ($required in @('summary','priorities','correlations','nextSteps','limitations')) {
         if (-not $analysis.PSObject.Properties[$required]) { throw "Ollama response is missing required property '$required'." }
     }
@@ -154,7 +263,8 @@ function Invoke-OmniOllamaAnalysis {
             if (-not $item.PSObject.Properties['evidenceIds']) { continue }
             $ids = @($item.evidenceIds | Where-Object { $_ } | ForEach-Object { [string]$_ })
             foreach ($bad in @($ids | Where-Object { $_ -notin $suppliedIds })) { if (-not $unverified.Contains($bad)) { $unverified.Add($bad) } }
-            $item.evidenceIds = @($ids | Where-Object { $_ -in $suppliedIds })
+            # Back to the session's own ids (the model saw redacted ones).
+            $item.evidenceIds = @($ids | Where-Object { $_ -in $suppliedIds } | ForEach-Object { if ($idMap.Contains($_)) { $idMap[$_] } else { $_ } })
         }
     }
     return [pscustomobject]@{
@@ -214,6 +324,9 @@ function New-OmniAssistantConversation {
         SeenFindingIds  = [System.Collections.Generic.HashSet[string]]::new()
         SeenRunbookIds  = [System.Collections.Generic.HashSet[string]]::new()
         Identity        = @(Get-OmniPromptIdentity -Session $Session)
+        # Redaction of everything sent to the model, and redacted id -> session id.
+        RedactionContext = (New-OmniPromptRedactionContext -Session $Session)
+        IdMap           = @{}
     }
 }
 
@@ -234,6 +347,10 @@ function Invoke-OmniAssistantTurn {
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $Question
     )
     $c = $Conversation
+    $redaction = $null
+    if ($c.PSObject.Properties['RedactionContext'] -and $c.RedactionContext) { $redaction = $c.RedactionContext } else { $redaction = New-OmniPromptRedactionContext -Session $c.Session }
+    $idMap = $null
+    if ($c.PSObject.Properties['IdMap'] -and $null -ne $c.IdMap) { $idMap = $c.IdMap } else { $idMap = @{} }
     $status = Test-OmniOllama -Endpoint $c.Endpoint -Model $c.Model -Transport $c.Transport
     if (-not $status.Available) { throw "Ollama is not available at $($status.Endpoint): $($status.Error)" }
     if (-not $status.ModelPresent) { throw "Model '$($c.Model)' is not installed locally. Run: ollama pull $($c.Model)" }
@@ -252,14 +369,17 @@ function Invoke-OmniAssistantTurn {
         healthScore = if ($c.Session.PSObject.Properties['Summary'] -and $c.Session.Summary) { $c.Session.Summary.Score } else { $null }
         findings = @(foreach ($h in $hits | Where-Object Type -eq 'Finding') {
             [void]$c.SeenFindingIds.Add($h.Id)
-            [ordered]@{ id = $h.Id; severity = $h.Item.Severity; component = (Protect-OmniPromptText ([string]$h.Item.Component) $c.Identity)
-                title = (Protect-OmniPromptText ([string]$h.Item.Title) $c.Identity); likelyCause = (Protect-OmniPromptText ([string]$h.Item.LikelyCause) $c.Identity)
-                recommendation = (Protect-OmniPromptText ([string]$h.Item.Recommendation) $c.Identity) }
+            [ordered]@{ id = (Get-OmniPromptFindingId -Id ([string]$h.Id) -Component ([string]$h.Item.Component) -Title ([string]$h.Item.Title) -Context $redaction -IdMap $idMap); severity = $h.Item.Severity
+                component = (Protect-OmniPromptText ([string]$h.Item.Component) $c.Identity $redaction)
+                title = (Protect-OmniPromptText ([string]$h.Item.Title) $c.Identity $redaction); likelyCause = (Protect-OmniPromptText ([string]$h.Item.LikelyCause) $c.Identity $redaction)
+                recommendation = (Protect-OmniPromptText ([string]$h.Item.Recommendation) $c.Identity $redaction) }
         })
         runbooks = @(foreach ($h in $hits | Where-Object Type -eq 'Runbook') {
             [void]$c.SeenRunbookIds.Add($h.Id)
             $body = [string]$h.Item.Body
-            [ordered]@{ id = $h.Id; title = $h.Item.Title; owner = $h.Item.Owner; steps = $(if ($body.Length -gt 1500) { $body.Substring(0, 1500) + '...' } else { $body }) }
+            if ($body.Length -gt 1500) { $body = $body.Substring(0, 1500) + '...' }
+            [ordered]@{ id = $h.Id; title = (Protect-OmniPromptText ([string]$h.Item.Title) $c.Identity $redaction); owner = (Protect-OmniPromptText ([string]$h.Item.Owner) $c.Identity $redaction)
+                steps = (Protect-OmniPromptText $body $c.Identity $redaction) }
         })
     }
 
@@ -268,10 +388,11 @@ function Invoke-OmniAssistantTurn {
     $messages.Add([ordered]@{ role = 'system'; content = $system })
     $history = @($c.Turns | Select-Object -Last $c.MaxHistoryTurns)
     foreach ($t in $history) {
-        $messages.Add([ordered]@{ role = 'user'; content = $t.Question })
-        $messages.Add([ordered]@{ role = 'assistant'; content = ([ordered]@{ answer = $t.Answer; findingIds = @($t.FindingIds); runbookIds = @($t.RunbookIds) } | ConvertTo-Json -Depth 4 -Compress) })
+        $messages.Add([ordered]@{ role = 'user'; content = (Protect-OmniPromptText ([string]$t.Question) $c.Identity $redaction) })
+        $sentIds = @(foreach ($id in @($t.FindingIds)) { Get-OmniPromptFindingId -Id ([string]$id) -Context $redaction -IdMap $idMap })
+        $messages.Add([ordered]@{ role = 'assistant'; content = ([ordered]@{ answer = (Protect-OmniPromptText ([string]$t.Answer) $c.Identity $redaction); findingIds = $sentIds; runbookIds = @($t.RunbookIds) } | ConvertTo-Json -Depth 4 -Compress) })
     }
-    $messages.Add([ordered]@{ role = 'user'; content = "Technician question:`n$Question`n`nEvidence for this turn (JSON):`n$($evidence | ConvertTo-Json -Depth 8 -Compress)" })
+    $messages.Add([ordered]@{ role = 'user'; content = "Technician question:`n$(Protect-OmniPromptText $Question $c.Identity $redaction)`n`nEvidence for this turn (JSON):`n$($evidence | ConvertTo-Json -Depth 8 -Compress)" })
 
     $schema = [ordered]@{
         type = 'object'
@@ -289,11 +410,15 @@ function Invoke-OmniAssistantTurn {
     $response = Invoke-OmniOllamaRequest -Method POST -Uri "$($c.Endpoint)/api/chat" -Body $body -Transport $c.Transport
     $content = if ($response -and $response.PSObject.Properties['message'] -and $response.message -and $response.message.PSObject.Properties['content']) { [string]$response.message.content } else { $null }
     if (-not $content) { throw 'Ollama returned no answer content.' }
-    try { $reply = $content | ConvertFrom-Json -ErrorAction Stop } catch { throw "Ollama returned invalid structured JSON: $($_.Exception.Message)" }
+    try { $reply = $content | ConvertFrom-Json -ErrorAction Stop } catch { throw "Ollama returned invalid structured JSON: $(ConvertTo-OmniSafeDisplayText $_.Exception.Message)" }
+    if ($reply -isnot [System.Management.Automation.PSCustomObject]) { throw 'Ollama returned invalid structured JSON: not an object.' }
+    # Model output is untrusted text: no terminal control sequences reach the console or GUI.
+    $reply = ConvertTo-OmniSafeModelOutput -Value $reply
     if (-not $reply.PSObject.Properties['answer']) { throw "Ollama response is missing required property 'answer'." }
 
     $prop = { param($name) if ($reply.PSObject.Properties[$name]) { @($reply.$name | Where-Object { $_ } | ForEach-Object { [string]$_ }) } else { @() } }
-    $citedFindings = & $prop 'findingIds'
+    # The model saw redacted finding ids: map its citations back to the session's ids.
+    $citedFindings = @(foreach ($x in @(& $prop 'findingIds')) { if ($idMap.Contains($x)) { $idMap[$x] } else { $x } })
     $citedRunbooks = & $prop 'runbookIds'
     $turn = [pscustomobject]@{
         PSTypeName          = 'OmniDiag.AssistantTurn'

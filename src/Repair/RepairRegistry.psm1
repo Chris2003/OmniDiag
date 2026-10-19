@@ -83,7 +83,9 @@ function Get-OmniRepair {
                 }
 
                 $m = & $modInfo { Get-OmniRepairManifest }
-                if (-not $m -or -not $m.Name -or -not $m.Category) {
+                # Indexer, not member access: under StrictMode a missing key read as $m.Category
+                # can throw a property-not-found error instead of this message.
+                if (-not $m -or $m -isnot [System.Collections.IDictionary] -or -not $m['Name'] -or -not $m['Category']) {
                     throw "Repair '$($file.Name)' returned an invalid manifest (Name and Category are required)."
                 }
 

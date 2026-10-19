@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     Per-volume used/free/total space breakdown with used-percentage metrics. Warns
-    when any fixed drive exceeds 90% used, and lists the largest top-level folders
-    on the system drive as an informational finding (bounded, best-effort).
+    when any fixed drive exceeds 90% used. Folder sizing was removed for speed (see
+    the note in Invoke-OmniModuleScan).
 
     Contract:
         Get-OmniModuleManifest -> module metadata
@@ -28,7 +28,7 @@ function Get-OmniModuleManifest {
         Group         = 'storage'
         NetworkAccess = 'None'
         Category      = 'Storage'
-        Description   = 'Per-volume space usage and largest top-level folders.'
+        Description   = 'Per-volume space usage.'
         RequiresAdmin = $false
         Order         = 310
         Enabled       = $true

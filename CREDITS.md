@@ -23,4 +23,7 @@ Please open an issue (or see [SECURITY.md](SECURITY.md) for security reports).
 ## Third-party
 
 - [Pester](https://pester.dev/) for testing.
+- [WiX Toolset](https://wixtoolset.org/) v5.0.2 (Microsoft Reciprocal License, MS-RL) builds the per-user
+  MSI. Build-time tool only: not included in this repository or in any OmniDiag package. Pinned to v5;
+  v6+ adds the Open Source Maintenance Fee (see [docs/INSTALLER.md](docs/INSTALLER.md)).
 - [Ollama](https://ollama.com/) and Google's Gemma models, both optional, for local AI analysis.

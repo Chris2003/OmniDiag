@@ -1,5 +1,111 @@
 # Changelog
 
+All notable changes to OmniDiag. Versions before 1.0.0 were development milestones and
+were not published as releases.
+
+## [1.0.0] - Unreleased
+
+Phase 5 of the v1.0 roadmap: release readiness.
+
+### Release engineering (docs/RELEASING.md)
+- **Reproducible portable zip:** `build/Build-Portable.ps1` writes the zip with
+  `System.IO.Compression` (sorted entries, forward-slash names, fixed timestamps from
+  `SOURCE_DATE_EPOCH` or the HEAD commit time, fixed compression level, no OS attributes),
+  packages git-tracked files only, and takes `-Version`. `.gitattributes` keeps checkouts
+  byte-identical to git on every OS. CI job `reproducible` builds twice and compares.
+- **`SHA256SUMS`** (`build/New-ReleaseManifest.ps1`) and a **CycloneDX 1.5 SBOM**
+  (`build/New-Sbom.ps1`, no external tools) for every release.
+- **Code-signing hook** `build/Sign.ps1`: Authenticode-signs every script and a signed file
+  catalog (`OmniDiag.cat`) when a certificate is provided, before zipping; does nothing
+  otherwise. CI job `signing` verifies it with a throwaway certificate.
+- **Release on tag:** `.github/workflows/release.yml` checks the tag against the module
+  version, runs the tests, signs (when configured), builds the zip (and the MSI / winget
+  manifest when available), SBOM, and `SHA256SUMS`, and publishes a GitHub release with
+  notes from this file (`build/Get-ReleaseNotes.ps1`).
+- **`install.ps1` installs the latest release** by default and verifies the zip against the
+  release's `SHA256SUMS` (fails closed); `-Ref` keeps the source-archive path. The quick
+  install URL is now `https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1`.
+
+
+## [0.9.0]
+
+Phase 4 of the v1.0 roadmap: hardening. Every item of the security review has a finding,
+a fix or a documented reason, and a dedicated test; see
+[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md).
+
+### Security review: files and I/O
+- **Export path canonicalization:** every output path (`--output`, `--redaction-map`,
+  `-OutputDirectory`, `-Path`) goes through the new `Resolve-OmniOutputPath`: `..` is
+  collapsed, and device paths (`\\.\`, `\\?\`, UNC `pipe` / `mailslot` shares), reserved
+  device names (`NUL`, `CON`, `COM1.json`, ...), NTFS streams, and non-file-system providers
+  are refused (CLI: usage error, exit 10). Host-derived, redacted, and `-BaseName` file
+  names are reduced to one safe file-name component (`ConvertTo-OmniSafeFileName`).
+  `Export-Csv` and `Compress-Archive` use `-LiteralPath`.
+- **Zip-slip and zip-bomb guards:** report-package (`.zip`) import validates every entry
+  name before reading (absolute names, drive letters, `:`, `..`, control characters, device
+  names), refuses more than 256 entries and a `data.json` over 64 MB declared or actually
+  inflated, and never extracts. `install.ps1` applies the same entry-name rules and streams
+  each entry with a 64 MB / 512 MB cap before `Expand-Archive`.
+- **Launcher executable pinning:** `OmniDiag.cmd` and `OmniDiag-GUI.cmd` no longer run
+  `where pwsh` or a bare `pwsh` / `powershell.exe` (which cmd.exe resolves from the current
+  folder first). They use `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` and
+  switch to `pwsh.exe` only from the standard `PowerShell\7` install folders. The Restart
+  Explorer repair starts `%SystemRoot%\explorer.exe`.
+- **Secret scrubbing:** `Protect-OmniSecretText` / `Protect-OmniSecretData` mask BitLocker
+  recovery passwords, URL credentials, `password=` / `token=` / `secret=` / `sig=` pairs,
+  `-Password` / `--token` switches, Bearer and Basic values, netsh key content, JWTs, and
+  GitHub / Slack / AWS token formats in findings, metrics, and every log record. Sessions
+  are scrubbed once on completion, again on import and before export, so older or edited
+  sessions cannot leak secrets. The proxy scanner scrubs proxy URLs at the source.
+- A static check keeps temporary files on `Get-OmniDataPath` (no new `%TEMP%` use).
+
+### Security review: content and import
+- **Report encoding:** Markdown collapses line breaks and control characters and escapes
+  pipes everywhere, and ids in code spans can no longer end the span and inject HTML. CSV
+  formula neutralization also covers leading whitespace or quotes, a leading LF, full-width
+  `= + - @`, and non-string values. HTML renders non-date times and non-numeric durations
+  from imported sessions as encoded text instead of failing. PDF and JSON were verified.
+- **Redaction:** identifiers glued to URL escapes (`%XX`) or JSON escapes kept as text
+  (`\n`, `\t`, `\uXXXX`) are now redacted by every detector (found by a property-based
+  test). Generated finding ids (kebab case of component and title) are rebuilt from the
+  redacted text, so names and addresses no longer leak through them.
+- **Session import validation and fuzzing:** `Import-OmniSession` caps files at 64 MB and
+  nesting at 100 levels (checked before parsing), requires one JSON object, validates the
+  shape of v1 reports and native sessions, and reports every failure as one
+  `System.IO.InvalidDataException` (`OmniDiag.SessionImportInvalid`). A seeded 200-case
+  fuzzer runs in CI.
+- **Local AI (Ollama):** everything sent about a session (findings, ids, the question, the
+  plan, runbook text, earlier turns) goes through the report redaction context, and cited
+  ids are mapped back. Model output, model names, and server errors are stripped of
+  terminal control sequences and bidi overrides before display.
+
+### Quality gates and verification
+- **Coverage gate:** `build/Invoke-Tests.ps1 -CoverageTargets ... -EnforceCoverage`; CI
+  fails when `src/Core`, `src/Repair`, or overall line coverage drops below 80%. New branch
+  tests for the repair engine and registry.
+- **Standard-user CI leg:** `build/Invoke-AsStandardUser.ps1` runs the suite, `report`, and
+  `scan` as a throwaway Users-only local account; `build/Test-PrivilegeReport.ps1` checks
+  exit codes, the report schema, structured elevation skips, and compares with an elevated
+  report. Blocking job `standard-user`.
+- **Client verification:** `build/Invoke-ClientVerification.ps1` writes an identifier-free
+  result file for Windows 10 / 11 client runs; `docs/VERIFICATION.md` lists what is
+  verified and what is not.
+
+### GUI
+- **Frame-first startup:** the window is first built in code (title, theme, a "Loading
+  OmniDiag..." live region) and painted before any XAML is parsed; the shell
+  (`MainWindow.xaml`) loads right after at Background priority.
+- **Lazy sections:** Groups, All Findings, Diagnostics, Repair Center, and Local AI are XAML
+  fragments under `src/UI/Sections/`, parsed on first navigation and cached.
+- **Measured startup:** first paint (`StartupMs`) and fully interactive (`ShellReadyMs`) are
+  logged with a phase breakdown and exposed through UI Automation;
+  `build/Measure-GuiStartup.ps1` compares strategies in fresh processes (non-blocking CI job
+  `gui-startup`). See docs/GUI.md.
+- Background work uses the curated cmdlets (`Invoke-OmniDiagScan`, `Export-OmniDiagReport`,
+  `Get-OmniDiagRepair`) and the new non-deprecated engine entry `Invoke-OmniRepairRun`
+  (`Invoke-OmniRepair` is now a deprecated wrapper over it). The GUI implementation is
+  `Start-OmniGuiWindow`, behind `Show-OmniDiagGui`.
+
 ## 0.8.0 (unreleased)
 
 Phase 3 of the v1.0 roadmap: interfaces and UX.

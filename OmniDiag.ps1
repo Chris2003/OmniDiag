@@ -218,7 +218,7 @@ try {
     $dataRoot = Get-OmniDataRoot
     if ($dataRoot.Source -eq 'TempFallback') {
         Write-Warning "The OmniDiag folder is not writable; data is being written to $($dataRoot.Path). Copy OmniDiag to writable media (e.g. a USB stick) to keep everything with the tool."
-    } elseif (-not $dataRoot.IsPortable) {
+    } elseif (-not $dataRoot.IsPortable -and $dataRoot.Source -ne 'Installed') {
         Write-Host "Note: OMNIDIAG_DATA sends OmniDiag's data to $($dataRoot.Path), outside the tool folder." -ForegroundColor Yellow
     }
 

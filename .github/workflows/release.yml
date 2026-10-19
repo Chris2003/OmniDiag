@@ -1,0 +1,238 @@
+name: Release
+
+# Release on tag (docs/RELEASING.md). Pushing a tag v<version> (matching ModuleVersion in
+# src/OmniDiag.psd1) builds, tests, optionally signs, packages, and publishes a GitHub
+# release with: the portable zip, the MSI and winget manifest (when build/Build-Msi.ps1 and
+# build/New-WingetManifest.ps1 exist), install.ps1, a CycloneDX SBOM, and SHA256SUMS.
+#
+# Manual run (workflow_dispatch) = dry run: the same build from the selected branch, for
+# the given tag's version; assets are uploaded as a workflow artifact, nothing is published.
+#
+# Only the pinned actions/checkout and actions/upload-artifact are used. The publish job
+# fetches the build artifact through the REST API with the preinstalled gh CLI (no
+# download-artifact action) and is the only job with write access to repository contents.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to dry-run, e.g. v1.0.0 (must equal v + ModuleVersion). Nothing is published.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build release assets
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        # Pinned to PowerShell 7: deflate output differs between .NET Framework and .NET,
+        # so the published zip is reproducible with pwsh 7 on windows-latest.
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify the tag matches the module version
+        run: |
+          $tag = $env:RELEASE_TAG
+          if ($tag -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$') { throw "Not a release tag: '$tag' (expected v<MAJOR>.<MINOR>.<PATCH>[-pre])." }
+          $version = (Import-PowerShellDataFile -Path src/OmniDiag.psd1).ModuleVersion
+          if ($tag -ne "v$version") { throw "Tag $tag does not match ModuleVersion $version in src/OmniDiag.psd1 (expected v$version)." }
+          # One source date for every artifact: the tagged commit's time.
+          $epoch = (git log -1 --format=%ct).Trim()
+          "RELEASE_VERSION=$version" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "SOURCE_DATE_EPOCH=$epoch" | Add-Content -LiteralPath $env:GITHUB_ENV
+          $runtime = [System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription
+          "### OmniDiag $tag`n`nVersion $version, SOURCE_DATE_EPOCH $epoch, PowerShell $($PSVersionTable.PSVersion), $runtime, event $env:GITHUB_EVENT_NAME" |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          $params = @{ Version = $env:RELEASE_VERSION; OutputPath = 'release-notes.md' }
+          # A tag push must have a dated (not 'unreleased') CHANGELOG section; dry runs may not.
+          if ($env:GITHUB_EVENT_NAME -eq 'push') { $params.RequireReleased = $true }
+          ./build/Get-ReleaseNotes.ps1 @params | Out-Null
+
+      - name: Install Pester
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+              break
+            } catch {
+              if ($attempt -eq 3) { throw }
+              Write-Warning "Install-Module Pester failed (attempt $attempt): $($_.Exception.Message)"
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+
+      - name: Run tests
+        run: |
+          ./build/Invoke-Tests.ps1 -TestResultPath test-results/testResults.xml
+          exit $LASTEXITCODE
+
+      - name: Prepare the signing certificate (only when the secrets exist)
+        id: signing
+        env:
+          OMNIDIAG_SIGN_PFX_BASE64: ${{ secrets.OMNIDIAG_SIGN_PFX_BASE64 }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:OMNIDIAG_SIGN_PFX_BASE64)) {
+            Write-Host 'OMNIDIAG_SIGN_PFX_BASE64 is not set: this release is built unsigned.'
+            'pfx=' | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+            return
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'omnidiag-sign.pfx'
+          [System.IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:OMNIDIAG_SIGN_PFX_BASE64))
+          "pfx=$pfx" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          Write-Host 'Signing certificate prepared (contents not shown).'
+
+      - name: Build the portable zip (signed before zipping when a certificate is available)
+        env:
+          SIGN_PFX: ${{ steps.signing.outputs.pfx }}
+          OMNIDIAG_SIGN_PFX_PASSWORD: ${{ secrets.OMNIDIAG_SIGN_PFX_PASSWORD }}
+          OMNIDIAG_SIGN_TIMESTAMP_URL: ${{ vars.OMNIDIAG_SIGN_TIMESTAMP_URL }}
+        run: |
+          $params = @{ OutputDirectory = 'dist'; Version = $env:RELEASE_VERSION; KeepStaging = $true; Sign = $true }
+          if ($env:SIGN_PFX) { $params.PfxPath = $env:SIGN_PFX }
+          if ($env:SIGN_PFX -and $env:OMNIDIAG_SIGN_TIMESTAMP_URL) { $params.TimestampServer = $env:OMNIDIAG_SIGN_TIMESTAMP_URL }
+          $r = ./build/Build-Portable.ps1 @params
+          if ($env:SIGN_PFX) {
+            if (-not $r.Signed) { throw 'A signing certificate was provided but the package is not signed.' }
+            ./build/Test-ReleaseSignature.ps1 -Path $r.Staging
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          "| Portable zip | $(Split-Path $r.Package -Leaf) | signed: $($r.Signed) | ``$($r.Sha256)`` |" |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Install WiX Toolset 5.0.2 (build-time only; v6+ is not used, see docs/INSTALLER.md)
+        if: hashFiles('build/Build-Msi.ps1') != ''
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { throw "dotnet tool install wix failed ($LASTEXITCODE)." }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $env:USERPROFILE '.dotnet\tools') -Encoding utf8
+
+      - name: Build the MSI (when build/Build-Msi.ps1 exists)
+        run: |
+          if (Test-Path build/Build-Msi.ps1) {
+            # Package the zip just built (signed when a certificate was available), not the raw tree.
+            ./build/Build-Msi.ps1 -Version $env:RELEASE_VERSION -OutputDirectory dist -PayloadZip "dist/OmniDiag-$($env:RELEASE_VERSION)-portable.zip"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            Write-Host 'build/Build-Msi.ps1 not present: no MSI in this release.'
+          }
+
+      - name: Build the winget manifest (when build/New-WingetManifest.ps1 exists)
+        run: |
+          if (Test-Path build/New-WingetManifest.ps1) {
+            # One manifest covering every architecture's MSI (x64 and arm64).
+            $msi = @(Get-ChildItem -LiteralPath dist -Filter "OmniDiag-$($env:RELEASE_VERSION)-*.msi" -File)
+            if ($msi.Count -lt 1) { throw 'No MSI in dist for the winget manifest.' }
+            ./build/New-WingetManifest.ps1 -Version $env:RELEASE_VERSION -InstallerPath @($msi.FullName) -OutputDirectory dist/winget
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            Write-Host 'build/New-WingetManifest.ps1 not present: no winget manifest in this release.'
+          }
+
+      - name: Remove the signing certificate
+        if: always()
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'omnidiag-sign.pfx'
+          if (Test-Path -LiteralPath $pfx) { Remove-Item -LiteralPath $pfx -Force }
+
+      - name: Collect assets, SBOM, and SHA256SUMS (last)
+        run: |
+          $version = $env:RELEASE_VERSION
+          $release = New-Item -ItemType Directory -Path release -Force
+          $zip = "dist/OmniDiag-$version-portable.zip"
+          Copy-Item -LiteralPath $zip -Destination $release
+          # install.ps1 from the (signed, when signing is configured) package staging folder.
+          Copy-Item -LiteralPath "dist/OmniDiag-$version-portable/install.ps1" -Destination $release
+          foreach ($msi in @(Get-ChildItem -LiteralPath dist -Filter '*.msi' -File)) { Copy-Item -LiteralPath $msi.FullName -Destination $release }
+          if (Test-Path dist/winget) {
+            foreach ($y in @(Get-ChildItem -LiteralPath dist/winget -Recurse -File -Filter '*.yaml')) { Copy-Item -LiteralPath $y.FullName -Destination $release }
+          }
+          ./build/New-Sbom.ps1 -ZipPath $zip -Version $version -OutputPath "release/OmniDiag-$version.cdx.json" | Out-Null
+          # SHA256SUMS covers every asset above; nothing may be added after this line.
+          ./build/New-ReleaseManifest.ps1 -Path release | Out-Null
+          ./build/New-ReleaseManifest.ps1 -Path release -Verify | Out-Null
+          $lines = @(Get-Content -LiteralPath release/SHA256SUMS | ForEach-Object { "    $_" })
+          "`n#### SHA256SUMS`n`n$($lines -join "`n")`n" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: |
+            release/
+            release-notes.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Fetch the build artifact (REST API via gh; no download-artifact action)
+        shell: bash
+        run: |
+          set -euo pipefail
+          id=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?name=release-assets" --jq '.artifacts[0].id')
+          if [ -z "$id" ] || [ "$id" = "null" ]; then echo "release-assets artifact not found" >&2; exit 1; fi
+          gh api "repos/$GH_REPO/actions/artifacts/$id/zip" > release-assets.zip
+          mkdir assets
+          unzip -q release-assets.zip -d assets
+          ls -la assets assets/release
+
+      - name: Verify SHA256SUMS
+        shell: bash
+        working-directory: assets/release
+        run: sha256sum -c SHA256SUMS
+
+      - name: Create the release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then echo "Unexpected tag '$TAG'" >&2; exit 1; fi
+          prerelease=()
+          if [[ "$TAG" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" assets/release/* \
+            --verify-tag \
+            --title "OmniDiag ${TAG#v}" \
+            --notes-file assets/release-notes.md \
+            "${prerelease[@]}"
