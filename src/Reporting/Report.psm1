@@ -25,7 +25,9 @@ function Export-OmniReport {
         Generates one or more report formats for a session.
 
     .PARAMETER Session
-        The OmniDiag.Session to report on.
+        The OmniDiag.Session to report on. Secret-looking values (passwords, tokens, URL
+        credentials, recovery keys) are scrubbed from it in place before anything is
+        written (docs/SECURITY-REVIEW.md item 5); nothing else in the session changes.
 
     .PARAMETER OutputDirectory
         Folder to write into. Created if missing. Default: OmniDiagData\reports next to the tool (see Get-OmniDataRoot).
@@ -103,6 +105,9 @@ function Export-OmniReport {
     if (Get-Command Write-OmniDeprecationWarning -ErrorAction SilentlyContinue) { Write-OmniDeprecationWarning -Name 'Export-OmniReport' -Replacement 'Export-OmniDiagReport' }
 
     if ($RedactionMapPath -and -not $Redact) { throw '-RedactionMapPath requires -Redact.' }
+    # Secrets: one in-place pass over the whole session (results and session-level fields), so
+    # a session built or edited outside the collectors cannot leak secrets into any format.
+    Protect-OmniSecretData -InputObject $Session
 
     # Resolve relative paths against PowerShell's location (.NET file APIs use the process directory),
     # canonicalize ('..' collapsed), and refuse device / stream targets (docs/SECURITY-REVIEW.md).

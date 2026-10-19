@@ -10,7 +10,7 @@ code. The classic `OmniDiag.ps1` switches keep working and use the same exit cod
 |---|---|
 | `omnidiag <command> ...` | `OmniDiag.cmd` is the `omnidiag` command (Windows file names are case-insensitive). With the tool folder on `PATH` (or as the current directory) `omnidiag` runs it. It sets up the same portable, zero-footprint environment as before (data in `OmniDiagData`, TEMP redirected, PowerShell telemetry off), runs the router, and passes its exit code through as `%ERRORLEVEL%`. It never pauses when it gets arguments. |
 | `OmniDiag.cmd` with no arguments or a `-Switch` | Classic console (`OmniDiag.ps1`), unchanged. Double-clicking still pauses at the end. |
-| `pwsh -File src\Cli\omnidiag.ps1 <command> ...` | The script entry point the launcher calls. |
+| `pwsh -File src\Cli\omnidiag.ps1 <command> ...` | The script entry point the launcher calls. The launcher runs it with `pwsh.exe` from `%ProgramFiles%\PowerShell\7\` (or the `%ProgramW6432%` / `%ProgramFiles(x86)%` equivalents) when installed there, otherwise with `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`; it never searches `PATH` or the current folder, so a Store / MSIX pwsh, `7-preview`, or a custom install is not used (5.1 is). |
 | `Invoke-OmniDiagCli -Arguments @('scan', '--group', 'network')` | From PowerShell after `Import-Module .\src\OmniDiag.psd1`. Returns the exit code; `-Out` / `-Err` take `TextWriter`s if you want to capture output. |
 
 The launcher sends the first argument to the router when it is a subcommand (`list`, `scan`,

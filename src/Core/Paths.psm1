@@ -146,6 +146,10 @@ $script:OmniReservedNameRegex = [regex]::new('^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0
 # Win32 device / raw namespace prefixes: \\.\  \\?\  \??\  (and their forward-slash spellings).
 $script:OmniDevicePathRegex = [regex]::new('^(?:[\\/]{2}[.?][\\/]|\\\?\?\\)',
     [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+# Named pipes and mailslots reached through any UNC host (\\localhost\pipe\x, \\127.0.0.1\pipe\x,
+# \\server\mailslot\x): the share names 'pipe' and 'mailslot' are never file shares.
+$script:OmniPipeSharePathRegex = [regex]::new('^[\\/]{2}[^\\/]+[\\/]+(?:pipe|mailslot)(?:[\\/]|$)',
+    [System.Text.RegularExpressions.RegexOptions]::CultureInvariant -bor [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 
 function Test-OmniReservedFileName {
     <# .SYNOPSIS Internal: true when a single path component names a Win32 device (CON, NUL, COM1, ...). #>
@@ -206,7 +210,9 @@ function Resolve-OmniOutputPath {
         Resolves the path against PowerShell's current location (not the process
         directory), then [System.IO.Path]::GetFullPath, so '..' segments are collapsed
         before anything is written. The path is refused (an exception is thrown) when it:
-          * uses the Win32 device or raw namespace (\\.\, \\?\, \??\),
+          * uses the Win32 device or raw namespace (\\.\, \\?\, \??\), or a named pipe or
+            mailslot through any UNC host (\\localhost\pipe\x, \\127.0.0.1\mailslot\x),
+          * is too long to canonicalize (PathTooLongException),
           * names a reserved device in any component (CON, PRN, AUX, NUL, COM0-9,
             LPT0-9, CONIN$, CONOUT$, CLOCK$ - with or without an extension),
           * contains ':' after the drive root (an NTFS alternate data stream, file.txt:s),
@@ -240,6 +246,9 @@ function Resolve-OmniOutputPath {
     if ($script:OmniDevicePathRegex.IsMatch($Path)) {
         throw "The $Purpose path '$Path' is a device path (\\.\, \\?\); write to a normal folder instead."
     }
+    if ($script:OmniPipeSharePathRegex.IsMatch($Path)) {
+        throw "The $Purpose path '$Path' is a named pipe or mailslot (device path); write to a normal folder instead."
+    }
 
     $resolved = $null
     try {
@@ -271,10 +280,10 @@ function Resolve-OmniOutputPath {
 
     $full = $resolved
     try { $full = [System.IO.Path]::GetFullPath($resolved) }
-    catch [System.IO.PathTooLongException] { $full = $resolved }
+    catch [System.IO.PathTooLongException] { throw "The $Purpose path '$Path' is too long to canonicalize; choose a shorter path." }
     catch { throw "The $Purpose path '$Path' is not a valid file-system path: $($_.Exception.Message)" }
 
-    if ($script:OmniDevicePathRegex.IsMatch($full)) {
+    if ($script:OmniDevicePathRegex.IsMatch($full) -or $script:OmniPipeSharePathRegex.IsMatch($full)) {
         throw "The $Purpose path '$Path' resolves to a device path ($full)."
     }
     if ($Root) {

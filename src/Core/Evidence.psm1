@@ -252,6 +252,9 @@ function Import-OmniSession {
         if ($_.Exception -is [System.IO.InvalidDataException]) { throw $_ }
         throw (New-OmniSessionImportError -Path $item.FullName -Inner $_.Exception -Message ("Not a valid OmniDiag session or report: {0} ({1})" -f $item.FullName, $_.Exception.Message))
     }
+    # Sessions saved by older versions (or edited by hand) were never scrubbed: scrub the whole
+    # validated document once, session-level fields included (docs/SECURITY-REVIEW.md item 5).
+    Protect-OmniSecretData -InputObject $session
     Add-Member -InputObject $session -MemberType NoteProperty -Name SourcePath -Value $item.FullName -Force
     return $session
 }

@@ -435,8 +435,8 @@ function Resolve-OmniCliPath {
         location (not the process directory). Device paths (\\.\, \\?\), NTFS streams
         (file:stream), and reserved names (NUL, CON, ...) are usage errors.
     #>
-    param([string] $Path)
-    try { return (Resolve-OmniOutputPath -Path $Path -Purpose '--output') }
+    param([string] $Path, [string] $Option = '--output')
+    try { return (Resolve-OmniOutputPath -Path $Path -Purpose $Option) }
     catch { throw (New-OmniCliUsageError $_.Exception.Message) }
 }
 
@@ -986,7 +986,7 @@ function Invoke-OmniCliScan {
     if ($o.Redact) { $redaction = New-OmniRedactionContext -Session $session }
     # Deferred until the redaction context exists: with --redact these paths are redacted too.
     foreach ($line in $statusLines) { Write-OmniCliRedactedStatus $Io $line $redaction }
-    $redactionMap = if ($o.RedactionMap) { Resolve-OmniCliPath $o.RedactionMap } else { $null }
+    $redactionMap = if ($o.RedactionMap) { Resolve-OmniCliPath $o.RedactionMap -Option '--redaction-map' } else { $null }
 
     if ($Report) {
         if (-not $output) { $output = Get-OmniDataPath -Kind Reports }
