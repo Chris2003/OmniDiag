@@ -115,8 +115,12 @@ Describe 'GUI accessibility: XAML (cross-platform)' {
             $hit.Count | Should -Be 1 -Because "$($e[1])+$($e[0]) should raise '$($e[2])'"
         }
         $bindings | ForEach-Object { $_.Command | Should -Be 'NavigationCommands.GoToPage' }
-        # The bindings live on the Window itself, so they work wherever focus is.
-        @($script:Xaml.DocumentElement.ChildNodes | Where-Object { $_.LocalName -eq 'Window.InputBindings' }).Count | Should -Be 1
+        # The bindings sit on the shell root and are moved onto the window when the shell
+        # loads (Complete-OmniShellLoad), so they work wherever focus is.
+        @($script:Xaml.DocumentElement.ChildNodes | Where-Object { $_.LocalName -eq 'Grid.InputBindings' }).Count | Should -Be 1
+        $load = [regex]::Match($script:GuiSource, '(?s)function Complete-OmniShellLoad \{.*?\n\}\r?\n').Value
+        $load | Should -Match '\$window\.InputBindings\.Add'
+        $load | Should -Match '\$root\.InputBindings\.Clear\(\)'
     }
 
     It 'dispatches every KeyBinding parameter in code' {
@@ -268,21 +272,56 @@ Describe 'GUI code-behind matches the XAML (cross-platform)' {
         $factory = [regex]::Match($script:GuiSource, '(?s)function Initialize-OmniMainWindow \{.*?\n\}\r?\n').Value
         $factory | Should -Not -BeNullOrEmpty
         $factory | Should -Not -Match 'Get-OmniSystemInfo|Get-OmniModule|Get-OmniDiagRepair|Get-CimInstance|Test-OmniIsAdministrator|Initialize-OmniGroupCatalog|New-OmniLogger'
+        # First paint is a code-built frame: the factory parses no XAML at all.
+        $factoryCode = (($factory -replace '(?s)<#.*?#>', '') -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+        $factoryCode | Should -Not -Match 'XamlReader|Get-OmniMainWindowXaml'
+        $factoryCode | Should -Match 'New-OmniFrameWindow'
+        # The shell parses at Background priority after the frame's first paint, and
+        # ShellReady (fully interactive) is a separate number from StartupMs (first paint).
+        $factoryCode | Should -Match 'Complete-OmniShellLoad'
+        $script:GuiSource | Should -Match 'ShellReadyMs=\$ms'
     }
 
-    It 'declares the Light palette in the XAML, so startup does not apply the Light theme twice' {
+    It 'gives the frame window an accessible, themed loading state' {
+        $frame = [regex]::Match($script:GuiSource, '(?s)function New-OmniFrameWindow \{.*?\n\}\r?\n').Value
+        $frame | Should -Not -BeNullOrEmpty
+        $frame | Should -Not -Match 'XamlReader'
+        $frame | Should -Match "SetName\(\`$status, 'Loading OmniDiag\.\.\.'\)"
+        $frame | Should -Match "SetName\(\`$w, 'OmniDiag'\)"
+        $frame | Should -Match "SetAutomationId\(\`$w, 'OmniDiagMainWindow'\)"
+        $frame | Should -Match 'Enable-OmniLiveRegion -Element \$status'
+        $frame | Should -Match "SetResourceReference\(\[System\.Windows\.Controls\.Control\]::BackgroundProperty, 'BrushWindowBg'\)"
+        # The theme (or high contrast) is applied to the frame before it is shown.
+        $factory = [regex]::Match($script:GuiSource, '(?s)function Initialize-OmniMainWindow \{.*?\n\}\r?\n').Value
+        $factory | Should -Match 'Sync-OmniEffectiveTheme'
+        # Interactions before the shell is ready are ignored safely.
+        foreach ($fn in 'Invoke-OmniShortcut', 'Invoke-OmniThemeToggle', 'Sync-OmniBusyState', 'Invoke-OmniPostRenderSetup', 'Invoke-OmniDeferredStartup') {
+            $body = [regex]::Match($script:GuiSource, '(?s)function ' + $fn + ' \{.*?\n\}\r?\n').Value
+            $body | Should -Match 'ShellReady' -Because "$fn must not touch shell controls before the shell is in place"
+        }
+        # Queued shell work does nothing once the window has closed.
+        $script:GuiSource | Should -Match '\$ui\.Closed = \$true'
+    }
+
+    It 'declares Light-palette fallbacks in the shell XAML; the window''s theme brushes win when it loads' {
         $light = Get-OmniThemePalette -Name Light
         foreach ($k in $light.Keys) {
             $m = [regex]::Match($script:XamlRaw, 'x:Key="' + $k + '"\s+Color="(#[0-9A-Fa-f]{6})"')
             $m.Success | Should -BeTrue -Because "$k must be a SolidColorBrush with a #RRGGBB color"
             $m.Groups[1].Value.ToUpperInvariant() | Should -Be $light[$k].ToUpperInvariant() -Because $k
         }
-        $script:GuiSource | Should -Match 'Sync-OmniEffectiveTheme -Initial'
+        $load = [regex]::Match($script:GuiSource, '(?s)function Complete-OmniShellLoad \{.*?\n\}\r?\n').Value
+        $load | Should -Match 'if \(-not \$window\.Resources\.Contains\(\$key\)\)'
+        $load | Should -Match '\$shellResources\.Clear\(\)'
+        # The shell is not a Window (the frame is), and names resolve on its own name scope.
+        $script:Xaml.DocumentElement.LocalName | Should -Be 'Grid'
+        $load | Should -Match '\$root\.FindName\(\$n\)'
     }
 
     It 'records startup phase checkpoints and turns off the legacy accessibility switches before WPF loads' {
         foreach ($phase in 'Entry', 'StaRunspaceReady', 'WpfPreloaded', 'ModuleImported', 'InitializeStart', 'WpfAssembliesLoaded',
-            'XamlEngineReady', 'ShellParsed', 'XamlParsed', 'WindowConstructed', 'ShowCalled', 'ContentRendered') {
+            'XamlEngineReady', 'ShellParsed', 'XamlParsed', 'WindowConstructed', 'ShowCalled', 'ContentRendered',
+            'FramePainted', 'ShellReady') {
             $script:GuiSource | Should -Match ("Add-OmniStartupMark -Name '" + $phase + "'")
         }
         # Each lazily loaded section is marked when it loads.
@@ -462,7 +501,7 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
         # then runs the UI Automation name check on what is now shown.
         $sync = [hashtable]::Synchronized(@{
             Stage = 'starting'; Ready = $false; Error = $null; Hwnd = [IntPtr]::Zero
-            StartupMs = $null; StartupTimings = ''; Stop = $false; Closed = $false
+            StartupMs = $null; ShellReadyMs = $null; StartupTimings = ''; Stop = $false; Closed = $false
             Sections = [hashtable]::Synchronized(@{}); NavRequest = -1; NavDone = -1; NavBusy = $false
         })
         $rs = [runspacefactory]::CreateRunspace()
@@ -496,8 +535,19 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
                     Start-Sleep -Milliseconds 10
                 }
                 $Sync.StartupMs = & $gui { $script:OmniUi.StartupMs }
-                $Sync.StartupTimings = [string](& $gui { Format-OmniStartupTiming -Marks $script:OmniUi.StartupTimings })
                 if ($null -eq $Sync.StartupMs) { throw 'the window never rendered (no ContentRendered within 20 s)' }
+                # First paint is the code-built frame; the shell (and every control) follows.
+                $Sync.Stage = 'shell'
+                $deadline = [DateTime]::UtcNow.AddSeconds(30)
+                while ($null -eq (& $gui { $script:OmniUi.ShellReadyMs }) -and -not (& $gui { $script:OmniUi.ShellError }) -and [DateTime]::UtcNow -lt $deadline) {
+                    & $pump
+                    Start-Sleep -Milliseconds 10
+                }
+                $shellError = & $gui { $script:OmniUi.ShellError }
+                if ($shellError) { throw "the shell XAML did not load: $shellError" }
+                $Sync.ShellReadyMs = & $gui { $script:OmniUi.ShellReadyMs }
+                if ($null -eq $Sync.ShellReadyMs) { throw 'the shell never became ready (no ShellReady within 30 s)' }
+                $Sync.StartupTimings = [string](& $gui { Format-OmniStartupTiming -Marks $script:OmniUi.StartupTimings })
                 $Sync.Hwnd = ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle
 
                 $Sync.Stage = 'tab'
@@ -627,7 +677,7 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
         if (-not $sync.Ready) {
             $why = if ($sync.Error) { $sync.Error } else { "timed out at stage '$($sync.Stage)'" }
             # Building the window must work on any Windows host; only showing it needs a desktop.
-            if ($sync.Stage -in 'import', 'construct') {
+            if ($sync.Stage -in 'import', 'construct', 'shell') {
                 $script:UiaResult = "FAIL: $why"
             } else {
                 $script:UiaSkip = "no usable desktop to render the window ($why)"
@@ -673,6 +723,7 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
             ById           = $byId
             WindowStatus   = $root.Current.ItemStatus
             StartupMs      = $sync.StartupMs
+            ShellReadyMs   = $sync.ShellReadyMs
             StartupTimings = $sync.StartupTimings
             Sections       = $sections
         }
@@ -733,19 +784,26 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
         }
     }
 
-    It 'renders first paint within 2 s (soft gate) and exposes the measurement' {
+    It 'renders first paint and the ready shell within 2 s (soft gate) and exposes both measurements' {
         if ($script:UiaSkip) { Set-ItResult -Skipped -Because $script:UiaSkip; return }
         if ($script:UiaResult -is [string]) { throw $script:UiaResult }
+        # Two numbers: first paint (the code-built frame) and fully interactive (the shell).
         $ms = [int]$script:UiaResult.StartupMs
+        $ready = [int]$script:UiaResult.ShellReadyMs
         $ms | Should -BeGreaterThan 0
-        $script:UiaResult.WindowStatus | Should -Be "StartupMs=$ms"
+        $ready | Should -BeGreaterOrEqual $ms
+        $script:UiaResult.WindowStatus | Should -Be "StartupMs=$ms;ShellReadyMs=$ready"
         # Phase breakdown (ms since the clock started, just before Initialize-OmniMainWindow).
         $phases = [string]$script:UiaResult.StartupTimings
+        Write-Host "    GUI first paint: $ms ms; shell ready (interactive): $ready ms ($phases)"
         if ($ms -gt 2000) {
-            Write-Warning "GUI first render took $ms ms (target: under 2000 ms). Soft gate - not failing. Phases: $phases"
-        } else {
-            Write-Host "    GUI first render: $ms ms ($phases)"
+            Write-Warning "GUI first paint took $ms ms (target: under 2000 ms). Soft gate - not failing. Phases: $phases"
         }
+        if ($ready -gt 2000) {
+            Write-Warning "GUI shell took $ready ms to become ready (target: under 2000 ms). Soft gate - not failing. Phases: $phases"
+        }
+        $phases | Should -Match 'FramePainted=\d+ ms'
+        $phases | Should -Match 'ShellReady=\d+ ms'
         $phases | Should -Match 'ShellParsed=\d+ ms'
         $phases | Should -Match 'XamlParsed=\d+ ms'
         $phases | Should -Match 'ContentRendered=\d+ ms'
