@@ -82,19 +82,20 @@ so the same problem keeps the same Id from run to run.
 
 | Scanner | Finding (Id) | Severity | When |
 |---|---|---|---|
-| Disk | Disk health not Healthy (`disk-health-disk<n>`) | Critical | Physical disk `HealthStatus` is not Healthy (or `Win32_DiskDrive.Status` is not OK) |
+| Disk | Disk health not Healthy: <model> (`disk-health-disk<n>`) | Critical | Physical disk `HealthStatus` is not Healthy |
+| Disk | Disk status not OK: <model> (`disk-health-disk<n>`) | Critical | `Get-PhysicalDisk` unavailable and `Win32_DiskDrive.Status` is not OK |
 | Disk | SMART predicts drive failure (`disk-smart-predict-failure-<instance>`) | Critical | `PredictFailure` is set |
-| Disk | Low free space on X: (`disk-volume-low-space-<letter>`) | Warning | Fixed volume under 10% free |
-| Disk | Disks healthy | Pass | None of the above |
+| Disk | Low free space on X: (N%) (`disk-volume-low-space-<letter>`) | Warning | Fixed volume under 10% free |
+| Disk | Disks healthy | Pass | No Warning or worse |
 | Disk Usage | Drive X: is N% full (`disk-usage-drive-full-<letter>`) | Warning | Fixed volume over 90% used |
 | Disk Usage | Disk usage within limits | Pass | No drive over 90% |
-| Storage | Disk health (`storage-disk-health-<deviceid>`) | Critical / Warning | `HealthStatus` Unhealthy / other non-Healthy |
-| Storage | High drive temperature (`storage-disk-temperature-<deviceid>`) | Warning | 65 C or more |
-| Storage | SSD wear (`storage-ssd-wear-<deviceid>`) | Warning / Critical | Wear 80% / 90% or more |
-| Storage | Disk N health (`storage-disk-operational-<n>`) | Warning | `Get-Disk` health not Healthy |
-| Storage | Volume health (`storage-volume-health-<letter>`) | Error | Volume `HealthStatus` not Healthy |
-| Storage | Low / critically low disk space (`storage-volume-low-space-<letter>`) | Warning / Critical | Free space at or below `LowSpaceWarnPct` / `LowSpaceCritPct` |
-| Storage | High disk queue length (`storage-disk-queue-length`) | Warning | Queue length 5 or more |
+| Storage | Disk health: <status> - <name> (`storage-disk-health-<deviceid>`) | Critical / Warning | `HealthStatus` Unhealthy / other non-Healthy |
+| Storage | High drive temperature (N C) (`storage-disk-temperature-<deviceid>`) | Warning | 65 C or more |
+| Storage | SSD wear at N% (`storage-ssd-wear-<deviceid>`) | Warning / Critical | Wear 80% / 90% or more |
+| Storage | Disk N health: <status> (`storage-disk-operational-<n>`) | Warning | `Get-Disk` health not Healthy |
+| Storage | Volume X: health is <status> (`storage-volume-health-<letter>`) | Error | Volume `HealthStatus` not Healthy |
+| Storage | Low / Critically low disk space on X: (N% free) (`storage-volume-low-space-<letter>`) | Warning / Critical | Free space at or below `LowSpaceWarnPct` / `LowSpaceCritPct` |
+| Storage | High disk queue length (N) (`storage-disk-queue-length`) | Warning | Queue length 5 or more |
 | Storage | Storage is healthy | Pass | No Warning or worse |
 | TRIM | TRIM is disabled for NTFS (`storage-trim-ntfs-disabled`) | Warning / Information | Warning with an SSD present; Information with no SSD or unknown media |
 | TRIM | TRIM is disabled for ReFS (`storage-trim-refs-disabled`) | Warning / Information | Warning with an SSD and ReFS volumes (or unknown volumes); otherwise Information |

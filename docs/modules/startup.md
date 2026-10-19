@@ -149,8 +149,9 @@ or certificate is checked.
 | N service(s) with an unquoted path containing spaces (`service-persistence-unquoted-path`) | Warning | See above |
 | Service inventory not available (`service-persistence-unavailable`) | Information | `Win32_Service` cannot be queried (result Skipped) |
 | Auto-start services run from standard locations (`service-persistence-ok`) | Pass | No Warning or worse (Service Persistence) |
-| Unexpected Winlogon Shell / Userinit value | Warning | The value differs from the Windows default (Registry Health) |
-| N invalid '*category*' registry entries | Warning | The read-only invalid-entry scan found entries (Registry Health) |
+| Unexpected Winlogon Shell value | Warning | Winlogon `Shell` is not `explorer.exe` (case-insensitive) (Registry Health) |
+| Unexpected Winlogon Userinit value | Warning | Winlogon `Userinit` does not contain `userinit.exe` (Registry Health) |
+| N invalid '*category*' registry entr(y/ies) | Warning | The read-only invalid-entry scan found entries; one finding per category (Registry Health) |
 | Registry health checks passed | Pass | No Warning or worse (Registry Health) |
 
 ## Platforms

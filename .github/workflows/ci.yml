@@ -279,6 +279,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  screenshots:
+    name: GUI screenshots (non-blocking)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    # Renders the real window with a synthetic demo session (host DEMO-PC, no runner data)
+    # and captures Dashboard (light + dark), Groups, a group, All Findings, and Repair Center
+    # at 1280x800 (build/New-Screenshots.ps1). Maintainers commit the PNGs to docs/images/.
+    # Report only: never fails the workflow.
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Render screenshots
+        run: ./build/New-Screenshots.ps1 -OutputDirectory docs/images
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: screenshots
+          path: docs/images/*.png
+          if-no-files-found: warn
+          retention-days: 30
+
   package:
     name: Portable package
     needs: [lint, test]

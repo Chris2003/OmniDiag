@@ -4,9 +4,9 @@
 
 ### One Tool. Complete Diagnostics.
 
-A modern, **local-only**, open-source Windows diagnostic utility for IT professionals,
-help desk technicians, sysadmins, consultants, and power users — Sysinternals-style,
-but fully open and scriptable.
+A local-only, open-source Windows diagnostics tool for IT technicians, help desks,
+sysadmins, and power users: a GUI, a scriptable command line, and PowerShell cmdlets over
+58 read-only scanners, with confirmation-gated repairs.
 
 [![CI](https://github.com/Chris2003/OmniDiag/actions/workflows/ci.yml/badge.svg)](https://github.com/Chris2003/OmniDiag/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -16,376 +16,257 @@ but fully open and scriptable.
 
 ---
 
-## Quick install — launches the GUI
-
-Open **PowerShell** or **Windows Terminal**, paste this command, and press Enter:
-
-```powershell
-& ([scriptblock]::Create((irm 'https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1')))
-```
-
-This installs the latest OmniDiag release for the current user: it downloads the
-release's portable zip, verifies it against the release's `SHA256SUMS` (and refuses to
-install on any mismatch), clears Windows' downloaded-file block from the validated
-application files, and opens the GUI immediately. No administrator rights or
-machine-wide execution-policy change is required. Run the same command later to update;
-the previous installation is retained as a dated backup.
-
-> **Security:** this convenience command executes code retrieved from GitHub. Review
-> [`install.ps1`](install.ps1) first, or use the inspect-then-run method below. For
-> managed deployment, download a specific release's assets and check them as described
-> in [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release), or pin `-Ref` to a
-> release tag or commit and provide `-ExpectedSha256`.
-
-<details>
-<summary>Safer inspect-then-run method</summary>
-
-```powershell
-$url = 'https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1'
-$installer = Join-Path $env:TEMP 'Install-OmniDiag.ps1'
-Invoke-WebRequest $url -OutFile $installer
-notepad $installer
-```
-
-After reviewing the file, run:
-
-```powershell
-Unblock-File $installer
-& $installer
-```
-
-</details>
-
----
-
-## Why OmniDiag
-
-Diagnosing a sick Windows machine means jumping between Event Viewer, `ipconfig`,
-`Get-PhysicalDisk`, Device Manager, `sfc`, `powercfg`, and a dozen other tools, then
-mentally stitching the results together. OmniDiag runs all of those checks from **one
-interface**, interprets the results, and tells you the **likely cause** and the
-**recommended next step** — not just raw output.
-
-* **Diagnose first, repair second.** Repairs are always optional and require confirmation.
-* **Local-only by design.** Nothing is ever uploaded. No telemetry, no ads, no cloud.
-* **Plugin architecture.** New diagnostic modules drop in without touching the core.
-* **Scriptable.** Every layer is plain PowerShell you can read, audit, and automate.
-
-> ⚠️ **Privacy:** Collected data and reports may contain usernames, device names, file
-> paths, domains, and internal system information. OmniDiag keeps everything local —
-> **review any report before you share it.**
-
-## Status
-
-OmniDiag is being built in milestones. **Current: 0.4.1 — architecture-review hardening of 0.4.0 (portable, zero-footprint operation; multi-turn local AI over saved findings and approved runbooks; before/after scan comparison).**
-
-| Capability | State |
-|---|---|
-| Core engine, plugin architecture, health scoring | ✅ Milestone 1 |
-| Structured logging, console runner | ✅ Milestone 1 |
-| System Information module | ✅ Milestone 1 |
-| Event Log collection & analysis (grouping, Event-ID translation, patterns) | ✅ Milestone 2 |
-| **49 diagnostic scanners** across endpoint, network, security, identity, and cloud categories | ✅ |
-| Role profiles and daily task workflows from Help Desk through Cloud Admin | ✅ 0.2.0 |
-| Local Active Directory, Entra ID, and Intune/MDM posture checks | ✅ 0.2.0 |
-| Certificates, proxy, VPN, time, BitLocker escrow posture, Defender onboarding, and update rings | ✅ 0.3.0 |
-| Optional evidence-grounded local Ollama analysis | ✅ 0.3.0 |
-| HTML / JSON / CSV / ZIP reports | ✅ Milestone 4 |
-| PDF reports + branding (logo / accent color) | ✅ Milestone 6 |
-| WPF GUI (dashboard, light/dark toggle, cancel) | ✅ Milestone 5 |
-| Repair Center — console + GUI tab (11 repairs incl. CCleaner-style registry cleanup, dry-run, confirmation, restore points) | ✅ |
-| Portable / standalone distribution (fully local, no remoting) | ✅ Version 2 |
-| Zero-footprint portable mode — run from Downloads or a USB stick; everything stays in `OmniDiagData` next to the tool | ✅ 0.4.0 |
-| Plain-language search over saved findings and approved organization runbooks | ✅ 0.4.0 |
-| Multi-turn local AI conversation with validated finding/runbook citations | ✅ 0.4.0 |
-| Before/after session comparison (resolved / new / worsened findings, score delta) | ✅ 0.4.0 |
-
-See [ROADMAP.md](ROADMAP.md) for the full version plan.
-
-### Diagnostic scanners (49)
-
-| Category | Scanners |
-|---|---|
-| **System** | System · Startup · Scheduled Tasks · Services · Drivers · Windows Features · Environment Variables · Registry Health · Installed Software · Windows Update · System Health |
-| **Performance** | CPU · Memory · Processes · Performance · Benchmark · Startup Performance |
-| **Hardware** | GPU · Battery · USB Devices |
-| **Storage** | Disk · Storage · Disk Usage · Temp Files |
-| **Network** | Network · IP Configuration · DNS Resolver · Hosts File · Network Shares · WiFi Networks · Proxy Configuration · VPN |
-| **Security** | Security · Firewall Rules · Certificates · BitLocker · Defender Onboarding |
-| **Peripherals** | Printers |
-| **Reliability** | Reliability |
-| **Event Logs** | Event Logs · Error Summary |
-| **Applications** | Browser Diagnostics |
-| **Identity** | Active Directory · Time Synchronization |
-| **Cloud** | Entra ID · Intune and MDM · Update Rings |
-| **Health** | Windows Health |
-
-Each scanner is a self-contained plugin; filter a run with `-IncludeCategory` / `-ExcludeCategory`.
-
-## Requirements
-
-* Windows 10 / 11 / Server 2019+ (x64)
-* Windows PowerShell **5.1** or PowerShell **7+**
-* Some checks require **Administrator** rights (OmniDiag tells you which and skips them gracefully otherwise)
-
-## Portable edition
-
-OmniDiag runs fully locally with no installation. To produce a self-contained,
-copy-anywhere package (folder + zip), run:
-
-```powershell
-.\build\Build-Portable.ps1        # writes dist\OmniDiag-<version>-portable.zip (+ .sha256)
-```
-
-The zip is reproducible (fixed timestamps, sorted entries): two builds of the same commit
-are byte-identical. Releases also ship `SHA256SUMS`, a CycloneDX SBOM, and (once a
-certificate is configured) Authenticode-signed scripts; see
-[docs/RELEASING.md](docs/RELEASING.md).
-
-Extract it anywhere and run it — no install, no remoting, admin optional:
-
-* **Console scan** — double-click `OmniDiag.cmd`
-* **Graphical interface** — double-click `OmniDiag-GUI.cmd`
-* **From PowerShell** — `.\OmniDiag.ps1`
-
-The `.cmd` launchers bypass the execution policy **for that process only** (no
-machine-wide change), so an extracted-from-zip copy runs on locked-down hosts where
-script execution is otherwise blocked. Deploy across a fleet with the tooling you
-already have (Intune / ConfigMgr / GPO / RMM) and collect the reports — see
-[PORTABLE.md](PORTABLE.md).
-
-**Zero footprint.** Run OmniDiag from the folder you downloaded it to or straight from a
-USB stick: logs, reports, saved sessions, and backups go to an `OmniDiagData` folder
-**next to the tool** — never to `%TEMP%` or `%APPDATA%`, and only to `%LOCALAPPDATA%` if you
-installed OmniDiag there with the optional installer. The `.cmd`
-launchers also point PowerShell's own caches and `TEMP` at that folder, so removing the
-OmniDiag folder (or unplugging the USB stick) leaves no OmniDiag files on the host. See
-[PORTABLE.md](PORTABLE.md#zero-footprint--usb-use) for exactly what is and isn't covered.
-
-## Quick start
-
-```powershell
-# From the repository root
-.\OmniDiag.ps1
-
-# See guided plans for every technician level and common daily task
-.\OmniDiag.ps1 -ListPlans
-
-# Role-focused scans
-.\OmniDiag.ps1 -Profile HelpDesk
-.\OmniDiag.ps1 -Profile CloudAdmin
-
-# Task-focused scans
-.\OmniDiag.ps1 -Workflow QuickTriage
-.\OmniDiag.ps1 -Workflow LoginAndIdentity
-
-# Correlate the resulting evidence with a local Gemma 4 model through Ollama
-ollama pull gemma4:e2b
-.\OmniDiag.ps1 -Workflow QuickTriage -AiAnalysis
-
-# Scan only the last 24 hours, System category only
-.\OmniDiag.ps1 -Range Last24Hours -IncludeCategory System
-
-# Run only specific scanners by name (the GUI Diagnostics tab does the same)
-.\OmniDiag.ps1 -IncludeModule CPU,Memory,Disk,Network
-
-# Run elevated for a complete scan (recommended)
-Start-Process pwsh -Verb RunAs -ArgumentList '-File', "$PWD\OmniDiag.ps1"
-
-# Scan and generate reports (prompts with a privacy notice first)
-.\OmniDiag.ps1 -Report -ReportFormat Html,Json,Csv,Zip -ReportPath .\reports
-
-# Branded PDF report (native PDF - no browser or external dependency required)
-.\OmniDiag.ps1 -Report -ReportFormat Pdf,Html -BrandName "Acme IT" -BrandColor "#0969DA" -BrandLogo .\logo.png
-
-# Launch the graphical interface (dashboard, Local AI, dark/light, cancel, export)
-.\OmniDiag.ps1 -Gui
-
-# Scan, then open the Repair Center (confirmation-gated fixes for what was found)
-.\OmniDiag.ps1 -Repair
-
-# Preview repairs without changing anything (dry run)
-.\OmniDiag.ps1 -Repair -RepairDryRun
-```
-
-### The `omnidiag` command (0.5.0)
-
-`OmniDiag.cmd` doubles as the `omnidiag` command (Windows file names are case-insensitive).
-A subcommand or `--option` as the first argument goes to the CLI router; no arguments or a
-PowerShell-style `-Switch` keeps the classic console above.
-
-```bat
-omnidiag list                               :: scanners with their ids, groups, network access
-omnidiag list groups --format json          :: versioned JSON document
-omnidiag scan --group network               :: human summary; progress on stderr
-omnidiag scan --module storage.disk --format json > disk.json
-omnidiag scan --profile HelpDesk --format md --output triage.md
-omnidiag report --output C:\Reports         :: HTML + JSON (schema v1), local-only scanners
-omnidiag version
-echo %ERRORLEVEL%                           :: 0 ok, 1 warnings, 2 critical, 3 partial, ...
-```
-
-A default scan never touches the network: the connectivity probes in `network.network`,
-`network.dns-resolver`, and `extras.active-directory` run only with `--network-probes`
-(`-NetworkProbes` for `OmniDiag.ps1`, a checkbox in the GUI). `omnidiag <group>` scans one
-group, e.g. `omnidiag security --format md`. JSON output follows
-[schemas/omnidiag-report.v1.json](schemas/omnidiag-report.v1.json). See
-[docs/CLI.md](docs/CLI.md) for every option and exit code and [docs/SCHEMA.md](docs/SCHEMA.md)
-for the report format. `OmniDiag.ps1` sets the same exit codes.
-
-> **Repair Center:** repairs are always opt-in and confirmed per action. Each shows its
-> risk (Safe / Moderate / Destructive) and whether it needs elevation or a reboot, and a
-> System Restore point is created before system-altering repairs. Run elevated for the
-> full set (SFC, DISM, Winsock/Windows Update reset, service restarts).
-
-> **GUI note:** WPF requires an STA thread. Windows PowerShell 5.1 is STA, so the GUI
-> runs directly. PowerShell 7 is MTA — OmniDiag automatically hosts the window in a
-> dedicated STA runspace, so `-Gui` works there too.
-
-> **Local AI in the GUI:** open **Local AI** in the left navigation, choose
-> `gemma4:e2b` or the lighter `gemma3:1b`, and click **Check Ollama**. After a scan,
-> **Analyze Latest Scan** produces read-only, finding-ID-cited guidance.
-
-You can also use the module directly for automation:
-
-```powershell
-Import-Module .\src\OmniDiag.psd1
-$session = Invoke-OmniDiag -Range Last7Days
-$session.Summary.Score          # 0-100 overall health score
-$session.Results                # per-module results & findings
-
-# Generate reports from a session (defaults to OmniDiagData\reports next to the tool)
-Export-OmniReport -Session $session -Format Html,Json,Csv,Md,Zip
-
-# The versioned JSON report (schema v1) and the matching exit code, for other tools
-ConvertTo-OmniReportV1 -Session $session | ConvertTo-OmniJsonText
-Get-OmniExitCode -Session $session
-```
-
-### Saved sessions, runbooks, search, and before/after comparison
-
-Every console scan is saved to `OmniDiagData\sessions`, so you can come back to it:
-
-```powershell
-# Scan, fix something, then re-scan and compare with the previous scan
-.\OmniDiag.ps1 -Workflow NetworkConnectivity
-.\OmniDiag.ps1 -Workflow NetworkConnectivity -CompareWith Last
-
-# Plain-language search over the findings and your approved runbooks (no AI needed)
-.\OmniDiag.ps1 -FromSession Last -Search 'vpn connects but dns fails'
-
-# Multi-turn conversation with a local Ollama model about a saved scan
-.\OmniDiag.ps1 -FromSession Last -AiChat -RunbookPath \\server\share\runbooks
-```
-
-Organization-owned runbooks are Markdown files with a small front-matter header; only
-ones marked `status: approved` are used. See [runbooks/README.md](runbooks/README.md).
-Automation uses `Import-OmniSession`, `Compare-OmniSession`, `Search-OmniEvidence`,
-`Get-OmniRunbook` / `Find-OmniRunbook`, and `New-OmniAssistantConversation` /
-`Invoke-OmniAssistantTurn`.
-
-See the [Technician Guide](docs/TECHNICIAN_GUIDE.md) for role and daily-task
-workflows. The [Improvement Plan](docs/IMPROVEMENT_PLAN.md) explains the phased path
-from guided endpoint triage to enterprise operations, cross-platform support, and
-evidence-grounded assistance.
-
-For private, on-device correlation, see the [Local Ollama Assistant](docs/OLLAMA.md).
-The default `gemma4:e2b` model is the lightest Gemma 4 Ollama tag but is still about
-7.2 GB; use `gemma3:1b` (about 815 MB) on low-memory technician devices.
-
-## How it works
-
-```
-OmniDiag.ps1  ──>  Invoke-OmniDiag  ──>  Engine (Invoke-OmniSession)
-                                            │
-            Get-OmniModule (plugin discovery)
-                                            │
-                 ┌──────────────────────────┴──────────────────────────┐
-                 ▼                          ▼                           ▼
-          49 built-in diagnostic scanners                        (your module)
-  System · EventLogs · Network · Storage · Health · Security · Performance
-                 │                          │                           │
-                 └─── each returns an OmniDiag.Result of Findings ──────┘
-                                            │
-                              Get-OmniHealthScore  ──>  Dashboard / Reports
-```
-
-Each diagnostic module is a self-contained `.psm1` implementing two functions
-(`Get-OmniModuleManifest`, `Invoke-OmniModuleScan`). The engine discovers them,
-runs them against a shared context (logger, time range, cancellation token,
-elevation state), and aggregates their findings into a scored session.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details and a guide to
-writing your own module.
-
-## Repository layout
-
-```text
-OmniDiag/
-├── OmniDiag.ps1            # launcher
-├── src/
-│   ├── OmniDiag.psd1       # module manifest
-│   ├── OmniDiag.psm1       # public entry points
-│   ├── Core/               # models, paths, logging, registry, engine, scoring,
-│   │                       #   runbooks, evidence search/compare, local AI
-│   ├── EventLog/           # event-log knowledge base + analysis pipeline
-│   ├── Modules/            # diagnostic plugins (one .psm1 each)
-│   ├── Repair/             # repair core: models, registry, engine
-│   ├── Repairs/            # repair plugins (one .psm1 each)
-│   ├── Reporting/          # HTML/JSON/CSV/ZIP exporters
-│   ├── UI/                 # WPF GUI (runtime XAML + runspace threading)
-│   └── Cli/                # console presentation (scan + repair)
-├── runbooks/               # organization-owned runbooks (approved ones are used)
-├── Tests/                  # Pester tests
-├── docs/  build/
-├── OmniDiagData/           # created at run time: logs, reports, sessions (git-ignored)
-└── .github/workflows/      # CI
-```
-
-## Testing
-
-```powershell
-Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser
-Invoke-Pester -Path .\Tests
-```
+## What it is
+
+Diagnosing a sick Windows machine usually means jumping between Event Viewer, `ipconfig`,
+Device Manager, `Get-PhysicalDisk`, `sfc`, `powercfg`, and a dozen other tools, then
+stitching the results together in your head. OmniDiag runs those checks from one place,
+interprets the results, and tells you the **likely cause** and the **recommended next step**,
+not just raw output. Every finding has a severity, a stable id, evidence, and a
+recommendation, and the whole run gets a 0-100 health score.
+
+You can use it three ways, all over the same engine:
+
+* **GUI**: a WPF window with a dashboard, per-group drill-down, a findings browser,
+  scanner toggles, a Repair Center, and optional local AI analysis.
+* **Command line**: `omnidiag scan`, `omnidiag report`, `omnidiag repair`, ... with JSON,
+  CSV, Markdown, HTML, and PDF output and documented exit codes.
+* **PowerShell**: `Invoke-OmniDiagScan`, `Get-OmniDiagNetwork`, `Export-OmniDiagReport`, ...
+  return objects you can filter, export, and automate.
+
+## Principles
+
+* **Local-only.** No telemetry, no accounts, no cloud. A default scan contacts no other
+  machine (CI proves it); connectivity probes run only when you ask for them.
+* **Read-only by default.** Scanning changes nothing. Repairs are separate, always opt-in,
+  confirmed per repair, have a dry run, and are written to a local audit log.
+* **Scriptable.** Stable JSON schema, documented exit codes, data on stdout and progress
+  on stderr, and cmdlets that return objects.
+* **Least privilege.** Runs as a standard user; checks that need administrator rights are
+  skipped with a structured reason instead of failing, and CI runs the suite as a non-admin
+  account.
+* **Portable.** No installation required: run from a folder or a USB stick, and everything
+  OmniDiag writes stays in an `OmniDiagData` folder next to the tool.
 
 ## Screenshots
 
-The GUI provides a left-nav dashboard with a 0–100 health score, a **DxDiag-style System
-Information panel** (OS, manufacturer/model, BIOS, processor, memory, DirectX, per-GPU
-display, and audio devices), live scan progress
-with a working Cancel button, a light/dark theme toggle (light by default), a
-**Diagnostics** tab to toggle individual scanners on/off (or run any single scanner on
-its own), report export with a **format picker** (choose HTML / JSON / CSV / PDF / ZIP
-before exporting), and a **Repair Center** tab — a checkbox grid of repairs (relevant ones
-pre-checked after a scan) with a dry-run toggle, summary confirmation, and live progress.
-Launch it with `.\OmniDiag.ps1 -Gui`.
+| Dashboard (light) | Dashboard (dark) |
+|---|---|
+| ![OmniDiag dashboard, light theme: health score, system information, top recommendations, module results](docs/images/dashboard-light.png) | ![OmniDiag dashboard, dark theme](docs/images/dashboard-dark.png) |
 
-> _Captured screenshots will be added here; run `-Gui` on a Windows host to preview._
+| Groups | All Findings | Repair Center |
+|---|---|---|
+| ![Module groups with status, score, worst severity, and counts](docs/images/groups.png) | ![All findings with filter and detail panel](docs/images/findings.png) | ![Repair Center with recommended repairs and dry run](docs/images/repair.png) |
 
-## Troubleshooting
+The screenshots show a synthetic demo session (host `DEMO-PC`), rendered from the real
+window by `build/New-Screenshots.ps1`.
 
-**`The term '...' is not recognized` when launching.** Make sure you're running an
-up-to-date copy — an earlier build limited the module's exported functions and could
-fail at startup. Re-import with `Import-Module .\src\OmniDiag.psd1 -Force` (or just
-re-run `.\OmniDiag.ps1`).
+## Install
 
-**Scripts won't run / "running of scripts is disabled."** Set an execution policy for
-your session: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
+Pick one. All of them install the same files; none needs a machine-wide execution-policy
+change.
 
-**Downloaded a ZIP and files are "blocked."** Files extracted from an internet ZIP
-carry Windows' Mark of the Web and may be blocked on stricter execution policies.
-Clear it once with:
+* **Portable zip.** Download `OmniDiag-<version>-portable.zip` from
+  [Releases](https://github.com/Chris2003/OmniDiag/releases/latest), check it against the
+  published SHA-256, and extract it anywhere. See [PORTABLE.md](PORTABLE.md).
+* **MSI.** Download the `.msi` from [Releases](https://github.com/Chris2003/OmniDiag/releases/latest)
+  for a managed install. See [docs/INSTALLER.md](docs/INSTALLER.md).
+* **winget.** `winget install Chris2003.OmniDiag` (available once the package has been
+  accepted into the winget community repository).
+* **Install script.** Installs for the current user and opens the GUI:
 
-```powershell
-Get-ChildItem -Recurse .\ | Unblock-File
+  ```powershell
+  $installer = Join-Path $env:TEMP 'Install-OmniDiag.ps1'
+  Invoke-WebRequest 'https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1' -OutFile $installer
+  notepad $installer          # review it first
+  & $installer
+  ```
+
+  The script downloads and runs code with your rights: review it, and for managed
+  deployment pin a release and pass `-ExpectedSha256` (see [SECURITY.md](SECURITY.md)).
+
+How releases are built, signed, and verified: [docs/RELEASING.md](docs/RELEASING.md).
+
+## Requirements
+
+* Windows 10 or 11, or Windows Server 2019 or later; x64 or ARM64.
+* Windows PowerShell 5.1 (built in) or PowerShell 7+.
+* Administrator rights are optional. Without them, the few elevation-only checks and
+  repairs are skipped and reported as such; everything else runs.
+
+Which editions and hosts are verified, and how: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+
+## Quick start
+
+From the extracted portable folder (or the install folder):
+
+* **GUI**: double-click `OmniDiag-GUI.cmd` (or run `omnidiag gui`).
+* **Console scan**: double-click `OmniDiag.cmd`.
+* **A report for a ticket**: in a command prompt in that folder,
+
+  ```bat
+  OmniDiag.cmd report --output C:\Cases\1234 --bundle
+  ```
+
+  writes an HTML report, a JSON report (schema v1), and one `.zip` to attach.
+
+`OmniDiag.cmd` is the `omnidiag` command: with the folder on `PATH` (or as the current
+directory), type `omnidiag`. The launchers bypass the execution policy for their own process only, start
+PowerShell from its fixed install path, and keep logs, reports, sessions, and caches in
+`OmniDiagData` next to the tool.
+
+## Command line
+
+```bat
+:: What can run, and what needs the network or elevation?
+omnidiag list
+omnidiag list groups --format json
+
+:: Scan a group or a single scanner
+omnidiag network
+omnidiag scan --group storage,performance --format json --quiet > scan.json
+omnidiag scan --module storage.disk --format md --output disk.md
+omnidiag scan --profile HelpDesk --format md --output triage.md
+
+:: Include the opt-in connectivity probes
+omnidiag network --network-probes --output C:\Cases\1234\
+
+:: A report that is safe to share outside the organization
+omnidiag report --output C:\Cases\1234\shared --bundle --redact
+
+:: Repairs: list what fits the last scan, preview, then apply with a y/N prompt each
+omnidiag repair list --from-session last
+omnidiag repair run flush-dns-cache --what-if
+omnidiag repair run flush-dns-cache --apply
+
+:: Did it help? Compare the scan before with the scan after
+omnidiag compare previous last
+
+omnidiag version
+omnidiag help scan
 ```
 
-**"running without administrator rights."** This is informational, not an error — some
-checks are skipped without elevation. Re-run from an elevated prompt for a full scan
-(see Quick start).
+Every command, option, and output rule: [docs/CLI.md](docs/CLI.md). The classic
+`OmniDiag.ps1` switches (`-Profile`, `-Workflow`, `-Report`, `-Repair`, `-Gui`, `-FromSession`,
+`-CompareWith`, `-AiAnalysis`, ...) keep working with the same exit codes; see the
+[Technician Guide](docs/TECHNICIAN_GUIDE.md).
 
-## Authorship & AI disclosure
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success, no warnings or critical findings |
+| 1 | Warnings present |
+| 2 | Critical findings present (native severity Error or Critical) |
+| 3 | Partial: one or more modules failed or timed out |
+| 4 | Requested module(s) need elevation and the process isn't elevated |
+| 5 | Cancelled |
+| 10 | Usage or argument error |
+| 11 | Repair failed |
+| 12 | Repair succeeded; reboot required |
+| 20 | Internal error |
+
+`compare` exits 0 whenever it ran; the verdict (`Improved`, `Regressed`, ...) is data. The
+table is also available as `Get-OmniExitCodeTable`.
+
+## PowerShell
+
+```powershell
+Import-Module .\src\OmniDiag.psd1            # from the tool folder
+
+Get-OmniDiagGroup | Format-Table Id, ScannerCount, Name
+Get-OmniDiagModule -Group network | Format-Table Id, NetworkAccess, RequiresElevation
+
+# Findings as objects (passing checks only with -IncludePassed)
+Invoke-OmniDiagScan | Format-Table severity, moduleId, title
+Get-OmniDiagStorage -IncludePassed | Format-Table passed, severity, title
+Get-OmniDiagNetwork -NetworkProbes
+
+# Reports
+Invoke-OmniDiagReport -OutputDirectory C:\Cases\1234 -Bundle
+Invoke-OmniDiagScan -Group security, updates -AsSession | Export-OmniDiagReport -Format Html, Json -Redact
+
+# Saved sessions, comparison, repairs
+Compare-OmniDiagSession -Before previous -After last
+Get-OmniDiagRepair -Session last -RecommendedOnly | Invoke-OmniDiagRepair -WhatIf
+
+Show-OmniDiagGui
+```
+
+Every public cmdlet, the objects on the pipeline, the plugin SDK, and the deprecated pre-1.0
+names: [docs/POWERSHELL.md](docs/POWERSHELL.md).
+
+## Module groups
+
+58 scanners in 11 groups. Each page lists every scanner with its id, what it checks, its
+elevation needs, its network access, and the findings it can emit.
+
+| Group | Id | Scanners | Cmdlet | Page |
+|---|---|---:|---|---|
+| System | `system` | 2 | `Get-OmniDiagSystem` | [docs/modules/system.md](docs/modules/system.md) |
+| Performance | `performance` | 5 | `Get-OmniDiagPerformance` | [docs/modules/performance.md](docs/modules/performance.md) |
+| Services and drivers | `services` | 2 | `Get-OmniDiagServices` | [docs/modules/services.md](docs/modules/services.md) |
+| Startup and persistence | `startup` | 5 | `Get-OmniDiagStartup` | [docs/modules/startup.md](docs/modules/startup.md) |
+| Event logs | `events` | 2 | `Get-OmniDiagEvents` | [docs/modules/events.md](docs/modules/events.md) |
+| Reliability | `reliability` | 3 | `Get-OmniDiagReliability` | [docs/modules/reliability.md](docs/modules/reliability.md) |
+| Storage | `storage` | 4 | `Get-OmniDiagStorage` | [docs/modules/storage.md](docs/modules/storage.md) |
+| Network | `network` | 10 | `Get-OmniDiagNetwork` | [docs/modules/network.md](docs/modules/network.md) |
+| Windows Update and health | `updates` | 5 | `Get-OmniDiagUpdates` | [docs/modules/updates.md](docs/modules/updates.md) |
+| Security | `security` | 6 | `Get-OmniDiagSecurity` | [docs/modules/security.md](docs/modules/security.md) |
+| Extras (hardware, apps, identity, cloud) | `extras` | 14 | `Get-OmniDiagExtras` | [docs/modules/extras.md](docs/modules/extras.md) |
+
+`omnidiag list modules` (or `Get-OmniDiagModule`) shows the live list on your machine.
+
+## Security and privacy
+
+* **Nothing leaves the machine by default.** Five scanners have a connectivity probe
+  (gateway ping and name resolution, DNS resolvers, the domain secure channel, Entra ID
+  device status, and local Administrators name lookups on joined devices). They run only with
+  `--network-probes` / `-NetworkProbes` (a checkbox in the GUI); without it they do their
+  local checks and say the probe was not run. CI runs a default scan under Windows
+  Filtering Platform auditing and fails on any outbound connection or DNS query.
+* **Reports describe the machine.** They can contain user, host, and domain names, paths,
+  and addresses. Review them before sharing, or export with `--redact` / `-Redact`, which
+  replaces identifiers with stable pseudonyms (`HOST-1`, `USER-1`, `IP-1`) in every format
+  and file name ([docs/REDACTION.md](docs/REDACTION.md)).
+* **Secrets are masked.** Password-, token-, and key-looking values are replaced with
+  `[REDACTED]` in findings, metrics, and logs (heuristic; treat reports as sensitive).
+* **Local AI is optional and local.** The assistant talks only to an Ollama endpoint you
+  configure (loopback by default) and sends redacted evidence
+  ([docs/OLLAMA.md](docs/OLLAMA.md)).
+* **Hardened I/O.** Output paths are canonicalized, report-package import is guarded against
+  zip-slip and zip bombs, session import is validated and fuzzed, and report content is
+  encoded for HTML, Markdown, CSV, and PDF ([docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)).
+
+Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
+
+## Documentation
+
+| Topic | Page |
+|---|---|
+| Documentation index | [docs/README.md](docs/README.md) |
+| Role profiles and task workflows | [docs/TECHNICIAN_GUIDE.md](docs/TECHNICIAN_GUIDE.md) |
+| Command line | [docs/CLI.md](docs/CLI.md) |
+| PowerShell cmdlets | [docs/POWERSHELL.md](docs/POWERSHELL.md) |
+| GUI | [docs/GUI.md](docs/GUI.md) |
+| Module groups and scanners | [docs/modules/README.md](docs/modules/README.md) |
+| Report schema | [docs/SCHEMA.md](docs/SCHEMA.md) |
+| Redaction | [docs/REDACTION.md](docs/REDACTION.md) |
+| Local AI (Ollama) | [docs/OLLAMA.md](docs/OLLAMA.md) |
+| Portable use | [PORTABLE.md](PORTABLE.md) |
+| Installer (MSI, winget) | [docs/INSTALLER.md](docs/INSTALLER.md) |
+| Releasing and verifying releases | [docs/RELEASING.md](docs/RELEASING.md) |
+| Architecture and plugin contract | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Security review | [docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) |
+| Changelog | [CHANGELOG.md](CHANGELOG.md) |
+
+## Contributing
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for development setup,
+tests, lint, the coverage gate, and how to add a scanner or a repair. This project follows
+the [Contributor Covenant](CODE_OF_CONDUCT.md).
+
+## Authorship and AI disclosure
 
 OmniDiag was built roughly **50% with AI assistance** and **50% by me (Chris B,
 [@Chris2003](https://github.com/Chris2003)) and other collaborators who worked off
@@ -393,11 +274,6 @@ platform** (outside GitHub, so they don't show in the commit history). Design de
 testing on real Windows hosts, and review were done by people; AI tools helped write
 code, tests, and documentation. See [CREDITS.md](CREDITS.md) for details.
 
-## Contributing
-
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Found a security
-issue? Please read [SECURITY.md](SECURITY.md) first.
-
 ## License
 
-[MIT](LICENSE) © OmniDiag Contributors
+[MIT](LICENSE) (c) OmniDiag Contributors

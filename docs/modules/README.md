@@ -51,5 +51,7 @@ update its group's page in the same pull request (and its entry in
 9. **Platforms.** Windows 10 22H2 x64, Windows 11 x64 and ARM64; data that is not available
    on a platform is reported as "not available", never as a failure.
 
-The pages below were generated from the scanner manifests in 0.6.0 (sections 1-3 and 7);
-each group's owner fills in the remaining sections.
+The pages were first generated from the scanner manifests (sections 1-3 and 7) and were
+checked against each scanner's source for 1.0 (manifest values and every finding it can emit).
+`Tests/Docs.Modules.Tests.ps1` fails when a scanner in `src/Modules` is missing from its
+group's page.

@@ -169,55 +169,58 @@ run**, whose recommendation says how to run the probe.
 
 ## Findings it can emit
 
-| Scanner | Finding | Severity | When |
+| Scanner | Finding (Id when explicit) | Severity | When |
 |---|---|---|---|
 | DNS Resolver | No DNS servers configured on *adapter* | Warning | An active adapter has no IPv4 DNS server |
 | DNS Resolver | DNS resolution failed | Warning | Probe on, `DnsName` did not resolve |
 | DNS Resolver | Connectivity probe not run | Information | Probes off |
 | DNS Resolver | DNS resolver healthy | Pass | No warning |
-| Hosts File | Hosts file has *n* custom entries | Information | Any custom entry |
-| Hosts File | Large block list detected | Information | 50 or more loopback / null entries |
+| Hosts File | Hosts file has *n* custom entries (`network-hosts-file-custom-entries`) | Information | Any custom entry |
+| Hosts File | Large block list detected (*n* entries) (`network-hosts-file-block-list`) | Information | 50 or more loopback / null entries |
 | Hosts File | Possible hosts hijack: *domain* | Warning | A well-known domain maps to a non-loopback address |
 | Hosts File | Hosts file is clean | Pass | No warning |
 | IP Configuration | APIPA address on *adapter* (DHCP failure) | Warning | 169.254.x.x address |
 | IP Configuration | IP configuration valid | Pass | No warning |
-| Listening Ports | *Service* (TCP *port*) listens on all interfaces | Warning (Information for 445, and for 5985 / 5986 on a Windows Server SKU) | TCP 21, 23, 445, 3389, 5985, or 5986 bound to `0.0.0.0` or `::` |
-| Listening Ports | *n* non-Microsoft listener(s) on all interfaces | Information | A non-Windows program listens on every interface (TCP or UDP) |
-| Listening Ports | Some listener program paths require elevation | Information | Standard user and a non-Windows owner's path is unreadable |
-| Listening Ports | Listening ports not available | Information | `Get-NetTCPConnection` missing or failing |
-| Listening Ports | No risky listener exposed on all interfaces | Pass | No warning |
+| Listening Ports | *Service* (TCP *port*) listens on all interfaces (`network-listening-ports-exposed-<port>`) | Warning (Information for 445, and for 5985 / 5986 on a Windows Server SKU) | TCP 21, 23, 445, 3389, 5985, or 5986 bound to `0.0.0.0` or `::` |
+| Listening Ports | *n* non-Microsoft listener(s) on all interfaces (`network-listening-ports-third-party-all-interfaces`) | Information | A non-Windows program listens on every interface (TCP or UDP) |
+| Listening Ports | Some listener program paths require elevation (`network-listening-ports-paths-require-elevation`) | Information | Standard user and a non-Windows owner's path is unreadable |
+| Listening Ports | Listening ports not available (`network-listening-ports-unavailable`) | Information | `Get-NetTCPConnection` missing or failing |
+| Listening Ports | No risky listener exposed on all interfaces (`network-listening-ports-reviewed`) | Pass | No warning |
 | Network | No active network adapters | Critical | No adapter is up |
 | Network | High packet errors on *adapter* | Warning | More than 1000 receive + send errors |
 | Network | No network connectivity | Critical | Probes on, gateway, internet, and DNS all fail |
 | Network | Partial connectivity (LAN up, WAN/DNS impaired) | Warning | Probes on, gateway answers but internet or DNS fails |
 | Network | Connectivity probe not run | Information | Probes off |
-| Network | Network adapters healthy / Network healthy | Pass | No warning |
-| Network Shares | *n* user share(s) present | Information | Non-administrative shares exist |
+| Network | Network adapters healthy / Network healthy | Pass | No warning (probes off / probes on) |
+| Network Shares | *n* user share(s) present (`network-shares-user-shares`) | Information | Non-administrative shares exist |
 | Network Shares | Share '*name*' grants Everyone *rights* access | Warning | Everyone has Full or Change |
 | Network Shares | No overly permissive shares detected | Pass | No warning |
 | Proxy Configuration | User proxy is enabled without a proxy server | Warning | `ProxyEnable` = 1 and `ProxyServer` empty |
 | Proxy Configuration | Multiple proxy sources may disagree | Warning | WinINET proxy and proxy environment variables differ |
-| Proxy Configuration | Machine-wide WinHTTP proxy is configured | Information | WinHTTP uses a named proxy |
-| Proxy Configuration | WinHTTP proxy setting could not be decoded | Information | `WinHttpSettings` has an unexpected layout |
+| Proxy Configuration | Machine-wide WinHTTP proxy is configured (`network-proxy-winhttp-named-proxy`) | Information | WinHTTP uses a named proxy |
+| Proxy Configuration | WinHTTP proxy setting could not be decoded (`network-proxy-winhttp-undecodable`) | Information | `WinHttpSettings` has an unexpected layout |
 | Proxy Configuration | Windows proxy stores are unavailable | Information | Not Windows |
 | Proxy Configuration | Proxy configuration collected | Pass | No warning |
-| Routes | No default route | Warning | No IPv4 or IPv6 default route |
-| Routes | Multiple IPv4 / IPv6 default routes with equal metric | Information | Tie for the lowest effective metric across interfaces |
-| Routes | *n* persistent route(s) configured | Information | Routes in the persistent store |
-| Routes | Routing table not available | Information | `Get-NetRoute` missing or failing |
-| Routes | Default route present | Pass | No warning |
-| VPN | *n* recent VPN client errors | Warning | RasClient error events in the time range (capped at 200) |
+| Routes | No default route (`network-routes-no-default`) | Warning | Neither an IPv4 nor an IPv6 default route |
+| Routes | Multiple IPv4 / IPv6 default routes with equal metric (`network-routes-ambiguous-default-ipv4` / `-ipv6`) | Information | Tie for the lowest effective metric across interfaces |
+| Routes | *n* persistent route(s) configured (`network-routes-persistent`) | Information | Routes in the persistent store |
+| Routes | Routing table not available (`network-routes-unavailable`) | Information | `Get-NetRoute` missing or failing |
+| Routes | Default route present (`network-routes-healthy`) | Pass | No warning |
+| VPN | *n* recent VPN client errors (`network-vpn-rasclient-errors`) | Warning | RasClient error events in the time range (capped at 200) |
 | VPN | No Windows VPN configuration detected | Information | No profile and no VPN-like adapter |
 | VPN | VPN posture collected | Pass | VPN present, no recent error |
-| WiFi Networks | Weak WiFi signal (*n*%) | Warning | Connected, signal below 40% |
-| WiFi Networks | Connected to '*SSID*' | Information | Connected |
-| WiFi Networks | Wireless adapter is not connected | Information | Interface present, no SSID |
+| WiFi Networks | Weak WiFi signal (*n*%) (`network-wifi-weak-signal`) | Warning | Connected, signal below 40% |
+| WiFi Networks | Connected to '*SSID*' (`network-wifi-connected`) | Information | Connected |
+| WiFi Networks | Wireless adapter is not connected (`network-wifi-not-connected`) | Information | Interface present, no SSID |
 | WiFi Networks | No wireless adapter present | Information | No interface (or WLAN service / location access unavailable) |
 | WiFi Networks | Wireless connection is healthy | Pass | No warning |
 
-Finding ids are stable and contain no live values (for example
+Explicit finding ids are stable and contain no live values (for example
 `network-listening-ports-exposed-3389`, `network-routes-no-default`,
-`network-wifi-weak-signal`), so `Compare-OmniSession` can match them across scans.
+`network-wifi-weak-signal`), so `Compare-OmniSession` can match them across scans. A
+finding without an explicit id gets one derived from its component and title (for example
+`network-dns-dns-resolution-failed`); a dynamic title (adapter, share, or domain name) makes
+that derived id specific to the item.
 
 ## Platforms
 
