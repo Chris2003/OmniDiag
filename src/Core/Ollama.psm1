@@ -72,15 +72,39 @@ function New-OmniPromptRedactionContext {
     return (New-OmniRedactionContext -Session $Session)
 }
 
+function ConvertTo-OmniPromptAutoId {
+    <# .SYNOPSIS Internal: the id New-OmniFinding generates from a component and a title. #>
+    param([AllowEmptyString()][string] $Component, [AllowEmptyString()][string] $Title)
+    return ((('{0}|{1}' -f $Component, $Title).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
+}
+
 function Get-OmniPromptFindingId {
     <#
     .SYNOPSIS
-        Internal: the finding id as sent to the model. Auto-generated ids embed the title,
-        so they are redacted too; IdMap remembers the original for citations.
+        Internal: the finding id as sent to the model; IdMap remembers the original for
+        citations.
+
+    .DESCRIPTION
+        An id generated from the component and title (New-OmniFinding) holds that text in
+        kebab case, where an address or name is no longer delimited (10.1.2.3 reads
+        10-1-2-3). Such an id is rebuilt from the redacted component and title - the same
+        id the redacted report shows (Redaction.psm1). Any other id is redacted as text.
+        An id that was already sent keeps the form it was sent in.
     #>
-    param([string] $Id, $Context, [System.Collections.IDictionary] $IdMap)
+    param([string] $Id, [string] $Component, [string] $Title, $Context, [System.Collections.IDictionary] $IdMap)
+    if ([string]::IsNullOrEmpty($Id)) { return $Id }
+    if ($null -ne $IdMap) {
+        foreach ($k in @($IdMap.Keys)) { if ([string]$IdMap[$k] -ceq $Id) { return [string]$k } }
+    }
     $sent = $Id
-    if ($null -ne $Context -and -not [string]::IsNullOrEmpty($Id)) { $sent = [string](ConvertTo-OmniRedacted -InputObject $Id -Context $Context) }
+    if ($null -ne $Context) {
+        if ($PSBoundParameters.ContainsKey('Title') -and $Id -ceq (ConvertTo-OmniPromptAutoId -Component $Component -Title $Title)) {
+            $sent = ConvertTo-OmniPromptAutoId -Component ([string](ConvertTo-OmniRedacted -InputObject $Component -Context $Context)) `
+                -Title ([string](ConvertTo-OmniRedacted -InputObject $Title -Context $Context))
+        } else {
+            $sent = [string](ConvertTo-OmniRedacted -InputObject $Id -Context $Context)
+        }
+    }
     if ($null -ne $IdMap -and -not [string]::IsNullOrEmpty($sent) -and -not $IdMap.Contains($sent)) { $IdMap[$sent] = $Id }
     return $sent
 }
@@ -189,7 +213,7 @@ function Invoke-OmniOllamaAnalysis {
             foreach ($finding in @($result.Findings)) {
                 if (-not $finding -or $finding.Severity -eq 'Pass') { continue }
                 [ordered]@{
-                    id = Get-OmniPromptFindingId -Id ([string]$finding.Id) -Context $redaction -IdMap $idMap
+                    id = Get-OmniPromptFindingId -Id ([string]$finding.Id) -Component ([string]$finding.Component) -Title ([string]$finding.Title) -Context $redaction -IdMap $idMap
                     severity = [string]$finding.Severity
                     component = Protect-OmniPromptText ([string]$finding.Component) $identity $redaction
                     title = Protect-OmniPromptText ([string]$finding.Title) $identity $redaction
@@ -343,7 +367,7 @@ function Invoke-OmniAssistantTurn {
         healthScore = if ($c.Session.PSObject.Properties['Summary'] -and $c.Session.Summary) { $c.Session.Summary.Score } else { $null }
         findings = @(foreach ($h in $hits | Where-Object Type -eq 'Finding') {
             [void]$c.SeenFindingIds.Add($h.Id)
-            [ordered]@{ id = (Get-OmniPromptFindingId -Id ([string]$h.Id) -Context $redaction -IdMap $idMap); severity = $h.Item.Severity
+            [ordered]@{ id = (Get-OmniPromptFindingId -Id ([string]$h.Id) -Component ([string]$h.Item.Component) -Title ([string]$h.Item.Title) -Context $redaction -IdMap $idMap); severity = $h.Item.Severity
                 component = (Protect-OmniPromptText ([string]$h.Item.Component) $c.Identity $redaction)
                 title = (Protect-OmniPromptText ([string]$h.Item.Title) $c.Identity $redaction); likelyCause = (Protect-OmniPromptText ([string]$h.Item.LikelyCause) $c.Identity $redaction)
                 recommendation = (Protect-OmniPromptText ([string]$h.Item.Recommendation) $c.Identity $redaction) }

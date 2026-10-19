@@ -348,14 +348,16 @@ function Get-OmniRedactionMatchReplacement {
         }
         'IPv6' {
             $lead = ''
-            $hit = Resolve-OmniRedactionIPv6Candidate -Candidate $v
-            if ($null -eq $hit -and $Match.Index -gt 0 -and $Text.Length -gt $Match.Index -and $Text[$Match.Index - 1] -eq '%' -and
+            $hit = $null
+            if ($Match.Index -gt 0 -and $Text.Length -gt $Match.Index -and $Text[$Match.Index - 1] -eq '%' -and
                 $v.Length -gt 2 -and $v.Substring(0, 2) -match '^[0-9A-Fa-f]{2}$') {
-                # URL-encoded text ('%20fe80::1', '%3A2001:db8::5'): the two hex digits after '%'
-                # belong to the escape, not to the address.
-                $lead = $v.Substring(0, 2)
+                # URL-encoded text ('%20fe80::1', '%3A2001:db8::5', '%5Bab::1%5D'): the two hex
+                # digits after '%' belong to the escape, not to the address. Tried first, because
+                # '5Bab::1' would parse too and give the same host a different pseudonym.
                 $hit = Resolve-OmniRedactionIPv6Candidate -Candidate $v.Substring(2)
+                if ($null -ne $hit) { $lead = $v.Substring(0, 2) }
             }
+            if ($null -eq $hit) { $hit = Resolve-OmniRedactionIPv6Candidate -Candidate $v }
             if ($null -eq $hit) { return $null }
             $addr = $hit.Address
             $bytes = $addr.GetAddressBytes()

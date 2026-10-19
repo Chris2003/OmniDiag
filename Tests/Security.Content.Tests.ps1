@@ -697,6 +697,15 @@ Describe 'Redaction regressions: identifiers glued to escape sequences' {
         (ConvertTo-OmniRedacted -InputObject $v1 -Context $script:Ctx).id | Should -BeExactly $copy.Id
     }
 
+    It 'gives an IPv6 address after a URL escape the same pseudonym as the plain address' {
+        $plain = Invoke-Redact 'ab::1'
+        $plain | Should -Match '^IPV6-\d+$'
+        Invoke-Redact '%5Bab::1%5D' | Should -BeExactly ('%5B' + $plain + '%5D')
+        Invoke-Redact 'x=%5Bab::1%5D:443' | Should -BeExactly ('x=%5B' + $plain + '%5D:443')
+        $full = Invoke-Redact '2001:db8::77'
+        Invoke-Redact '%5B2001:db8::77%5D' | Should -BeExactly ('%5B' + $full + '%5D')
+    }
+
     It 'still keeps versions, times, and words next to escapes' {
         $text = 'build%2010.0.19045.1 at%2012:30:45 %20jdoes %5Cxjdoe'
         Invoke-Redact $text | Should -BeExactly $text
@@ -948,6 +957,126 @@ Describe 'Session import: targeted malformed input' {
     }
 }
 
+Describe 'Session import: report packages fail with the documented error' {
+    BeforeAll {
+        Add-Type -AssemblyName System.IO.Compression -ErrorAction SilentlyContinue
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $script:PkgDir = Join-Path $TestDrive 'packages'
+        New-Item -ItemType Directory -Path $script:PkgDir -Force | Out-Null
+        function New-PackageZip([string] $Name, [object[]] $Entry) {
+            $path = Join-Path $script:PkgDir $Name
+            $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Create)
+            try {
+                $zip = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+                try {
+                    foreach ($e in $Entry) {
+                        $s = $zip.CreateEntry([string]$e.Name).Open()
+                        try {
+                            if ($e.Contains('ZeroBytes')) {
+                                $buf = New-Object byte[] (1MB)
+                                $left = [long]$e.ZeroBytes
+                                while ($left -gt 0) { $n = [int][math]::Min($left, $buf.Length); $s.Write($buf, 0, $n); $left -= $n }
+                            } else {
+                                $bytes = $script:Utf8NoBom.GetBytes([string]$e.Text)
+                                $s.Write($bytes, 0, $bytes.Length)
+                            }
+                        } finally { $s.Dispose() }
+                    }
+                } finally { $zip.Dispose() }
+            } finally { $fs.Dispose() }
+            return $path
+        }
+    }
+
+    It 'loads a valid package (control)' {
+        $p = New-PackageZip 'ok.zip' @(@{ Name = 'data.json'; Text = $script:GoldenJson })
+        Get-SessionProblem (Get-ImportOutcome $p).Session | Should -BeNullOrEmpty
+    }
+
+    It 'rejects <Case> with InvalidDataException (OmniDiag.SessionImportInvalid)' -ForEach @(
+        @{ Case = 'an unsafe entry name'; Like = '*rejected*' }
+        @{ Case = 'too many entries'; Like = '*entries*' }
+        @{ Case = 'a data.json that inflates past the limit'; Like = '*limit*' }
+        @{ Case = 'a package without data.json'; Like = '*no data.json*' }
+        @{ Case = 'a corrupt zip file'; Like = '*Cannot read*' }
+        @{ Case = 'a data.json that is not JSON'; Like = '*Not a valid*' }
+    ) {
+        $p = switch ($Case) {
+            'an unsafe entry name' { New-PackageZip 'unsafe.zip' @(@{ Name = 'data.json'; Text = $script:GoldenJson }, @{ Name = '../evil.txt'; Text = 'x' }) }
+            'too many entries' { New-PackageZip 'many.zip' (@(@{ Name = 'data.json'; Text = $script:GoldenJson }) + @(1..300 | ForEach-Object { @{ Name = "f/$_.txt"; Text = 'x' } })) }
+            'a data.json that inflates past the limit' { New-PackageZip 'bomb.zip' @(@{ Name = 'data.json'; ZeroBytes = (65MB) }) }
+            'a package without data.json' { New-PackageZip 'nodata.zip' @(@{ Name = 'README.txt'; Text = 'x' }) }
+            'a corrupt zip file' {
+                $bad = Join-Path $script:PkgDir 'corrupt.zip'
+                [System.IO.File]::WriteAllBytes($bad, [byte[]](1..200 | ForEach-Object { [byte]($_ % 251) }))
+                $bad
+            }
+            'a data.json that is not JSON' { New-PackageZip 'notjson.zip' @(@{ Name = 'data.json'; Text = '{"modules": [' }) }
+        }
+        $o = Get-ImportOutcome $p
+        $got = if ($o.Error) { $o.Error.Exception.GetType().FullName + ': ' + $o.Error.Exception.Message } else { 'a session' }
+        Test-ImportRejected $o | Should -BeTrue -Because "$Case must fail with the documented error (got $got)"
+        $o.Error.Exception.Message | Should -BeLike $Like
+        $o.Error.Exception.Message | Should -BeLike ('*' + (Split-Path $p -Leaf) + '*')
+    }
+}
+
+Describe 'Session import: nesting check is linear' {
+    BeforeAll {
+        $script:EvidenceModule = @((Get-Module OmniDiag).NestedModules | Where-Object { $_.Name -eq 'Evidence' })[0]
+        function Test-Depth([string] $Json, [int] $Max = 100) {
+            & $script:EvidenceModule { param($j, $m) Test-OmniJsonNestingDepth -Json $j -MaxDepth $m } $Json $Max
+        }
+        function New-Staircase([int] $Levels) {
+            # '[[],[[],[[],...1]]]': runs of at most two openers, depth = Levels + 1.
+            $sb = [System.Text.StringBuilder]::new()
+            for ($i = 0; $i -lt $Levels; $i++) { [void]$sb.Append('[[],') }
+            [void]$sb.Append('1')
+            [void]$sb.Append(']' * $Levels)
+            return $sb.ToString()
+        }
+    }
+
+    It 'reaches Test-OmniJsonNestingDepth through the Evidence module (seam)' {
+        $script:EvidenceModule | Should -Not -BeNullOrEmpty
+    }
+
+    It 'accepts depth 100 and rejects depth 101, as one run and as a staircase' {
+        Test-Depth (('[' * 100) + (']' * 100)) | Should -BeTrue
+        Test-Depth (('[' * 101) + (']' * 101)) | Should -BeFalse
+        Test-Depth (New-Staircase 99) | Should -BeTrue
+        Test-Depth (New-Staircase 100) | Should -BeFalse
+        Test-Depth (New-Staircase 5000) | Should -BeFalse
+    }
+
+    It 'ignores brackets inside strings, escaped quotes included, and an unterminated string' {
+        $bs = $script:BS
+        Test-Depth ('{"a":"' + ('[' * 5000) + '"}') | Should -BeTrue
+        Test-Depth ('{"a":"x' + $bs + '"' + ('{' * 5000) + '"}') | Should -BeTrue
+        Test-Depth ('{"a":"' + ('[' * 5000)) | Should -BeTrue
+        Test-Depth ('{"a":"' + $bs + $bs + '",' + ('"b":[' * 150) + (']' * 150) + '}') | Should -BeFalse
+    }
+
+    It 'processes a 5 MB flat document in under 5 s' {
+        $item = '{"a":"xxxxxxxxxxxxxxxxxxxx","b":[1,2],"c":{"d":null}},'
+        $json = '{"modules":[' + ($item * [int](5MB / $item.Length)) + '{}]}'
+        $json.Length | Should -BeGreaterThan (5MB - 100)
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        Test-Depth $json | Should -BeTrue
+        $sw.Stop()
+        $sw.ElapsedMilliseconds | Should -BeLessThan 5000
+    }
+
+    It 'processes 1 MB of groups deeper than the pair-removal passes in under 5 s' {
+        $group = ('[' * 12) + (']' * 12)
+        $json = '[' + ($group * [int](1MB / $group.Length)) + ']'
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        Test-Depth $json | Should -BeTrue
+        $sw.Stop()
+        $sw.ElapsedMilliseconds | Should -BeLessThan 5000
+    }
+}
+
 Describe 'Session import: deterministic fuzzer (200 cases)' {
     BeforeAll {
         $script:FuzzDir = Join-Path $TestDrive 'fuzz'
@@ -1189,6 +1318,23 @@ Describe 'Ollama assistant: prompt redaction and output sanitization' {
         $t2.FindingIds | Should -Be @('network-gateway-acme-ws-042')
         $t1.Question | Should -BeLike '*ACME-WS-042*' -Because 'the local turn record keeps what the technician typed'
         @($t1.UnverifiedCitations).Count | Should -Be 0
+    }
+
+    It 'sends a generated finding id rebuilt from the redacted text, as the redacted report shows it' {
+        $script:OBodies.Clear(); $script:OSentIds.Clear()
+        $f = New-OmniFinding -Title 'Gateway 10.20.30.40 unreachable' -Severity 'Critical' -Component 'Network'
+        $f.Id | Should -Be 'network-gateway-10-20-30-40-unreachable'
+        $r = New-OmniResult -ModuleName 'Network' -Category 'Network'
+        Add-OmniFinding -Result $r -Finding $f
+        $null = Complete-OmniResult -Result $r
+        $session = [pscustomobject]@{ Results = @($r); Summary = [pscustomobject]@{ Score = 40; Grade = 'Critical' } }
+        $a = Invoke-OmniOllamaAnalysis -Session $session -Model 'gemma4:e2b' -Transport $script:AnalysisTransport
+        $script:OBodies[0] | Should -Not -Match '10-20-30-40'
+        $script:OBodies[0] | Should -Not -Match '10\.20\.30\.40'
+        $reportId = (ConvertTo-OmniRedacted -InputObject $f -Context (New-OmniRedactionContext -Session $session)).Id
+        $script:OSentIds[0] | Should -BeExactly $reportId
+        $script:OSentIds[0] | Should -Match '^network-gateway-ip-\d+-unreachable$'
+        $a.Priorities[0].evidenceIds | Should -Be @('network-gateway-10-20-30-40-unreachable')
     }
 
     It 'strips terminal control sequences from analysis output' {
