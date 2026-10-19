@@ -63,6 +63,94 @@ function Get-OmniSessionFinding {
     }
 }
 
+# Report-package (.zip) import limits (docs/SECURITY-REVIEW.md, zip-slip / zip bomb).
+$script:OmniZipMaxEntries = 256
+$script:OmniZipMaxEntryBytes = 64MB
+$script:OmniZipReservedNameRegex = [regex]::new('^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9]|CONIN\$|CONOUT\$|CLOCK\$)$',
+    [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+
+function Get-OmniZipEntryNameProblem {
+    <#
+    .SYNOPSIS
+        Internal: why a zip entry name is unsafe to extract or trust, or $null when it is safe.
+
+    .DESCRIPTION
+        Refuses absolute names (/x, \x), drive letters (C:x), any ':' (drive or NTFS
+        stream), '..' segments (zip-slip), control characters, and Win32 device names.
+        Both '/' and '\' count as separators (Windows tools accept either).
+    #>
+    [OutputType([string])]
+    param([AllowEmptyString()][string] $FullName)
+    if ([string]::IsNullOrEmpty($FullName)) { return 'has an empty name' }
+    if ($FullName -match '[\x00-\x1F]') { return 'contains control characters' }
+    $n = $FullName.Replace('\', '/')
+    if ($n.StartsWith('/')) { return 'is an absolute path' }
+    if ($n -match '^[A-Za-z]:') { return 'starts with a drive letter' }
+    if ($n.IndexOf(':') -ge 0) { return "contains ':' (drive letter or NTFS stream)" }
+    foreach ($segment in $n.Split('/')) {
+        if ($segment -eq '..') { return "contains a '..' segment (path traversal)" }
+        $base = $segment.TrimEnd(' ', '.')
+        $dot = $base.IndexOf('.')
+        if ($dot -ge 0) { $base = $base.Substring(0, $dot) }
+        if ($script:OmniZipReservedNameRegex.IsMatch($base.TrimEnd(' '))) { return "names the reserved device '$segment'" }
+    }
+    return $null
+}
+
+function Read-OmniZipEntryText {
+    <#
+    .SYNOPSIS
+        Internal: reads one text entry of a report package, with zip-slip and zip-bomb guards.
+
+    .DESCRIPTION
+        Every entry name is validated first (Get-OmniZipEntryNameProblem); one unsafe name
+        rejects the whole package. At most $script:OmniZipMaxEntries entries are accepted.
+        The entry (shallowest match on its file name) must declare at most
+        $script:OmniZipMaxEntryBytes uncompressed, and the read stops with an error as soon
+        as more than that many bytes are actually inflated (the header can lie). Nothing is
+        written to disk.
+    #>
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string] $Path, [Parameter(Mandatory)][string] $EntryName)
+
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    $max = [long]$script:OmniZipMaxEntryBytes
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        $entries = @($zip.Entries)
+        if ($entries.Count -gt $script:OmniZipMaxEntries) {
+            throw "Report package rejected: it has $($entries.Count) entries (limit $($script:OmniZipMaxEntries)): $Path"
+        }
+        $match = $null; $matchDepth = [int]::MaxValue
+        foreach ($e in $entries) {
+            $problem = Get-OmniZipEntryNameProblem -FullName $e.FullName
+            if ($problem) { throw "Report package rejected: entry '$($e.FullName)' $problem`: $Path" }
+            # Leaf name computed here: on Linux .NET, ZipArchiveEntry.Name does not split on '\'.
+            $parts = @($e.FullName.Replace('\', '/').Split('/'))
+            if ($parts[$parts.Count - 1] -eq $EntryName -and $parts.Count -lt $matchDepth) { $match = $e; $matchDepth = $parts.Count }
+        }
+        if ($null -eq $match) { throw "Report package has no $EntryName`: $Path" }
+        if ([long]$match.Length -gt $max) {
+            throw "Report package rejected: $EntryName is $($match.Length) bytes uncompressed (limit $max): $Path"
+        }
+        $buffer = [System.IO.MemoryStream]::new()
+        $stream = $match.Open()
+        try {
+            $chunk = New-Object byte[] 81920
+            $total = [long]0
+            while (($n = $stream.Read($chunk, 0, $chunk.Length)) -gt 0) {
+                $total += $n
+                if ($total -gt $max) { throw "Report package rejected: $EntryName inflates past $max bytes: $Path" }
+                $buffer.Write($chunk, 0, $n)
+            }
+        } finally { $stream.Dispose() }
+        $buffer.Position = 0
+        $reader = [System.IO.StreamReader]::new($buffer, [System.Text.UTF8Encoding]::new($false), $true)
+        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+    } finally { $zip.Dispose() }
+}
+
 function Save-OmniSession {
     <#
     .SYNOPSIS
@@ -97,7 +185,8 @@ function Save-OmniSession {
         $Path = Get-OmniDataPath -Kind Sessions -ChildPath "session-$stamp.json"
     }
     # .NET resolves relative paths against the process directory, not PowerShell's location.
-    $Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    # Canonical path; device paths, NTFS streams, and reserved names are refused.
+    $Path = Resolve-OmniOutputPath -Path $Path -Purpose 'session'
     $dir = Split-Path -Path $Path -Parent
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     # Depth 12 captures findings -> Data -> nested event groups/timeline entries.
@@ -141,45 +230,364 @@ function Import-OmniSession {
         if (-not $item) { throw "No JSON report found in folder: $Path" }
     }
 
-    if ($item.Extension -eq '.zip') {
-        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
-        $zip = [System.IO.Compression.ZipFile]::OpenRead($item.FullName)
-        try {
-            $entry = $zip.Entries | Where-Object { $_.Name -eq 'data.json' } | Select-Object -First 1
-            if (-not $entry) { throw "Report package has no data.json: $($item.FullName)" }
-            $reader = [System.IO.StreamReader]::new($entry.Open())
-            try { $json = $reader.ReadToEnd() } finally { $reader.Dispose() }
-        } finally { $zip.Dispose() }
-    } else {
-        $json = [System.IO.File]::ReadAllText($item.FullName)
+    # Size cap before anything is read (a .zip is checked by the length of its data.json text below).
+    if ($item.Extension -ne '.zip' -and $item.Length -gt $script:OmniSessionImportMaxBytes) {
+        throw (New-OmniSessionImportError -Path $item.FullName -Message ("Saved session is too large: {0} bytes (the limit is {1} MB): {2}" -f
+            $item.Length, ($script:OmniSessionImportMaxBytes / 1MB), $item.FullName))
     }
 
-    try { $session = $json | ConvertFrom-Json -ErrorAction Stop } catch { throw "Not a valid OmniDiag JSON report: $($item.FullName)" }
-    if ($null -eq $session -or $session -isnot [System.Management.Automation.PSCustomObject]) { throw "JSON does not contain an OmniDiag session (no Results): $($item.FullName)" }
+    # Reading is part of the import contract too: a corrupt or refused package, a missing
+    # data.json, or an unreadable file is the same InvalidDataException as bad content.
+    try {
+        if ($item.Extension -eq '.zip') {
+            # Validated, size-bounded read: nothing is extracted to disk, and a package with
+            # unsafe entry names, too many entries, or an oversized data.json is refused.
+            $json = Read-OmniZipEntryText -Path $item.FullName -EntryName 'data.json'
+        } else {
+            $json = [System.IO.File]::ReadAllText($item.FullName)
+        }
+    } catch {
+        if ($_.Exception -is [System.IO.InvalidDataException] -and [string]$_.FullyQualifiedErrorId -like 'OmniDiag.SessionImportInvalid*') { throw $_ }
+        $inner = $_.Exception
+        if ($inner -is [System.Management.Automation.MethodInvocationException] -and $null -ne $inner.InnerException) { $inner = $inner.InnerException }
+        $message = [string]$inner.Message
+        if ($message.IndexOf($item.FullName, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { $message = "Cannot read the saved session or report package: $message`: $($item.FullName)" }
+        throw (New-OmniSessionImportError -Path $item.FullName -Inner $inner -Message $message)
+    }
+
+    # Everything below either returns a well-formed session or throws exactly one error
+    # type: System.IO.InvalidDataException with error id OmniDiag.SessionImportInvalid.
+    try {
+        $session = ConvertFrom-OmniSessionJson -Json $json -SourcePath $item.FullName
+    } catch {
+        if ($_.Exception -is [System.IO.InvalidDataException]) { throw $_ }
+        throw (New-OmniSessionImportError -Path $item.FullName -Inner $_.Exception -Message ("Not a valid OmniDiag session or report: {0} ({1})" -f $item.FullName, $_.Exception.Message))
+    }
+    # Sessions saved by older versions (or edited by hand) were never scrubbed: scrub the whole
+    # validated document once, session-level fields included (docs/SECURITY-REVIEW.md item 5).
+    Protect-OmniSecretData -InputObject $session
+    Add-Member -InputObject $session -MemberType NoteProperty -Name SourcePath -Value $item.FullName -Force
+    return $session
+}
+
+# ---------------------------------------------------------------------------
+# Session import: parsing and validation
+# ---------------------------------------------------------------------------
+
+# Files larger than this are rejected before they are read; nesting deeper than this is
+# rejected before the JSON is parsed (saved sessions are at most ~20 levels deep).
+$script:OmniSessionImportMaxBytes = 64MB
+$script:OmniSessionImportMaxDepth = 100
+# Innermost-pair passes in Test-OmniJsonNestingDepth before the run-by-run walk.
+$script:OmniJsonDepthPasses = 8
+
+function New-OmniSessionImportError {
+    <#
+    .SYNOPSIS
+        Internal: the one error Import-OmniSession throws for content it cannot load - an
+        ErrorRecord with a System.IO.InvalidDataException, error id
+        OmniDiag.SessionImportInvalid, category InvalidData.
+    #>
+    param([string] $Message, [string] $Path, [System.Exception] $Inner)
+    if ($Inner) { $ex = [System.IO.InvalidDataException]::new($Message, $Inner) } else { $ex = [System.IO.InvalidDataException]::new($Message) }
+    return [System.Management.Automation.ErrorRecord]::new($ex, 'OmniDiag.SessionImportInvalid', [System.Management.Automation.ErrorCategory]::InvalidData, $Path)
+}
+
+function Test-OmniJsonNestingDepth {
+    <#
+    .SYNOPSIS
+        Internal: $true when the JSON text nests objects/arrays no deeper than MaxDepth.
+
+    .DESCRIPTION
+        Runs before ConvertFrom-Json, so a hostile file (thousands of nested brackets)
+        is rejected the same way on Windows PowerShell 5.1 and PowerShell 7 and never
+        reaches a recursive parser. The work is linear in the size of the text:
+
+          1. String literals are removed (brackets inside strings do not nest). The atomic
+             group and the optional closing quote keep this one pass linear, also for an
+             unterminated string and for escapes.
+          2. Everything but brackets is removed, and a run of more than MaxDepth opening
+             brackets is rejected at once.
+          3. Innermost empty pairs ([] {}) are removed, at most a fixed number of passes
+             ($script:OmniJsonDepthPasses). Every pass removes the innermost level of every
+             group at the same time, so it lowers the maximum depth by exactly one; flat
+             data (arrays of small objects) disappears completely here.
+          4. What remains is walked run by run ([regex]::Matches over runs of opening or
+             closing brackets, so PowerShell iterates over runs, not characters) with a
+             depth counter that exits as soon as the depth exceeds MaxDepth.
+
+        Unbalanced brackets are not judged here: the text is not valid JSON, and
+        ConvertFrom-Json reports it.
+    #>
+    param([string] $Json, [int] $MaxDepth)
+    $timeout = [TimeSpan]::FromSeconds(30)
+    $none = [System.Text.RegularExpressions.RegexOptions]::None
+    $skeleton = [regex]::Replace($Json, '"(?>(?:[^"\\]+|\\[\s\S])*)"?', '', $none, $timeout)
+    $skeleton = [regex]::Replace($skeleton, '[^\[\]{}]+', '', $none, $timeout)
+    if ($skeleton.Length -eq 0) { return $true }
+    if ([regex]::IsMatch($skeleton, ('[\[{]{' + ($MaxDepth + 1) + '}'), $none, $timeout)) { return $false }
+
+    $levels = 0
+    while ($skeleton.Length -gt 0 -and $levels -lt $script:OmniJsonDepthPasses) {
+        $next = [regex]::Replace($skeleton, '\{\}|\[\]', '', $none, $timeout)
+        if ($next.Length -eq $skeleton.Length) { break }
+        $skeleton = $next
+        $levels++
+    }
+    if ($levels -gt $MaxDepth) { return $false }
+    if ($skeleton.Length -eq 0) { return $true }
+
+    $depth = 0
+    foreach ($run in [regex]::Matches($skeleton, '[\[{]+|[\]}]+', $none, $timeout)) {
+        $ch = $skeleton[$run.Index]
+        if ($ch -eq '[' -or $ch -eq '{') {
+            $depth += $run.Length
+            if ($depth + $levels -gt $MaxDepth) { return $false }
+        } else {
+            $depth -= $run.Length
+            if ($depth -lt 0) { return $true }
+        }
+    }
+    return $true
+}
+
+function Test-OmniImportScalar {
+    <# .SYNOPSIS Internal: $true for a JSON scalar as ConvertFrom-Json returns it (or $null). #>
+    param([AllowNull()] $Value)
+    if ($null -eq $Value) { return $true }
+    if ($Value -is [string] -or $Value -is [bool] -or $Value -is [datetime] -or $Value -is [System.DateTimeOffset]) { return $true }
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal] -or $Value -is [single]) { return $true }
+    if ($Value.GetType().FullName -eq 'System.Numerics.BigInteger') { return $true }
+    # Windows PowerShell 5.1's ConvertTo-Json writes a date from Get-Date (or a string that
+    # carries extended properties) as { "value": ..., "DisplayHint": ..., ... }: native
+    # sessions saved there contain such wrappers, so they count as a scalar.
+    if ($Value -is [System.Management.Automation.PSCustomObject] -and $Value.PSObject.Properties['value']) {
+        $inner = $Value.PSObject.Properties['value'].Value
+        return ($null -eq $inner -or $inner -is [string] -or $inner -is [bool] -or $inner -is [datetime] -or $inner -is [int] -or
+            $inner -is [long] -or $inner -is [double] -or $inner -is [decimal])
+    }
+    return $false
+}
+
+function Get-OmniImportTypeName {
+    <# .SYNOPSIS Internal: 'an array' / 'an object' / 'a string' ... for validation messages. #>
+    param([AllowNull()] $Value)
+    if ($null -eq $Value) { return 'null' }
+    if ($Value -is [string]) { return 'a string' }
+    if ($Value -is [array]) { return 'an array' }
+    if ($Value -is [System.Management.Automation.PSCustomObject]) { return 'an object' }
+    return ('a {0}' -f $Value.GetType().Name)
+}
+
+function Assert-OmniImportShape {
+    <#
+    .SYNOPSIS
+        Internal: checks the members of one parsed JSON object against a shape spec and
+        throws an import error naming the first member of the wrong type.
+
+    .PARAMETER Spec
+        Member name -> 'scalar' | 'object' | 'array' | 'any'. 'object' and 'array' allow
+        null; a member listed in -Required must be present and not null.
+    #>
+    param($Value, [string] $Where, [hashtable] $Spec, [string[]] $Required = @(), [string] $SourcePath)
+    if ($Value -isnot [System.Management.Automation.PSCustomObject]) {
+        throw (New-OmniSessionImportError -Path $SourcePath -Message ("{0} must be an object, found {1}: {2}" -f $Where, (Get-OmniImportTypeName $Value), $SourcePath))
+    }
+    foreach ($name in $Required) {
+        $p = $Value.PSObject.Properties[$name]
+        if (-not $p -or $null -eq $p.Value) {
+            throw (New-OmniSessionImportError -Path $SourcePath -Message ("{0}.{1} is missing: {2}" -f $Where, $name, $SourcePath))
+        }
+    }
+    foreach ($name in @($Spec.Keys)) {
+        $p = $Value.PSObject.Properties[$name]
+        if (-not $p) { continue }
+        $v = $p.Value
+        $ok = switch ($Spec[$name]) {
+            'scalar' { Test-OmniImportScalar $v }
+            'object' { $null -eq $v -or $v -is [System.Management.Automation.PSCustomObject] }
+            'array'  { $null -eq $v -or $v -is [array] }
+            default  { $true }
+        }
+        if (-not $ok) {
+            $want = switch ($Spec[$name]) { 'scalar' { 'a string, number, boolean, or null' } 'object' { 'an object or null' } default { 'an array or null' } }
+            throw (New-OmniSessionImportError -Path $SourcePath -Message ("{0}.{1} must be {2}, found {3}: {4}" -f $Where, $name, $want, (Get-OmniImportTypeName $v), $SourcePath))
+        }
+    }
+}
+
+function Assert-OmniImportedReportV1 {
+    <# .SYNOPSIS Internal: validates the shape of a parsed schema v1 report before it is rebuilt. #>
+    param($Doc, [string] $SourcePath)
+    if ($Doc.schemaVersion -isnot [string]) {
+        throw (New-OmniSessionImportError -Path $SourcePath -Message ("schemaVersion must be a string such as '1.1.0', found {0}: {1}" -f (Get-OmniImportTypeName $Doc.schemaVersion), $SourcePath))
+    }
+    if ($Doc.schemaVersion -notmatch '^1\.\d+\.\d+$') {
+        throw (New-OmniSessionImportError -Path $SourcePath -Message ("Unsupported OmniDiag report schemaVersion '{0}'. This version of OmniDiag reads 1.x reports: {1}" -f $Doc.schemaVersion, $SourcePath))
+    }
+    Assert-OmniImportShape -Value $Doc -Where 'report' -SourcePath $SourcePath -Required @('modules') -Spec @{
+        tool = 'object'; generatedAt = 'scalar'; host = 'object'; options = 'object'; scan = 'object'; summary = 'object'; modules = 'array'
+    }
+    if ($null -ne $Doc.PSObject.Properties['host'] -and $null -ne $Doc.host) {
+        Assert-OmniImportShape -Value $Doc.host -Where 'host' -SourcePath $SourcePath -Spec @{ computerName = 'scalar'; userName = 'scalar'; isAdmin = 'scalar'; psVersion = 'scalar' }
+    }
+    if ($null -ne $Doc.PSObject.Properties['scan'] -and $null -ne $Doc.scan) {
+        Assert-OmniImportShape -Value $Doc.scan -Where 'scan' -SourcePath $SourcePath -Spec @{
+            startedAt = 'scalar'; finishedAt = 'scalar'; durationMs = 'scalar'; cancelled = 'scalar'; timeRange = 'object'; plan = 'object'
+        }
+        if ($null -ne $Doc.scan.PSObject.Properties['timeRange'] -and $null -ne $Doc.scan.timeRange) {
+            Assert-OmniImportShape -Value $Doc.scan.timeRange -Where 'scan.timeRange' -SourcePath $SourcePath -Spec @{ preset = 'scalar'; label = 'scalar'; start = 'scalar'; end = 'scalar' }
+        }
+        if ($null -ne $Doc.scan.PSObject.Properties['plan'] -and $null -ne $Doc.scan.plan) {
+            Assert-OmniImportShape -Value $Doc.scan.plan -Where 'scan.plan' -SourcePath $SourcePath -Spec @{ type = 'scalar'; name = 'scalar' }
+        }
+    }
+    if ($null -ne $Doc.PSObject.Properties['summary'] -and $null -ne $Doc.summary) {
+        Assert-OmniImportShape -Value $Doc.summary -Where 'summary' -SourcePath $SourcePath -Spec @{ healthScore = 'scalar'; grade = 'scalar'; counts = 'object' }
+    }
+    $mi = 0
+    foreach ($m in @($Doc.modules)) {
+        $where = "modules[$mi]"; $mi++
+        if ($null -eq $m) { continue }
+        Assert-OmniImportShape -Value $m -Where $where -SourcePath $SourcePath -Spec @{
+            id = 'scalar'; name = 'scalar'; group = 'scalar'; category = 'scalar'; status = 'scalar'; skippedReason = 'scalar'
+            requiresElevation = 'scalar'; startedAt = 'scalar'; durationMs = 'scalar'; error = 'scalar'; metrics = 'object'; findings = 'array'
+        }
+        $fi = 0
+        foreach ($f in @($(if ($m.PSObject.Properties['findings']) { $m.findings }))) {
+            $fwhere = "$where.findings[$fi]"; $fi++
+            if ($null -eq $f) { continue }
+            Assert-OmniImportShape -Value $f -Where $fwhere -SourcePath $SourcePath -Spec @{
+                id = 'scalar'; moduleId = 'scalar'; title = 'scalar'; severity = 'scalar'; severityNative = 'scalar'; passed = 'scalar'
+                component = 'scalar'; evidence = 'object'; likelyCause = 'scalar'; recommendation = 'scalar'; confidence = 'scalar'
+            }
+            if ($f.PSObject.Properties['evidence'] -and $null -ne $f.evidence) {
+                Assert-OmniImportShape -Value $f.evidence -Where "$fwhere.evidence" -SourcePath $SourcePath -Spec @{ detail = 'scalar'; data = 'any' }
+            }
+        }
+    }
+}
+
+function Assert-OmniImportedNativeSession {
+    <# .SYNOPSIS Internal: validates the shape of a parsed native session (Save-OmniSession). #>
+    param($Session, [string] $SourcePath)
+    if (-not $Session.PSObject.Properties['Results']) {
+        throw (New-OmniSessionImportError -Path $SourcePath -Message "JSON does not contain an OmniDiag session (no Results): $SourcePath")
+    }
+    Assert-OmniImportShape -Value $Session -Where 'session' -SourcePath $SourcePath -Required @('Results') -Spec @{
+        StartTime = 'scalar'; EndTime = 'scalar'; DurationMs = 'scalar'; Cancelled = 'scalar'; IsAdmin = 'scalar'
+        Host = 'object'; TimeRange = 'object'; Summary = 'object'; ScanPlan = 'object'; Results = 'array'
+    }
+    if ($Session.PSObject.Properties['Host'] -and $null -ne $Session.Host) {
+        Assert-OmniImportShape -Value $Session.Host -Where 'session.Host' -SourcePath $SourcePath -Spec @{
+            ComputerName = 'scalar'; UserName = 'scalar'; Domain = 'scalar'; DnsDomain = 'scalar'; PSVersion = 'scalar'; OSVersion = 'scalar'
+        }
+    }
+    if ($Session.PSObject.Properties['TimeRange'] -and $null -ne $Session.TimeRange) {
+        Assert-OmniImportShape -Value $Session.TimeRange -Where 'session.TimeRange' -SourcePath $SourcePath -Spec @{ Start = 'scalar'; End = 'scalar'; Label = 'scalar'; Preset = 'scalar' }
+    }
+    if ($Session.PSObject.Properties['ScanPlan'] -and $null -ne $Session.ScanPlan) {
+        Assert-OmniImportShape -Value $Session.ScanPlan -Where 'session.ScanPlan' -SourcePath $SourcePath -Spec @{ Type = 'scalar'; Name = 'scalar'; Description = 'scalar' }
+    }
+    if ($Session.PSObject.Properties['Summary'] -and $null -ne $Session.Summary) {
+        Assert-OmniImportShape -Value $Session.Summary -Where 'session.Summary' -SourcePath $SourcePath -Spec @{
+            Score = 'scalar'; Grade = 'scalar'; Counts = 'object'; ModulesRun = 'scalar'; TopRecommendations = 'array'
+        }
+        $ti = 0
+        foreach ($t in @($(if ($Session.Summary.PSObject.Properties['TopRecommendations']) { $Session.Summary.TopRecommendations }))) {
+            if ($null -ne $t) {
+                Assert-OmniImportShape -Value $t -Where "session.Summary.TopRecommendations[$ti]" -SourcePath $SourcePath -Spec @{ Severity = 'scalar'; Title = 'scalar'; Recommendation = 'scalar' }
+            }
+            $ti++
+        }
+    }
+    $ri = 0
+    foreach ($r in @($Session.Results)) {
+        $where = "Results[$ri]"; $ri++
+        if ($null -eq $r) { continue }
+        Assert-OmniImportShape -Value $r -Where $where -SourcePath $SourcePath -Spec @{
+            ModuleName = 'scalar'; Category = 'scalar'; Status = 'scalar'; RequiresAdmin = 'scalar'; HadAdmin = 'scalar'
+            StartTime = 'scalar'; EndTime = 'scalar'; DurationMs = 'scalar'; Error = 'scalar'; ModuleId = 'scalar'; Group = 'scalar'
+            SkippedReason = 'scalar'; Metrics = 'object'; Findings = 'array'
+        }
+        $fi = 0
+        foreach ($f in @($(if ($r.PSObject.Properties['Findings']) { $r.Findings }))) {
+            $fwhere = "$where.Findings[$fi]"; $fi++
+            if ($null -eq $f) { continue }
+            Assert-OmniImportShape -Value $f -Where $fwhere -SourcePath $SourcePath -Spec @{
+                Id = 'scalar'; Title = 'scalar'; Severity = 'scalar'; SeverityRank = 'scalar'; Component = 'scalar'; Detail = 'scalar'
+                LikelyCause = 'scalar'; Confidence = 'scalar'; Recommendation = 'scalar'; Timestamp = 'scalar'; Data = 'any'
+            }
+        }
+    }
+}
+
+function ConvertFrom-OmniSessionJson {
+    <#
+    .SYNOPSIS
+        Internal: JSON text -> validated session (native format or report schema v1).
+
+    .DESCRIPTION
+        Rejects, with an import error: text nested deeper than the import limit,
+        anything ConvertFrom-Json cannot parse, a document that is not a JSON object,
+        an unsupported schemaVersion, a missing Results (native) or modules (v1), and a
+        member of the wrong JSON type (a string where an array or object belongs, an
+        object where text belongs). Null entries in Results / modules / findings carry no
+        data and are skipped. Strings are data: nothing in them is ever evaluated.
+    #>
+    param([string] $Json, [string] $SourcePath)
+
+    if ($Json.Length -gt $script:OmniSessionImportMaxBytes) {
+        throw (New-OmniSessionImportError -Path $SourcePath -Message ("Saved session is too large: {0} characters (the limit is {1} MB): {2}" -f
+            $Json.Length, ($script:OmniSessionImportMaxBytes / 1MB), $SourcePath))
+    }
+    if ([string]::IsNullOrWhiteSpace($Json)) {
+        throw (New-OmniSessionImportError -Path $SourcePath -Message "Not a valid OmniDiag JSON report (the file is empty): $SourcePath")
+    }
+    # A byte order mark the reader did not consume (e.g. a doubled BOM) is not content.
+    $Json = $Json.TrimStart([char]0xFEFF)
+    # A session is one JSON object. (PowerShell 7 would unroll a top-level array.)
+    if (-not [regex]::IsMatch($Json, '\A\s*\{')) {
+        throw (New-OmniSessionImportError -Path $SourcePath -Message "JSON does not contain an OmniDiag session (no Results; the document is not a JSON object): $SourcePath")
+    }
+    if (-not (Test-OmniJsonNestingDepth -Json $Json -MaxDepth $script:OmniSessionImportMaxDepth)) {
+        throw (New-OmniSessionImportError -Path $SourcePath -Message ("Not a valid OmniDiag JSON report (nested deeper than {0} levels): {1}" -f $script:OmniSessionImportMaxDepth, $SourcePath))
+    }
+
+    try {
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            $parsed = ConvertFrom-Json -InputObject $Json -Depth ($script:OmniSessionImportMaxDepth + 2) -ErrorAction Stop
+        } else {
+            $parsed = ConvertFrom-Json -InputObject $Json -ErrorAction Stop
+        }
+    } catch {
+        throw (New-OmniSessionImportError -Path $SourcePath -Inner $_.Exception -Message ("Not a valid OmniDiag JSON report: {0} ({1})" -f $SourcePath, $_.Exception.Message))
+    }
+    if ($null -eq $parsed -or $parsed -isnot [System.Management.Automation.PSCustomObject]) {
+        throw (New-OmniSessionImportError -Path $SourcePath -Message "JSON does not contain an OmniDiag session (no Results): $SourcePath")
+    }
 
     # Report schema v1 (Export-OmniJsonReport, report packages from 0.5.0 on).
-    if ($session.PSObject.Properties['schemaVersion']) {
-        $session = ConvertFrom-OmniReportV1 -Report $session
-        Add-Member -InputObject $session -MemberType NoteProperty -Name SourcePath -Value $item.FullName -Force
-        return $session
+    if ($parsed.PSObject.Properties['schemaVersion']) {
+        Assert-OmniImportedReportV1 -Doc $parsed -SourcePath $SourcePath
+        return (ConvertFrom-OmniReportV1 -Report $parsed)
     }
 
-    if (-not $session.PSObject.Properties['Results']) { throw "JSON does not contain an OmniDiag session (no Results): $($item.FullName)" }
+    Assert-OmniImportedNativeSession -Session $parsed -SourcePath $SourcePath
 
     # Restore live-session shapes the reporters rely on: Metrics is an ordered dictionary
     # (ConvertFrom-Json yields a PSCustomObject) and Results/Findings are arrays.
-    $session.Results = @($session.Results | Where-Object { $_ })
-    foreach ($result in $session.Results) {
+    $parsed.Results = @($parsed.Results | Where-Object { $null -ne $_ })
+    foreach ($result in $parsed.Results) {
         $metrics = [ordered]@{}
         if ($result.PSObject.Properties['Metrics'] -and $result.Metrics) {
             foreach ($p in $result.Metrics.PSObject.Properties) { $metrics[$p.Name] = $p.Value }
         }
         $result | Add-Member -MemberType NoteProperty -Name Metrics -Value $metrics -Force
-        $findings = @(if ($result.PSObject.Properties['Findings']) { $result.Findings | Where-Object { $_ } })
+        $findings = @(if ($result.PSObject.Properties['Findings']) { $result.Findings | Where-Object { $null -ne $_ } })
         $result | Add-Member -MemberType NoteProperty -Name Findings -Value $findings -Force
     }
-    Add-Member -InputObject $session -MemberType NoteProperty -Name SourcePath -Value $item.FullName -Force
-    return $session
+    return $parsed
 }
 
 function Search-OmniEvidence {

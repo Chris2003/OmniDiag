@@ -57,6 +57,11 @@ becomes `HOST-1.DOMAIN-2` instead of `HOST-1.corp.contoso.com`, and `jdoe@contos
 `USER-1@DOMAIN-3`. A name only matches as a whole word (`jdoe` is redacted in `CONTOSO\jdoe`,
 `jdoe_backup`, and `C:\Users\jdoe`, but not inside `jdoes`).
 
+An identifier glued to an escape sequence is still found: right after a URL escape
+(`%5Cjdoe`, `jdoe%40contoso.com`, `%2010.20.30.40`, `%20fe80::1`) or after a JSON escape that
+was kept as text (`\njdoe`, `\tS-1-5-21-...`, `\u0022ACME-WS-042`), as in raw tool output or a
+JSON fragment inside a finding. The escape itself is kept (`%5CUSER-1`, `%20IP-1%20`).
+
 Redaction covers every string in the session: finding titles, details, likely causes,
 recommendations, components, evidence data at any depth, module metrics and their keys, event
 groups and the timeline, the host block, and the run options. Property names and dictionary keys
@@ -145,6 +150,15 @@ omitted because timings and errors in it are often what a vendor needs.
   IPv4 address and is redacted.
 * A real name that already looks like a pseudonym in upper case (a computer named `HOST-12`) is
   not redacted again.
+* A finding id that OmniDiag generated from the component and title (kebab case, where
+  `10.20.30.40` reads `10-20-30-40`) is rebuilt from the redacted component and title. An id
+  set explicitly by a scanner is redacted as text, so an address written there with dashes
+  (`gw-10-20-30-40`) is not recognized.
+* An identifier whose own characters are escaped (`10%2E20%2E30%2E40`, `fe80%3A%3A1`,
+  `\u006adoe`) is not recognized; only escapes before or after it are.
+* Because `\n`, `\r`, and `\t` are treated as JSON escapes, a name that is the rest of a path
+  segment after one of them is redacted there too: for a user named `emp`, `C:\temp` becomes
+  `C:\tUSER-1`. This over-redacts, it never leaks.
 * Binary content is not inspected: a brand logo embedded in the HTML or PDF is copied as is.
 * Values nested deeper than 24 levels are rendered as (redacted) text; this also stops reference
   cycles.

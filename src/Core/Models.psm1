@@ -57,6 +57,261 @@ function Get-OmniSeverityNames {
 }
 
 # ---------------------------------------------------------------------------
+# Secret scrubbing (docs/SECURITY-REVIEW.md, item 5)
+# ---------------------------------------------------------------------------
+# Collectors never deliberately read secrets, but command lines, proxy URLs, event text,
+# and registry values can carry them. Every finding and metric passes through these
+# patterns (New-OmniFinding, Complete-OmniResult) and so does every log record, so a
+# secret-looking value never reaches a report, a saved session, or the run log.
+
+$script:OmniSecretRegexOptions = [System.Text.RegularExpressions.RegexOptions]::CultureInvariant -bor
+    [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+# Cheap pre-filter: a string without any of these cannot match a pattern below.
+$script:OmniSecretHintRegex = [regex]::new('pass|pwd|secret|token|key|sig|bearer|basic|://[^\s/]*@|\d{6}-\d{6}|eyJ|gh[pousr]_|github_pat_|xox|AKIA|ASIA', $script:OmniSecretRegexOptions)
+$script:OmniSecretPatterns = @(
+    # BitLocker recovery password: 48 digits in 8 groups of 6.
+    [pscustomobject]@{ Regex = [regex]::new('(?<!\d)\d{6}(?:-\d{6}){7}(?!\d)', $script:OmniSecretRegexOptions); Replacement = '[REDACTED-RECOVERY-KEY]' }
+    # Credentials embedded in a URL: everything between scheme:// and the LAST '@' of the
+    # authority (user:password@, a token used as the user name, or a password with '@').
+    # The user-info class excludes characters RFC 3986 user info cannot hold unencoded
+    # ("'<>;,|\{}()[] and whitespace), so a '@' further along in JSON, CSV, or prose
+    # (an e-mail address after a proxy URL) never pulls the host into the match.
+    [pscustomobject]@{ Regex = [regex]::new('\b([a-z][a-z0-9+.\-]*://)(?!\[REDACTED\]@)[^\s/?#"''<>;,|\\{}()\[\]]+@', $script:OmniSecretRegexOptions); Replacement = '$1[REDACTED]@' }
+    # JSON Web Tokens (header.payload.signature), with or without a Bearer prefix.
+    [pscustomobject]@{ Regex = [regex]::new('(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*', $script:OmniSecretRegexOptions); Replacement = '[REDACTED-JWT]' }
+    # Well-known token formats: GitHub (ghp_/gho_/ghu_/ghs_/ghr_, github_pat_), Slack (xoxb-, xoxp-, ...),
+    # AWS access key ids (AKIA/ASIA, case-sensitive).
+    [pscustomobject]@{ Regex = [regex]::new('(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|(?-i:(?:AKIA|ASIA)[A-Z0-9]{16}))(?![A-Za-z0-9_])', $script:OmniSecretRegexOptions); Replacement = '[REDACTED-TOKEN]' }
+    # name=value secrets: environment blocks, connection strings, query strings, INI files.
+    [pscustomobject]@{ Regex = [regex]::new('(?<![A-Za-z0-9])((?:default)?password|passwd|pwd|passphrase|secret|client[_-]?secret|api[_-]?key|access[_-]?key|account[_-]?key|shared[_-]?access[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|token|sig)(\s*=\s*)(?!\[REDACTED)("[^"]*"|''[^'']*''|[^\s;&,"'']+)', $script:OmniSecretRegexOptions); Replacement = '$1$2[REDACTED]' }
+    # name: value secrets (narrower list: 'Token: Yes' style event text stays readable).
+    [pscustomobject]@{ Regex = [regex]::new('(?<![A-Za-z0-9])((?:default)?password|passwd|pwd|passphrase|client[_-]?secret|api[_-]?key)(\s*:\s*)(?!\[REDACTED)("[^"]*"|''[^'']*''|[^\s;&,"'']+)', $script:OmniSecretRegexOptions); Replacement = '$1$2[REDACTED]' }
+    # Command-line switches: -Password x, --token x, /secret:x.
+    [pscustomobject]@{ Regex = [regex]::new('((?:^|(?<=\s))(?:--?|/)(?:password|passwd|pwd|pass|passphrase|secret|token|api-?key)\b)(\s+|[:=])(?!\[REDACTED)("[^"]*"|''[^'']*''|[^\s"'']+)', $script:OmniSecretRegexOptions); Replacement = '$1$2[REDACTED]' }
+    # HTTP authorization values (Basic needs a digit, '+', or '/' so prose like 'Basic Internationalization' stays).
+    [pscustomobject]@{ Regex = [regex]::new('\b(bearer)\s+(?!\[REDACTED)[A-Za-z0-9\-._~+/]{16,}=*', $script:OmniSecretRegexOptions); Replacement = '$1 [REDACTED]' }
+    [pscustomobject]@{ Regex = [regex]::new('\b(basic)\s+(?=[A-Za-z0-9+/]*[0-9+/])[A-Za-z0-9+/]{16,}={0,2}', $script:OmniSecretRegexOptions); Replacement = '$1 [REDACTED]' }
+    # 'netsh wlan show profile key=clear' output (Key Content : <passphrase>).
+    [pscustomobject]@{ Regex = [regex]::new('(Key Content\s*:\s*)(?!\[REDACTED)\S[^\r\n]*', $script:OmniSecretRegexOptions); Replacement = '$1[REDACTED]' }
+)
+# Property / dictionary-key names whose string value is a secret by itself (no 'key=' in the
+# value): the whole value is replaced. Matched against the full name, so PasswordLastSet or
+# PasswordNeverExpires stay readable.
+$script:OmniSecretNameRegex = [regex]::new(
+    '^(?:default[_ ]?)?password$|^(?:passwd|pwd|passphrase)$|^(?:client[_ -]?)?secret$|^(?:access|auth|refresh|bearer|api|id)?[_ -]?token$|^api[_ -]?key$|^key[_ ]?(?:content|material)$|^(?:bitlocker[_ ]?)?recovery[_ ]?(?:key|password)$|^(?:pre[_ -]?)?shared[_ ]?key$',
+    $script:OmniSecretRegexOptions)
+$script:OmniSecretMaxDepth = 16
+
+# The helpers below are deliberately simple (non-advanced) functions: they run for every
+# result, finding, and log record, and [CmdletBinding()] binding overhead adds up.
+
+function Protect-OmniSecretText {
+    <#
+    .SYNOPSIS
+        Replaces secret-looking values in a string with [REDACTED] markers.
+
+    .DESCRIPTION
+        Covers BitLocker recovery passwords (48 digits in 8 groups), URL user info
+        (user:password@, token@, passwords containing '@'), JSON Web Tokens, GitHub /
+        Slack / AWS access-key token formats, password= / pwd= / secret= / token= /
+        api_key= / sig= style pairs, password: style labels, -Password / --token /
+        /secret: command-line switches, Bearer / Basic authorization values, and netsh
+        'Key Content' lines. The key and layout are kept (password=[REDACTED]) so the
+        evidence still reads correctly. Idempotent. $null is returned as $null.
+
+    .PARAMETER Text
+        The string to scrub.
+
+    .EXAMPLE
+        Protect-OmniSecretText 'app.exe --password hunter2'   # 'app.exe --password [REDACTED]'
+    #>
+    param($Text)
+    if ($null -eq $Text) { return $null }
+    $s = [string]$Text
+    if ($s.Length -lt 6 -or -not $script:OmniSecretHintRegex.IsMatch($s)) { return $s }
+    foreach ($p in $script:OmniSecretPatterns) { $s = $p.Regex.Replace($s, $p.Replacement) }
+    return $s
+}
+
+function Test-OmniSecretContainer {
+    <# .SYNOPSIS Internal: true for the graph nodes the scrubbers descend into. #>
+    param($Value)
+    return ($Value -is [System.Collections.IDictionary] -or $Value -is [System.Collections.IList] -or
+        $Value -is [System.Management.Automation.PSCustomObject])
+}
+
+function Protect-OmniSecretData {
+    <#
+    .SYNOPSIS
+        Scrubs secret-looking strings inside a session, result, or finding graph, IN PLACE.
+
+    .DESCRIPTION
+        Walks PSCustomObjects (note properties), dictionaries, and lists/arrays (depth-limited)
+        and rewrites every string value with Protect-OmniSecretText. A string stored under a
+        secret name (DefaultPassword, Password, Secret, Token, ApiKey, KeyMaterial,
+        RecoveryPassword, ...) is replaced as a whole with [REDACTED]. Other .NET objects
+        (CIM instances, process objects, ...) and read-only collections are left alone. The
+        shape and object identity of the graph are preserved; the graph itself is modified.
+        Use it on objects OmniDiag owns (results in Complete-OmniResult, sessions on import
+        and export). For a caller's object that must stay untouched, use
+        ConvertTo-OmniSecretSafeData, which returns a scrubbed copy.
+
+    .PARAMETER InputObject
+        The object graph to scrub.
+
+    .PARAMETER Depth
+        Internal recursion depth.
+
+    .EXAMPLE
+        Protect-OmniSecretData -InputObject $session
+    #>
+    param($InputObject, [int] $Depth = 0)
+    if ($null -eq $InputObject -or $Depth -gt $script:OmniSecretMaxDepth) { return }
+    $v = $InputObject
+
+    if ($v -is [System.Collections.IDictionary]) {
+        if ($v.IsReadOnly) { return }
+        foreach ($k in @($v.Keys)) {
+            $item = $v[$k]
+            if ($item -is [string]) {
+                if ($item.Length -gt 0 -and $k -is [string] -and $script:OmniSecretNameRegex.IsMatch($k)) { $v[$k] = '[REDACTED]'; continue }
+                if ($item.Length -lt 6 -or -not $script:OmniSecretHintRegex.IsMatch($item)) { continue }
+                $clean = Protect-OmniSecretText $item
+                if (-not [string]::Equals($clean, $item, [System.StringComparison]::Ordinal)) { $v[$k] = $clean }
+            } elseif (Test-OmniSecretContainer $item) {
+                Protect-OmniSecretData $item ($Depth + 1)
+            }
+        }
+        return
+    }
+    if ($v -is [System.Collections.IList]) {
+        if ($v.IsReadOnly) { return }
+        # byte[] / int[] and other value-type arrays hold no strings (and can be large).
+        if ($v -is [array] -and $v.GetType().GetElementType().IsValueType) { return }
+        for ($i = 0; $i -lt $v.Count; $i++) {
+            $item = $v[$i]
+            if ($item -is [string]) {
+                if ($item.Length -lt 6 -or -not $script:OmniSecretHintRegex.IsMatch($item)) { continue }
+                $clean = Protect-OmniSecretText $item
+                if (-not [string]::Equals($clean, $item, [System.StringComparison]::Ordinal)) { $v[$i] = $clean }
+            } elseif (Test-OmniSecretContainer $item) {
+                Protect-OmniSecretData $item ($Depth + 1)
+            }
+        }
+        return
+    }
+    if ($v -is [System.Management.Automation.PSCustomObject]) {
+        # A finding whose Id was generated from Component + Title (New-OmniFinding) embeds the
+        # title text, secrets included (a session saved before scrubbing existed). Remember
+        # that BEFORE scrubbing, and rebuild the Id from the scrubbed texts afterwards, so the
+        # Id stays auto-generated (the redactor relies on that) and carries no secret.
+        $idProp = $v.PSObject.Properties['Id']; $titleProp = $v.PSObject.Properties['Title']; $componentProp = $v.PSObject.Properties['Component']
+        $autoId = $false
+        if ($idProp -and $titleProp -and $componentProp -and $idProp.Value -is [string] -and $titleProp.Value -is [string] -and
+            ($null -eq $componentProp.Value -or $componentProp.Value -is [string]) -and $idProp.Value.Length -gt 0) {
+            $autoId = $idProp.Value -ceq (Get-OmniFindingAutoId -Component $componentProp.Value -Title $titleProp.Value)
+        }
+        foreach ($prop in @($v.PSObject.Properties)) {
+            if ([string]$prop.MemberType -ne 'NoteProperty') { continue }
+            $item = $prop.Value
+            if ($item -is [string]) {
+                if ($item.Length -gt 0 -and $script:OmniSecretNameRegex.IsMatch($prop.Name)) { $prop.Value = '[REDACTED]'; continue }
+                if ($item.Length -lt 6 -or -not $script:OmniSecretHintRegex.IsMatch($item)) { continue }
+                $clean = Protect-OmniSecretText $item
+                if (-not [string]::Equals($clean, $item, [System.StringComparison]::Ordinal)) { $prop.Value = $clean }
+            } elseif (Test-OmniSecretContainer $item) {
+                Protect-OmniSecretData $item ($Depth + 1)
+            }
+        }
+        if ($autoId) {
+            $rebuilt = Get-OmniFindingAutoId -Component $componentProp.Value -Title $titleProp.Value
+            if ($rebuilt -cne $idProp.Value) { $idProp.Value = $rebuilt }
+        }
+    }
+}
+
+function Get-OmniFindingAutoId {
+    <#
+    .SYNOPSIS
+        The Id New-OmniFinding generates when none is given: kebab-case of 'Component|Title'.
+
+    .DESCRIPTION
+        The single definition of the auto-generated finding Id, shared by New-OmniFinding,
+        the secret scrubber (which rebuilds auto Ids after scrubbing a title), and the
+        redactor (which recognizes auto Ids and rebuilds them from the redacted texts).
+
+    .PARAMETER Component
+        The finding's component.
+
+    .PARAMETER Title
+        The finding's title.
+
+    .EXAMPLE
+        Get-OmniFindingAutoId -Component 'Network/DNS' -Title 'DNS resolution failing'   # 'network-dns-dns-resolution-failing'
+    #>
+    param([AllowNull()][AllowEmptyString()][string] $Component, [AllowNull()][AllowEmptyString()][string] $Title)
+    return ((('{0}|{1}' -f $Component, $Title).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
+}
+
+function ConvertTo-OmniSecretSafeData {
+    <#
+    .SYNOPSIS
+        Returns a scrubbed COPY of a log or finding payload; the input is never modified.
+
+    .DESCRIPTION
+        Strings are scrubbed with Protect-OmniSecretText (or replaced whole under a secret
+        name, as in Protect-OmniSecretData). Dictionaries, lists, and PSCustomObjects are
+        copied. ErrorRecords and exceptions become their (scrubbed) message text, because
+        their object graphs can carry command lines and arguments. Value types are returned
+        as they are; other .NET objects are returned unchanged (not copied).
+
+    .PARAMETER InputObject
+        The payload to copy.
+
+    .PARAMETER Depth
+        Internal recursion depth.
+
+    .EXAMPLE
+        $safe = ConvertTo-OmniSecretSafeData -InputObject @{ password = 'x'; note = 'ok' }
+    #>
+    param($InputObject, [int] $Depth = 0)
+    $v = $InputObject
+    if ($null -eq $v) { return $null }
+    if ($v -is [string]) { return (Protect-OmniSecretText $v) }
+    if ($v -is [System.ValueType]) { return $v }
+    if ($v -is [System.Management.Automation.ErrorRecord]) { return (Protect-OmniSecretText ([string]$v)) }
+    if ($v -is [System.Exception]) { return (Protect-OmniSecretText ('{0}: {1}' -f $v.GetType().FullName, $v.Message)) }
+    if ($Depth -gt $script:OmniSecretMaxDepth) { return (Protect-OmniSecretText ([string]$v)) }
+
+    if ($v -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($k in @($v.Keys)) {
+            $item = $v[$k]
+            if ($item -is [string] -and $item.Length -gt 0 -and $k -is [string] -and $script:OmniSecretNameRegex.IsMatch($k)) { $copy[$k] = '[REDACTED]' }
+            else { $copy[$k] = ConvertTo-OmniSecretSafeData $item ($Depth + 1) }
+        }
+        return $copy
+    }
+    if ($v -is [System.Collections.IList]) {
+        if ($v -is [array] -and $v.GetType().GetElementType().IsValueType) { return , $v }
+        $list = [System.Collections.Generic.List[object]]::new()
+        foreach ($item in $v) { $list.Add((ConvertTo-OmniSecretSafeData $item ($Depth + 1))) }
+        return , $list.ToArray()
+    }
+    if ($v -is [System.Management.Automation.PSCustomObject]) {
+        $copy = [ordered]@{}
+        foreach ($prop in @($v.PSObject.Properties)) {
+            if ([string]$prop.MemberType -ne 'NoteProperty') { continue }
+            $item = $prop.Value
+            if ($item -is [string] -and $item.Length -gt 0 -and $script:OmniSecretNameRegex.IsMatch($prop.Name)) { $copy[$prop.Name] = '[REDACTED]' }
+            else { $copy[$prop.Name] = ConvertTo-OmniSecretSafeData $item ($Depth + 1) }
+        }
+        return [pscustomobject]$copy
+    }
+    return $v
+}
+
+# ---------------------------------------------------------------------------
 # Finding
 # ---------------------------------------------------------------------------
 
@@ -126,10 +381,10 @@ function New-OmniFinding {
         [string] $Id
     )
 
-    if ([string]::IsNullOrWhiteSpace($Id)) {
-        $seed = "{0}|{1}" -f $Component, $Title
-        $Id = ($seed.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
-    }
+    # Scrub first, so an Id derived from the component and title never carries a secret either.
+    $Title = Protect-OmniSecretText $Title
+    $Component = Protect-OmniSecretText $Component
+    if ([string]::IsNullOrWhiteSpace($Id)) { $Id = Get-OmniFindingAutoId -Component $Component -Title $Title }
 
     $finding = [pscustomobject]@{
         PSTypeName     = 'OmniDiag.Finding'
@@ -138,13 +393,15 @@ function New-OmniFinding {
         Severity       = $Severity
         SeverityRank   = Get-OmniSeverityRank -Severity $Severity
         Component      = $Component
-        Detail         = $Detail
-        LikelyCause    = $LikelyCause
+        Detail         = (Protect-OmniSecretText $Detail)
+        LikelyCause    = (Protect-OmniSecretText $LikelyCause)
         Confidence     = $Confidence
-        Recommendation = $Recommendation
+        Recommendation = (Protect-OmniSecretText $Recommendation)
         Data           = $Data
         Timestamp      = (Get-Date)
     }
+    # -Data is not modified here (it may still be the caller's object): the result,
+    # including each finding's Data, is scrubbed once, in place, by Complete-OmniResult.
     return $finding
 }
 
@@ -246,6 +503,8 @@ function Complete-OmniResult {
 
     $Result.EndTime = Get-Date
     $Result.DurationMs = [int]([math]::Round(($Result.EndTime - $Result.StartTime).TotalMilliseconds))
+    # Findings, metrics, and the error text never carry secret-looking values (in place).
+    Protect-OmniSecretData -InputObject $Result
 
     if ($PSBoundParameters.ContainsKey('Status')) {
         $Result.Status = $Status
@@ -441,5 +700,6 @@ Export-ModuleMember -Function @(
     'Get-OmniSeverityRank', 'Get-OmniSeverityNames',
     'New-OmniFinding', 'New-OmniResult', 'Add-OmniFinding',
     'Set-OmniResultMetric', 'Complete-OmniResult', 'Get-OmniTimeRange',
-    'Test-OmniNetworkProbeEnabled', 'Get-OmniProbeTarget', 'New-OmniProbeSkippedFinding'
+    'Test-OmniNetworkProbeEnabled', 'Get-OmniProbeTarget', 'New-OmniProbeSkippedFinding',
+    'Protect-OmniSecretText', 'Protect-OmniSecretData', 'ConvertTo-OmniSecretSafeData', 'Get-OmniFindingAutoId'
 )

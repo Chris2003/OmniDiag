@@ -10,7 +10,7 @@ code. The classic `OmniDiag.ps1` switches keep working and use the same exit cod
 |---|---|
 | `omnidiag <command> ...` | `OmniDiag.cmd` is the `omnidiag` command (Windows file names are case-insensitive). With the tool folder on `PATH` (or as the current directory) `omnidiag` runs it. It sets up the same portable, zero-footprint environment as before (data in `OmniDiagData`, TEMP redirected, PowerShell telemetry off), runs the router, and passes its exit code through as `%ERRORLEVEL%`. It never pauses when it gets arguments. |
 | `OmniDiag.cmd` with no arguments or a `-Switch` | Classic console (`OmniDiag.ps1`), unchanged. Double-clicking still pauses at the end. |
-| `pwsh -File src\Cli\omnidiag.ps1 <command> ...` | The script entry point the launcher calls. |
+| `pwsh -File src\Cli\omnidiag.ps1 <command> ...` | The script entry point the launcher calls. The launcher runs it with `pwsh.exe` from `%ProgramFiles%\PowerShell\7\` (or the `%ProgramW6432%` / `%ProgramFiles(x86)%` equivalents) when installed there, otherwise with `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`; it never searches `PATH` or the current folder, so a Store / MSIX pwsh, `7-preview`, or a custom install is not used (5.1 is). |
 | `Invoke-OmniDiagCli -Arguments @('scan', '--group', 'network')` | From PowerShell after `Import-Module .\src\OmniDiag.psd1`. Returns the exit code; `-Out` / `-Err` take `TextWriter`s if you want to capture output. |
 
 The launcher sends the first argument to the router when it is a subcommand (`list`, `scan`,
@@ -208,7 +208,7 @@ every command.
 | Option | Meaning |
 |---|---|
 | `-f`, `--format <fmt>` | `json` (report schema v1), `csv` (findings table), `md` (Markdown), `html`, `pdf`. Repeatable or a comma list. `list` / `repair list` take `json`, `csv`, `md`; `repair run` takes `json`; `compare` takes `text`, `json`, `md`. |
-| `-o`, `--output <path>` | Write to a file or a directory instead of stdout. A path that exists as a folder, ends with `\` or `/`, or has no extension is a directory. Without `--format`, a file's extension picks the format (`.json`, `.csv`, `.md`, `.html`, `.pdf`); a directory gets `json` + `html` for `scan` and `report`, and `json` for `list` and `version`. |
+| `-o`, `--output <path>` | Write to a file or a directory instead of stdout. A path that exists as a folder, ends with `\` or `/`, or has no extension is a directory. Without `--format`, a file's extension picks the format (`.json`, `.csv`, `.md`, `.html`, `.pdf`); a directory gets `json` + `html` for `scan` and `report`, and `json` for `list` and `version`. The path is canonicalized (`..` collapsed) before anything is written; a device path (`\\.\`, `\\?\`), a reserved name (`NUL`, `CON`, `COM1`, ...), or an NTFS stream (`file.json:x`) is a usage error (exit 10). See docs/SECURITY-REVIEW.md. |
 | `--verbose` | Record Debug-level entries in the local log file (`OmniDiagData\logs\omnidiag-cli-*.jsonl`). Nothing extra goes to the console. |
 | `-q`, `--quiet` | No progress or status lines on stderr. Errors and usage messages are still printed. |
 | `--no-color` | Accepted for scripts; router output is already plain text. |

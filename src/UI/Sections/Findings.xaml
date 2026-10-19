@@ -1,0 +1,49 @@
+<!--
+    All Findings section: filter + grid + detail. Loaded on first navigation (or Ctrl+F)
+    into PanelFindings (MainWindow.xaml).
+-->
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="170"/>
+    </Grid.RowDefinitions>
+    <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+        <Label Content="_Filter" Target="{Binding ElementName=TxtFindingFilter}"/>
+        <TextBox x:Name="TxtFindingFilter" Width="260" Padding="6,4" Margin="0,0,16,0" VerticalContentAlignment="Center"
+                 Background="{DynamicResource BrushPanel}" Foreground="{DynamicResource BrushText}" BorderBrush="{DynamicResource BrushLine}"
+                 AutomationProperties.Name="Filter findings"
+                 AutomationProperties.AcceleratorKey="Ctrl+F"
+                 AutomationProperties.HelpText="Matches title, component, module, group, detail, cause, and recommendation."
+                 ToolTip="Type to filter findings (Ctrl+F)"/>
+        <Label Content="Se_verity" Target="{Binding ElementName=CmbSeverityFilter}"/>
+        <ComboBox x:Name="CmbSeverityFilter" Width="150" Margin="0,0,16,0" VerticalContentAlignment="Center"
+                  AutomationProperties.Name="Severity filter">
+            <ComboBoxItem Content="All severities" IsSelected="True"/>
+            <ComboBoxItem Content="Critical"/>
+            <ComboBoxItem Content="Error"/>
+            <ComboBoxItem Content="Warning"/>
+            <ComboBoxItem Content="Information"/>
+            <ComboBoxItem Content="Pass"/>
+        </ComboBox>
+        <TextBlock x:Name="TxtFindingCount" Text="No scan yet." VerticalAlignment="Center" Foreground="{DynamicResource BrushMuted}"/>
+    </WrapPanel>
+    <DataGrid x:Name="GridFindings" Grid.Row="1" RowStyle="{DynamicResource FindingRowStyle}"
+              AutomationProperties.Name="All findings"
+              AutomationProperties.HelpText="Press Enter to read the selected finding's details.">
+        <DataGrid.Columns>
+            <DataGridTextColumn Header="Severity" Binding="{Binding Severity}" Width="Auto"/>
+            <DataGridTextColumn Header="Group" Binding="{Binding GroupName}" Width="Auto"/>
+            <DataGridTextColumn Header="Component" Binding="{Binding Component}" Width="*"/>
+            <DataGridTextColumn Header="Finding" Binding="{Binding Title}" Width="2*"/>
+            <DataGridTextColumn Header="Likely Cause" Binding="{Binding LikelyCause}" Width="2*"/>
+            <DataGridTextColumn Header="Recommendation" Binding="{Binding Recommendation}" Width="2*"/>
+        </DataGrid.Columns>
+    </DataGrid>
+    <TextBlock Grid.Row="2" Text="Finding details" FontWeight="SemiBold" Margin="0,8,0,4"/>
+    <TextBox x:Name="TxtFindingDetail" Grid.Row="3" Style="{DynamicResource DetailTextBox}"
+             Text="Select a finding to see its details."
+             AutomationProperties.Name="Finding details"/>
+</Grid>

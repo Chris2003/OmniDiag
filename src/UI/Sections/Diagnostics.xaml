@@ -1,0 +1,45 @@
+<!--
+    Diagnostics section: toggle scanners on/off, or run one individually. Loaded on first
+    navigation into PanelDiagnostics (MainWindow.xaml).
+-->
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+        <Button x:Name="BtnDiagEnableAll" Content="Enable _All" AutomationProperties.Name="Enable all scanners"/>
+        <Button x:Name="BtnDiagDisableAll" Content="_Disable All" AutomationProperties.Name="Disable all scanners"/>
+        <Button x:Name="BtnDiagRunSelected" Content="R_un Selected Scanner" AutomationProperties.Name="Run the selected scanner now"
+                ToolTip="Run only the scanner selected in the grid; results appear on the Dashboard"/>
+    </StackPanel>
+
+    <TextBlock Grid.Row="1" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{DynamicResource BrushMuted}"
+               Text="Toggle scanners on or off - only enabled scanners run when you click Run Scan. Use a row's Run button to run just that scanner now (results appear on the Dashboard). Space toggles the selected row's checkbox."/>
+
+    <DataGrid x:Name="DiagGrid" Grid.Row="2" IsReadOnly="False" AutoGenerateColumns="False"
+              CanUserAddRows="False" HeadersVisibility="Column" CanUserSortColumns="True"
+              RowStyle="{DynamicResource NamedRowStyle}"
+              AutomationProperties.Name="Scanners"
+              AutomationProperties.HelpText="Arrow keys move between rows; Space toggles a scanner on or off.">
+        <DataGrid.Columns>
+            <DataGridCheckBoxColumn Header="On" Width="Auto"
+                Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+            <DataGridTextColumn Header="Scanner" Binding="{Binding Name}" Width="2*" IsReadOnly="True"/>
+            <DataGridTextColumn Header="Group" Binding="{Binding GroupName}" Width="*" IsReadOnly="True"/>
+            <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="*" IsReadOnly="True"/>
+            <DataGridTextColumn Header="Last Status" Binding="{Binding Status}" Width="Auto" IsReadOnly="True"/>
+            <DataGridTemplateColumn Header="Run" Width="Auto">
+                <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                        <Button Content="Run" Tag="{Binding Name}" Padding="10,2" Margin="2" Focusable="False"
+                                AutomationProperties.Name="{Binding Name, StringFormat='Run {0} now'}"/>
+                    </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+        </DataGrid.Columns>
+    </DataGrid>
+</Grid>

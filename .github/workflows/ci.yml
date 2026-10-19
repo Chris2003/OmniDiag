@@ -70,6 +70,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: OS info
+        # Proves the edition each leg ran on (docs/VERIFICATION.md): ProductType 1 = client, 3 = server.
+        if: runner.os == 'Windows'
+        run: |
+          $os = Get-CimInstance -ClassName Win32_OperatingSystem
+          $kind = switch ([int]$os.ProductType) { 1 { 'client' } 2 { 'domain controller' } 3 { 'server' } default { 'unknown' } }
+          $line = 'OS: {0} | Version {1} (build {2}) | ProductType {3} ({4}) | {5} | {6} {7}' -f $os.Caption, $os.Version, $os.BuildNumber, $os.ProductType, $kind, $os.OSArchitecture, $PSVersionTable.PSEdition, $PSVersionTable.PSVersion
+          Write-Host $line
+          [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "$line`n`n", [System.Text.UTF8Encoding]::new($false))
       - name: Install Pester
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -92,18 +101,99 @@ jobs:
         run: |
           $params = @{ TestResultPath = 'test-results/testResults.xml' }
           if ('${{ matrix.coverage }}' -eq 'true') {
-            # Phase 1: coverage is reported, not enforced (no -EnforceCoverage).
+            # Phase 4 gate: src/Core, src/Repair, and overall at 80% or the job fails.
+            # src/Reporting is reported only. Table: job summary; data: coverage-summary.json.
             $params.Coverage = $true
             $params.CoverageOutputPath = 'test-results/coverage.xml'
             $params.CoverageTarget = 80
+            $params.CoverageTargets = @{ 'src/Core' = 80; 'src/Repair' = 80 }
+            $params.EnforceCoverage = $true
           }
           ./build/Invoke-Tests.ps1 @params
+          exit $LASTEXITCODE
+      - name: Elevated report has the elevation-only sections
+        # The runner is elevated: no module may be skipped for RequiresElevation and no
+        # '*-requires-elevation' notice may appear (the standard-user job checks the opposite).
+        if: matrix.coverage
+        run: |
+          & .\OmniDiag.cmd report --format json,html --output test-results\elevated-report
+          $reportExit = $LASTEXITCODE
+          ./build/Test-PrivilegeReport.ps1 -Expect Elevated -ReportDirectory test-results/elevated-report -ExitCode $reportExit -OutputDirectory test-results/privilege-check
           exit $LASTEXITCODE
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-${{ matrix.os }}-${{ matrix.shell }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  standard-user:
+    name: Standard user (windows-latest, pwsh)
+    # Phase 4: the least-privilege leg. build/Invoke-AsStandardUser.ps1 creates a throwaway
+    # local account (Users only, random in-memory password, never printed), runs the Pester
+    # suite, 'report', and 'scan --format json' as that account (Start-Process -Credential,
+    # falling back to a scheduled task), and fails loudly if a child turns out elevated.
+    # build/Test-PrivilegeReport.ps1 then validates exit codes, schema, HTML, and structured
+    # elevation skips, and compares with a report made elevated (as the runner) on the same VM.
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: OS info
+        run: |
+          $os = Get-CimInstance -ClassName Win32_OperatingSystem
+          $kind = switch ([int]$os.ProductType) { 1 { 'client' } 2 { 'domain controller' } 3 { 'server' } default { 'unknown' } }
+          $line = 'OS: {0} | Version {1} (build {2}) | ProductType {3} ({4}) | {5} | {6} {7}' -f $os.Caption, $os.Version, $os.BuildNumber, $os.ProductType, $kind, $os.OSArchitecture, $PSVersionTable.PSEdition, $PSVersionTable.PSVersion
+          Write-Host $line
+          [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, "$line`n`n", [System.Text.UTF8Encoding]::new($false))
+      - name: Install Pester
+        run: |
+          # PowerShell Gallery lookups occasionally fail on hosted runners; retry before failing.
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+              break
+            } catch {
+              if ($attempt -eq 3) { throw }
+              Write-Warning "Install-Module Pester failed (attempt $attempt): $($_.Exception.Message)"
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+      - name: Run tests, report, and scan as a standard user
+        run: |
+          # Tokens: {pwsh} this PowerShell, {cmd} cmd.exe, {repo} the account's copy of the
+          # repository, {out} an empty folder per step. Docs: docs/CLI.md ('report', 'scan').
+          $steps = @(
+            @{ Name = 'pester'; FilePath = '{pwsh}'; TimeoutMinutes = 45
+               Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{repo}\build\Invoke-Tests.ps1" -TestResultPath "{out}\testResults.xml"' }
+            @{ Name = 'report'; FilePath = '{cmd}'; TimeoutMinutes = 15
+               Arguments = '/d /s /c ""{repo}\OmniDiag.cmd" report --format json,html --output "{out}""' }
+            @{ Name = 'scan'; FilePath = '{cmd}'; TimeoutMinutes = 15
+               Arguments = '/d /s /c ""{repo}\OmniDiag.cmd" scan --format json"' }
+          )
+          ./build/Invoke-AsStandardUser.ps1 -Step $steps -ShareModule Pester -OutputDirectory test-results/standard-user
+          exit $LASTEXITCODE
+      - name: Validate the standard-user run and compare with an elevated report
+        run: |
+          # Same VM, same build, as the (elevated) runner account.
+          & .\OmniDiag.cmd report --format json,html --output test-results\elevated-report
+          $elevatedExit = $LASTEXITCODE
+          ./build/Test-PrivilegeReport.ps1 -Expect Standard -RunResultPath test-results/standard-user/results.json `
+            -CompareWithReportDirectory test-results/elevated-report -CompareExitCode $elevatedExit `
+            -OutputDirectory test-results/privilege-check
+          exit $LASTEXITCODE
+      - name: Upload standard-user results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: standard-user-results
           path: test-results/
           if-no-files-found: ignore
           retention-days: 14
@@ -159,6 +249,33 @@ jobs:
         with:
           name: performance-summary
           path: test-results/performance/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  gui-startup:
+    name: GUI startup (non-blocking)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # Measures GUI first paint and "shell ready" in fresh processes for PowerShell 7 and
+    # Windows PowerShell 5.1 (median of three), for several window-building strategies and
+    # the real launcher (build/Measure-GuiStartup.ps1). Report only: never fails the workflow.
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Measure GUI startup (pwsh and powershell.exe)
+        # Writes the table to $GITHUB_STEP_SUMMARY and gui-startup.json to the output folder.
+        run: ./build/Measure-GuiStartup.ps1 -Runs 3 -OutputDirectory test-results/gui-startup
+      - name: Upload GUI startup results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gui-startup
+          path: test-results/gui-startup/
           if-no-files-found: ignore
           retention-days: 30
 

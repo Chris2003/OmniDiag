@@ -209,6 +209,8 @@ function Complete-OmniEngineRun {
     <# .SYNOPSIS Internal: validates a module's return value and finalizes its timing if the module forgot. #>
     param($Result, $Registration)
     if ($null -eq $Result) { throw "Module '$($Registration.Name)' returned no result." }
+    # Complete-OmniResult scrubs secrets once; a module that already completed its result was
+    # scrubbed there, and sessions are scrubbed again on export / import (secrets, item 5).
     if (-not $Result.EndTime) { Complete-OmniResult -Result $Result | Out-Null }
     return $Result
 }

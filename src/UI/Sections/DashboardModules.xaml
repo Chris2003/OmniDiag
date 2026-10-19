@@ -1,0 +1,17 @@
+<!--
+    Dashboard: the Module Results grid. Loaded right after first paint (Background
+    priority) into PanelDashboardModules, so the shell renders without a DataGrid.
+-->
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <DataGrid x:Name="GridModules" MaxHeight="280" RowStyle="{DynamicResource NamedRowStyle}"
+              AutomationProperties.Name="Module results">
+        <DataGrid.Columns>
+            <DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="2*"/>
+            <DataGridTextColumn Header="Group" Binding="{Binding GroupName}" Width="*"/>
+            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*"/>
+            <DataGridTextColumn Header="Findings" Binding="{Binding Findings}" Width="Auto"/>
+            <DataGridTextColumn Header="Duration (ms)" Binding="{Binding DurationMs}" Width="Auto"/>
+        </DataGrid.Columns>
+    </DataGrid>
+</Grid>

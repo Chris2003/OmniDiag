@@ -135,4 +135,165 @@ function Clear-OmniTempData {
     }
 }
 
-Export-ModuleMember -Function @('Get-OmniToolRoot', 'Get-OmniDataRoot', 'Get-OmniDataPath', 'Clear-OmniTempData')
+# ---------------------------------------------------------------------------
+# Path safety (Phase 4 security review, docs/SECURITY-REVIEW.md)
+# ---------------------------------------------------------------------------
+
+# Win32 reserved device names. A file component whose base name (before the first dot,
+# trailing spaces ignored) is one of these opens the device, not a file: 'NUL.txt' is NUL.
+$script:OmniReservedNameRegex = [regex]::new('^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9]|CONIN\$|CONOUT\$|CLOCK\$)$',
+    [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+# Win32 device / raw namespace prefixes: \\.\  \\?\  \??\  (and their forward-slash spellings).
+$script:OmniDevicePathRegex = [regex]::new('^(?:[\\/]{2}[.?][\\/]|\\\?\?\\)',
+    [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+# Named pipes and mailslots reached through any UNC host (\\localhost\pipe\x, \\127.0.0.1\pipe\x,
+# \\server\mailslot\x): the share names 'pipe' and 'mailslot' are never file shares.
+$script:OmniPipeSharePathRegex = [regex]::new('^[\\/]{2}[^\\/]+[\\/]+(?:pipe|mailslot)(?:[\\/]|$)',
+    [System.Text.RegularExpressions.RegexOptions]::CultureInvariant -bor [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+
+function Test-OmniReservedFileName {
+    <# .SYNOPSIS Internal: true when a single path component names a Win32 device (CON, NUL, COM1, ...). #>
+    [OutputType([bool])]
+    param([AllowEmptyString()][string] $Name)
+    if ([string]::IsNullOrEmpty($Name)) { return $false }
+    $base = $Name.TrimEnd(' ', '.')
+    $dot = $base.IndexOf('.')
+    if ($dot -ge 0) { $base = $base.Substring(0, $dot) }
+    return $script:OmniReservedNameRegex.IsMatch($base.TrimEnd(' '))
+}
+
+function ConvertTo-OmniSafeFileName {
+    <#
+    .SYNOPSIS
+        Returns a single, safe file-name component built from untrusted text.
+
+    .DESCRIPTION
+        For names derived from host data (computer name, user name, redacted names, a
+        caller-supplied base name): path separators, ':' (drive letters and NTFS
+        alternate data streams), wildcard and other invalid characters, and control
+        characters become '_'; trailing dots and spaces (which Windows strips) are
+        removed; '.', '..', and empty results fall back to -Default; Win32 device names
+        (CON, NUL, COM1, LPT1, ...) are prefixed with '_'. The result can never contain a
+        separator, so joining it to a directory cannot leave that directory.
+
+    .PARAMETER Name
+        The untrusted text.
+
+    .PARAMETER Default
+        Used when nothing usable remains. Default 'file'.
+
+    .EXAMPLE
+        ConvertTo-OmniSafeFileName -Name '..\..\evil:stream'   # '.._.._evil_stream'
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [AllowNull()][AllowEmptyString()][string] $Name,
+        [string] $Default = 'file'
+    )
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $Default }
+    $s = [regex]::Replace($Name, '[\x00-\x1F\x7F<>:"/\\|?*\[\]]', '_')
+    # Trailing dots/spaces are dropped by Windows; this also turns '.' and '..' into ''.
+    $s = $s.Trim().TrimEnd('.', ' ')
+    if ($s.Length -gt 120) { $s = $s.Substring(0, 120).TrimEnd('.', ' ') }
+    if ([string]::IsNullOrWhiteSpace($s)) { return $Default }
+    if (Test-OmniReservedFileName -Name $s) { $s = '_' + $s }
+    return $s
+}
+
+function Resolve-OmniOutputPath {
+    <#
+    .SYNOPSIS
+        Canonicalizes an output path and refuses device, stream, and non-file-system targets.
+
+    .DESCRIPTION
+        Resolves the path against PowerShell's current location (not the process
+        directory), then [System.IO.Path]::GetFullPath, so '..' segments are collapsed
+        before anything is written. The path is refused (an exception is thrown) when it:
+          * uses the Win32 device or raw namespace (\\.\, \\?\, \??\), or a named pipe or
+            mailslot through any UNC host (\\localhost\pipe\x, \\127.0.0.1\mailslot\x),
+          * is too long to canonicalize (PathTooLongException),
+          * names a reserved device in any component (CON, PRN, AUX, NUL, COM0-9,
+            LPT0-9, CONIN$, CONOUT$, CLOCK$ - with or without an extension),
+          * contains ':' after the drive root (an NTFS alternate data stream, file.txt:s),
+          * contains a NUL character, or resolves to a provider other than FileSystem.
+        With -Root, the canonical path must also be Root itself or inside it.
+
+    .PARAMETER Path
+        The requested path (absolute or relative).
+
+    .PARAMETER Root
+        Optional containing directory the result must not leave.
+
+    .PARAMETER Purpose
+        Wording for the error message (e.g. 'output', 'report directory').
+
+    .OUTPUTS
+        The canonical, absolute path (string).
+
+    .EXAMPLE
+        Resolve-OmniOutputPath -Path '.\reports\..\out'
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string] $Path,
+        [string] $Root,
+        [string] $Purpose = 'output'
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw "The $Purpose path is empty." }
+    if ($Path.IndexOf([char]0) -ge 0) { throw "The $Purpose path contains a NUL character." }
+    if ($script:OmniDevicePathRegex.IsMatch($Path)) {
+        throw "The $Purpose path '$Path' is a device path (\\.\, \\?\); write to a normal folder instead."
+    }
+    if ($script:OmniPipeSharePathRegex.IsMatch($Path)) {
+        throw "The $Purpose path '$Path' is a named pipe or mailslot (device path); write to a normal folder instead."
+    }
+
+    $resolved = $null
+    try {
+        $provider = $null; $drive = $null
+        $resolved = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path, [ref]$provider, [ref]$drive)
+        if ($null -ne $provider -and $provider.Name -ne 'FileSystem') {
+            throw "provider '$($provider.Name)' is not the file system"
+        }
+    } catch {
+        throw "The $Purpose path '$Path' is not a valid file-system path: $($_.Exception.Message)"
+    }
+
+    # Stream syntax: ':' anywhere after the root (C:\ or \\server\share\ or /).
+    # (Not named $root: PowerShell variables are case-insensitive and -Root is a parameter.)
+    $pathRoot = ''
+    try { $pathRoot = [System.IO.Path]::GetPathRoot($resolved) } catch { $pathRoot = '' }
+    if ($null -eq $pathRoot) { $pathRoot = '' }
+    $rest = $resolved.Substring([math]::Min($pathRoot.Length, $resolved.Length))
+    if ($rest.IndexOf(':') -ge 0) {
+        throw "The $Purpose path '$Path' contains ':' (an NTFS alternate data stream or a misplaced drive letter)."
+    }
+
+    # Before GetFullPath: .NET Framework maps C:\x\NUL.txt to \\.\NUL.
+    foreach ($segment in ($rest -split '[\\/]')) {
+        if (Test-OmniReservedFileName -Name $segment) {
+            throw "The $Purpose path '$Path' names the reserved device '$segment'; choose another file name."
+        }
+    }
+
+    $full = $resolved
+    try { $full = [System.IO.Path]::GetFullPath($resolved) }
+    catch [System.IO.PathTooLongException] { throw "The $Purpose path '$Path' is too long to canonicalize; choose a shorter path." }
+    catch { throw "The $Purpose path '$Path' is not a valid file-system path: $($_.Exception.Message)" }
+
+    if ($script:OmniDevicePathRegex.IsMatch($full) -or $script:OmniPipeSharePathRegex.IsMatch($full)) {
+        throw "The $Purpose path '$Path' resolves to a device path ($full)."
+    }
+    if ($Root) {
+        $rootFull = [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Root))
+        if (-not (Test-OmniPathWithin -Path $full -Root $rootFull)) {
+            throw "The $Purpose path '$Path' resolves outside '$rootFull'."
+        }
+    }
+    return $full
+}
+
+Export-ModuleMember -Function @('Get-OmniToolRoot', 'Get-OmniDataRoot', 'Get-OmniDataPath', 'Clear-OmniTempData',
+    'Resolve-OmniOutputPath', 'ConvertTo-OmniSafeFileName')

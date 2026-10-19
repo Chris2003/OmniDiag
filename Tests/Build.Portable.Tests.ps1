@@ -43,6 +43,15 @@ Describe 'Portable package contents' {
         }
     }
 
+    It 'bundles the GUI shell and every lazily loaded section fragment' {
+        Join-Path $script:StageDir 'src/UI/MainWindow.xaml' | Should -Exist
+        $fragments = @(Get-ChildItem -LiteralPath (Join-Path $script:Root 'src/UI/Sections') -Filter '*.xaml' -File)
+        $fragments.Count | Should -BeGreaterThan 0
+        foreach ($f in $fragments) {
+            Join-Path $script:StageDir "src/UI/Sections/$($f.Name)" | Should -Exist -Because 'the GUI loads each section fragment on first navigation'
+        }
+    }
+
     It 'bundles the diagnostic and repair plugin folders' {
         Join-Path $script:StageDir 'src/Modules' | Should -Exist
         Join-Path $script:StageDir 'src/Repairs' | Should -Exist

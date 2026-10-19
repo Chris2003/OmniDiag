@@ -21,6 +21,20 @@ function Get-OmniHtmlEncode {
     return [System.Net.WebUtility]::HtmlEncode([string]$Value)
 }
 
+function Format-OmniHtmlTime {
+    <#
+    .SYNOPSIS
+        Internal: a date formatted for the report, or the value as text when it is not a
+        date (an imported or hand-edited session can carry any string there). The caller
+        HTML-encodes the result.
+    #>
+    param([AllowNull()] $Value, [string] $Format)
+    if ($null -eq $Value) { return '' }
+    if ($Value -is [datetime]) { return ([datetime]$Value).ToString($Format, [System.Globalization.CultureInfo]::InvariantCulture) }
+    if ($Value -is [System.DateTimeOffset]) { return ([System.DateTimeOffset]$Value).LocalDateTime.ToString($Format, [System.Globalization.CultureInfo]::InvariantCulture) }
+    return [string]$Value
+}
+
 function Get-OmniBrandLogoTag {
     <# .SYNOPSIS Internal: build an inline (base64) <img> for a branding logo, or '' . #>
     param([string] $LogoPath)
@@ -187,7 +201,10 @@ footer{margin-top:28px;border-top:1px solid var(--line);padding-top:14px;color:v
     [void]$sb.Append("<h2>Executive Summary</h2><div class='grid'>")
     [void]$sb.Append("<div class='card'><div class='k'>Computer</div><div class='v'>$(Get-OmniHtmlEncode $Session.Host.ComputerName)</div></div>")
     [void]$sb.Append("<div class='card'><div class='k'>User</div><div class='v'>$(Get-OmniHtmlEncode $Session.Host.UserName)</div></div>")
-    [void]$sb.Append("<div class='card'><div class='k'>Scan Duration</div><div class='v'>$([math]::Round($Session.DurationMs/1000,1)) s</div></div>")
+    # A saved session can carry any text here: only a number is shown.
+    $durationMs = 0.0
+    [void][double]::TryParse([string]$Session.DurationMs, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$durationMs)
+    [void]$sb.Append("<div class='card'><div class='k'>Scan Duration</div><div class='v'>$(Get-OmniHtmlEncode ([math]::Round($durationMs / 1000, 1))) s</div></div>")
     [void]$sb.Append("<div class='card'><div class='k'>Time Range</div><div class='v'>$(Get-OmniHtmlEncode $Session.TimeRange.Label)</div></div>")
     if ($s) {
         [void]$sb.Append("<div class='card'><div class='k'>Critical / Error</div><div class='v txt-crit'>$(Get-OmniHtmlEncode $s.Counts.Critical) / $(Get-OmniHtmlEncode $s.Counts.Error)</div></div>")
@@ -251,7 +268,7 @@ footer{margin-top:28px;border-top:1px solid var(--line);padding-top:14px;color:v
         if ($m.Contains('Timeline') -and @($m['Timeline']).Count -gt 0) {
             [void]$sb.Append("<h2 style='font-size:15px'>Timeline of Major Events</h2><div class='tl'>")
             foreach ($t in (@($m['Timeline']) | Select-Object -First 15)) {
-                [void]$sb.Append("<div class='ev'><span class='t'>$(Get-OmniHtmlEncode ($t.Time.ToString('yyyy-MM-dd HH:mm')))</span> &mdash; $(Get-OmniHtmlEncode $t.Title) <span class='muted'>($(Get-OmniHtmlEncode $t.Category))</span></div>")
+                [void]$sb.Append("<div class='ev'><span class='t'>$(Get-OmniHtmlEncode (Format-OmniHtmlTime $t.Time 'yyyy-MM-dd HH:mm'))</span> &mdash; $(Get-OmniHtmlEncode $t.Title) <span class='muted'>($(Get-OmniHtmlEncode $t.Category))</span></div>")
             }
             [void]$sb.Append('</div>')
         }
@@ -260,7 +277,7 @@ footer{margin-top:28px;border-top:1px solid var(--line);padding-top:14px;color:v
             [void]$sb.Append("<h2 style='font-size:15px'>Top Event Groups</h2><table><thead><tr><th>Severity</th><th>Source</th><th>ID</th><th>Title</th><th>Count</th><th>First</th><th>Last</th></tr></thead><tbody>")
             foreach ($g in @($m['TopGroups'])) {
                 $cls = Get-OmniSeverityClass $g.Severity
-                [void]$sb.Append("<tr><td><span class='badge $cls'>$(Get-OmniHtmlEncode $g.Severity)</span></td><td>$(Get-OmniHtmlEncode $g.ProviderName)</td><td>$(Get-OmniHtmlEncode $g.Id)</td><td>$(Get-OmniHtmlEncode $g.Title)</td><td>$(Get-OmniHtmlEncode $g.Count)</td><td class='muted'>$(Get-OmniHtmlEncode ($g.FirstSeen.ToString('MM-dd HH:mm')))</td><td class='muted'>$(Get-OmniHtmlEncode ($g.LastSeen.ToString('MM-dd HH:mm')))</td></tr>")
+                [void]$sb.Append("<tr><td><span class='badge $cls'>$(Get-OmniHtmlEncode $g.Severity)</span></td><td>$(Get-OmniHtmlEncode $g.ProviderName)</td><td>$(Get-OmniHtmlEncode $g.Id)</td><td>$(Get-OmniHtmlEncode $g.Title)</td><td>$(Get-OmniHtmlEncode $g.Count)</td><td class='muted'>$(Get-OmniHtmlEncode (Format-OmniHtmlTime $g.FirstSeen 'MM-dd HH:mm'))</td><td class='muted'>$(Get-OmniHtmlEncode (Format-OmniHtmlTime $g.LastSeen 'MM-dd HH:mm'))</td></tr>")
             }
             [void]$sb.Append('</tbody></table>')
         }
