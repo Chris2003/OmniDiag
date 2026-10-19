@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OmniDiag per-user MSI (docs/INSTALLER.md).
+
+  Authored for WiX Toolset v5 (pinned 5.0.2; build-time only, never shipped; MS-RL).
+  Do not build it by hand: build/Build-Msi.ps1 stages the portable payload, generates
+  the file list (OmniDiag.Payload.wxs, ComponentGroup "OmniDiagPayload") and passes:
+    -d Version=x.y.z        ProductVersion; must equal src/OmniDiag.psd1 ModuleVersion
+    -d ProductCode={GUID}   stable per version and architecture (UUID v5)
+    -arch x64 | arm64
+
+  Rules this file keeps (asserted by Tests/Build.Installer.Tests.ps1):
+    * Per user only: Scope="perUser" (no ALLUSERS property, "elevation not required" bit
+      set, no UAC prompt). A launch condition refuses ALLUSERS from the command line.
+    * Everything goes to %LOCALAPPDATA%\Programs\OmniDiag, the per-user Start menu, the
+      per-user PATH, and HKCU. Nothing under Program Files, nothing in HKLM.
+    * Every component in the profile has an HKCU registry key path (ICE38/ICE43) and a
+      RemoveFolder for its directory (ICE64).
+    * No custom actions, no UI extension, no network, no services, no scheduled tasks.
+    * The UpgradeCode below never changes: it ties every release together for
+      MajorUpgrade (and winget upgrade correlation).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="OmniDiag"
+           Manufacturer="OmniDiag Contributors"
+           Version="$(var.Version)"
+           ProductCode="$(var.ProductCode)"
+           UpgradeCode="{7A225708-9A90-4726-8BE4-3480CB561715}"
+           Language="1033"
+           InstallerVersion="500"
+           Scope="perUser"
+           Compressed="yes">
+
+    <SummaryInformation Description="OmniDiag $(var.Version) - local-only Windows diagnostics (per-user install)"
+                        Manufacturer="OmniDiag Contributors"
+                        Keywords="OmniDiag; diagnostics; per-user" />
+
+    <!-- Removes the previous version first (default schedule), so per-directory component
+         contents may change between releases. Same-version reinstall of the other
+         architecture's MSI replaces the installed one instead of installing twice. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of OmniDiag is already installed." />
+
+    <Launch Condition="Installed OR NOT ALLUSERS"
+            Message="OmniDiag installs per user only. Do not set ALLUSERS; run the installer without it." />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Add/Remove Programs (HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall) -->
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Chris2003/OmniDiag" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/Chris2003/OmniDiag/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/Chris2003/OmniDiag/releases" />
+    <Property Id="ARPCOMMENTS" Value="Local-only Windows diagnostics. User data in %LOCALAPPDATA%\OmniDiag\Data is kept on uninstall." />
+    <Property Id="ARPCONTACT" Value="https://github.com/Chris2003/OmniDiag" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="LocalProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="OmniDiag" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="OmniDiagMenuFolder" Name="OmniDiag" />
+    </StandardDirectory>
+
+    <Feature Id="OmniDiag" Title="OmniDiag" Level="1">
+      <ComponentGroupRef Id="OmniDiagPayload" />
+      <ComponentRef Id="LocalProgramsFolderCleanup" />
+      <ComponentRef Id="StartMenuShortcuts" />
+      <ComponentRef Id="UserPath" />
+    </Feature>
+
+    <!-- %LOCALAPPDATA%\Programs is shared with other per-user apps: RemoveFolder only
+         deletes it when it is empty. -->
+    <Component Id="LocalProgramsFolderCleanup" Directory="LocalProgramsFolder" Guid="{7EC1D3AC-4C96-4B5D-9D21-E2E0A5CCE044}">
+      <RegistryValue Root="HKCU" Key="Software\OmniDiag\Installer" Name="LocalProgramsFolder" Type="integer" Value="1" KeyPath="yes" />
+      <RemoveFolder Id="RemoveLocalProgramsFolder" On="uninstall" />
+    </Component>
+
+    <!-- Start menu (per-user Programs folder). Non-advertised shortcuts to the launchers. -->
+    <Component Id="StartMenuShortcuts" Directory="OmniDiagMenuFolder" Guid="{B759D69A-3E31-4E68-8C6C-A3DE9F69CE8C}">
+      <Shortcut Id="OmniDiagGuiShortcut"
+                Name="OmniDiag"
+                Description="OmniDiag - graphical interface"
+                Target="[INSTALLFOLDER]OmniDiag-GUI.cmd"
+                WorkingDirectory="INSTALLFOLDER"
+                Show="minimized" />
+      <Shortcut Id="OmniDiagConsoleShortcut"
+                Name="OmniDiag (console)"
+                Description="OmniDiag - console scan"
+                Target="[INSTALLFOLDER]OmniDiag.cmd"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveOmniDiagMenuFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\OmniDiag\Installer" Name="StartMenuShortcuts" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- 'omnidiag' on the user PATH: only the bin folder (bin\omnidiag.cmd), so
+         OmniDiag.ps1, OmniDiag-GUI.cmd and the rest are not on PATH and PowerShell
+         cannot pick OmniDiag.ps1 over the launcher. Part="last" appends; uninstall
+         removes exactly this entry (Permanent="no"). -->
+    <Component Id="UserPath" Directory="INSTALLFOLDER" Guid="{A953F23D-9E54-4B90-8088-EF4BA56F8E8D}">
+      <Environment Id="OmniDiagUserPath"
+                   Name="PATH"
+                   Value="[INSTALLFOLDER]bin"
+                   Part="last"
+                   Action="set"
+                   System="no"
+                   Permanent="no" />
+      <RegistryValue Root="HKCU" Key="Software\OmniDiag\Installer" Name="UserPath" Type="string" Value="[INSTALLFOLDER]bin" KeyPath="yes" />
+      <RemoveRegistryKey Id="RemoveInstallerKey" Root="HKCU" Key="Software\OmniDiag\Installer" Action="removeOnUninstall" />
+    </Component>
+  </Package>
+</Wix>

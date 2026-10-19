@@ -69,8 +69,11 @@ change.
 * **Portable zip.** Download `OmniDiag-<version>-portable.zip` from
   [Releases](https://github.com/Chris2003/OmniDiag/releases/latest), check it against the
   published SHA-256, and extract it anywhere. See [PORTABLE.md](PORTABLE.md).
-* **MSI.** Download the `.msi` from [Releases](https://github.com/Chris2003/OmniDiag/releases/latest)
-  for a managed install. See [docs/INSTALLER.md](docs/INSTALLER.md).
+* **MSI.** Per-user Windows Installer packages (`OmniDiag-<version>-x64.msi` /
+  `-arm64.msi`) are attached to each [release](https://github.com/Chris2003/OmniDiag/releases/latest):
+  no admin rights, Start menu entries, and `omnidiag` on your PATH (open a new terminal, then
+  run `omnidiag version`). Silent: `msiexec /i OmniDiag-<version>-x64.msi /qn`. Data goes to
+  `%LOCALAPPDATA%\OmniDiag\Data` and is kept on uninstall. See [docs/INSTALLER.md](docs/INSTALLER.md).
 * **winget.** `winget install Chris2003.OmniDiag` (available once the package has been
   accepted into the winget community repository).
 * **Install script.** Installs for the current user and opens the GUI:

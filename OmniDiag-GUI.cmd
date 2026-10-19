@@ -21,6 +21,10 @@ rem copy on a USB stick leaves no OmniDiag files on the host. PowerShell's own
 rem module-analysis cache, update check, and telemetry are redirected/disabled,
 rem and TEMP points at the tool folder (the real one is kept for the temp-clean repair).
 set "OMNIDIAG_DATA=%HERE%OmniDiagData"
+rem Installed by the per-user MSI (marker file next to this launcher; never in the
+rem portable zip): data lives in %LOCALAPPDATA%\OmniDiag\Data instead, so upgrades
+rem and uninstall never touch it (docs\INSTALLER.md). Must match src\Core\Paths.psm1.
+if exist "%HERE%.omnidiag-installed" if defined LOCALAPPDATA set "OMNIDIAG_DATA=%LOCALAPPDATA%\OmniDiag\Data"
 if not exist "%OMNIDIAG_DATA%\temp" mkdir "%OMNIDIAG_DATA%\temp" >nul 2>nul
 if exist "%OMNIDIAG_DATA%\temp" if not exist "%OMNIDIAG_DATA%\temp\.omnidiag-scratch" (echo OmniDiag scratch folder; safe to delete.)>"%OMNIDIAG_DATA%\temp\.omnidiag-scratch" 2>nul
 if exist "%OMNIDIAG_DATA%\temp" (

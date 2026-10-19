@@ -12,8 +12,12 @@
 
     Resolution order for the data root:
       1. $env:OMNIDIAG_DATA (explicit override)
-      2. <tool folder>\OmniDiagData, when the tool folder is writable
-      3. %TEMP%\OmniDiag as a last resort (read-only media), flagged IsPortable=$false
+      2. Installed mode: when the tool folder carries the '.omnidiag-installed' marker
+         (written only by the MSI, docs/INSTALLER.md), %LOCALAPPDATA%\OmniDiag\Data,
+         flagged Source='Installed', IsPortable=$false. The portable zip never has the
+         marker, so portable mode is unchanged.
+      3. <tool folder>\OmniDiagData, when the tool folder is writable
+      4. %TEMP%\OmniDiag as a last resort (read-only media), flagged IsPortable=$false
 #>
 
 Set-StrictMode -Version Latest
@@ -23,6 +27,8 @@ $script:OmniToolRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $script:OmniDataRootCache = $null
 # Marker written into the scratch folder; Clear-OmniTempData deletes only folders that carry it.
 $script:OmniScratchMarker = '.omnidiag-scratch'
+# Marker the MSI installs next to the launchers (never present in the portable package).
+$script:OmniInstalledMarker = '.omnidiag-installed'
 
 function Test-OmniPathWithin {
     <# .SYNOPSIS Internal: true when Path is Root or inside it (normalized, separator-aware). #>
@@ -45,6 +51,15 @@ function Test-OmniDirectoryWritable {
     } catch { return $false }
 }
 
+function Get-OmniInstalledDataPath {
+    <# .SYNOPSIS Internal: %LOCALAPPDATA%\OmniDiag\Data when the tool was installed by the MSI, else $null. #>
+    [OutputType([string])]
+    param()
+    if (-not (Test-Path -LiteralPath (Join-Path $script:OmniToolRoot $script:OmniInstalledMarker) -PathType Leaf)) { return $null }
+    if (-not $env:LOCALAPPDATA) { return $null }
+    return [System.IO.Path]::GetFullPath((Join-Path (Join-Path $env:LOCALAPPDATA 'OmniDiag') 'Data'))
+}
+
 function Get-OmniToolRoot {
     <# .SYNOPSIS Returns the folder OmniDiag is running from. #>
     [OutputType([string])]
@@ -58,7 +73,8 @@ function Get-OmniDataRoot {
         Returns where OmniDiag keeps everything it writes.
 
     .OUTPUTS
-        OmniDiag.DataRoot with Path, IsPortable (data lives with the tool), and Source.
+        OmniDiag.DataRoot with Path, IsPortable (data lives with the tool), and Source
+        (Environment, Installed, ToolFolder, or TempFallback).
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -67,13 +83,20 @@ function Get-OmniDataRoot {
     if ($script:OmniDataRootCache -and -not $Refresh) { return $script:OmniDataRootCache }
 
     $candidate = $null; $source = $null; $portable = $true
+    $installedData = Get-OmniInstalledDataPath
     if ($env:OMNIDIAG_DATA -and (Test-OmniDirectoryWritable -Path $env:OMNIDIAG_DATA)) {
         $candidate = [System.IO.Path]::GetFullPath($env:OMNIDIAG_DATA); $source = 'Environment'
         $portable = Test-OmniPathWithin -Path $candidate -Root $script:OmniToolRoot
+        # The launchers of an MSI install point OMNIDIAG_DATA at the installed default.
+        if ($installedData -and [string]::Equals($candidate.TrimEnd('\', '/'), $installedData.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            $source = 'Installed'; $portable = $false
+        }
     } else {
         if ($env:OMNIDIAG_DATA) { Write-Warning "OMNIDIAG_DATA '$($env:OMNIDIAG_DATA)' is not writable; using the default location." }
         $toolData = Join-Path $script:OmniToolRoot 'OmniDiagData'
-        if (Test-OmniDirectoryWritable -Path $toolData) {
+        if ($installedData -and (Test-OmniDirectoryWritable -Path $installedData)) {
+            $candidate = $installedData; $source = 'Installed'; $portable = $false
+        } elseif (Test-OmniDirectoryWritable -Path $toolData) {
             $candidate = $toolData; $source = 'ToolFolder'
         } else {
             $candidate = Join-Path ([System.IO.Path]::GetTempPath()) 'OmniDiag'; $source = 'TempFallback'; $portable = $false

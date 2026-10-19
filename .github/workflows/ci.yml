@@ -455,3 +455,151 @@ jobs:
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
+
+  installer:
+    name: Installer (per-user MSI + winget manifest)
+    # Phase 5, decision 7 (docs/INSTALLER.md). Builds the x64 and arm64 MSIs with WiX
+    # Toolset 5.0.2 (build-time only, MS-RL; v6+ is not used: it adds the Open Source
+    # Maintenance Fee). build/Test-MsiInstall.ps1 installs the x64 MSI with msiexec /qn,
+    # checks files, HKCU-only ARP, shortcuts, the user PATH, and 'omnidiag version' in a
+    # NEW shell, uninstalls, and checks everything is gone - once as the runner and once as
+    # a throwaway standard user (build/Invoke-AsStandardUser.ps1), which proves no admin is
+    # needed. The winget manifest is validated against the official v1.6.0 JSON schemas.
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install WiX Toolset 5.0.2 (build-time tool, not shipped)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tools = Join-Path $env:USERPROFILE '.dotnet\tools'
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $tools -Encoding utf8
+          & (Join-Path $tools 'wix.exe') --version
+      - name: Build the MSIs (x64, arm64)
+        run: |
+          $v = [version](Import-PowerShellDataFile -Path src/OmniDiag.psd1).ModuleVersion
+          $version = '{0}.{1}.{2}' -f $v.Major, $v.Minor, [math]::Max($v.Build, 0)
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "OMNIDIAG_MSI_VERSION=$version" -Encoding utf8
+          $msis = @(./build/Build-Msi.ps1 -Version $version -OutputDirectory dist)
+          if ($LASTEXITCODE -ne 0 -or $msis.Count -ne 2) { Write-Host "::error::Build-Msi failed (exit $LASTEXITCODE, $($msis.Count) MSIs)"; exit 1 }
+          $md = "### MSI`n`n| File | ProductCode | Size (KB) | SHA256 |`n|---|---|---:|---|`n"
+          foreach ($m in $msis) { $md += "| $($m.FileName) | ``$($m.ProductCode)`` | $($m.SizeKB) | ``$($m.Sha256)`` |`n" }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $md -Encoding utf8
+      - name: ICE validation (report only)
+        continue-on-error: true
+        run: |
+          $failed = 0
+          foreach ($msi in Get-ChildItem dist -Filter *.msi) {
+            Write-Host "wix msi validate $($msi.Name)"
+            wix msi validate $msi.FullName
+            if ($LASTEXITCODE -ne 0) { $failed++ }
+          }
+          exit $failed
+      - name: Install, verify, and uninstall as the runner
+        run: |
+          ./build/Test-MsiInstall.ps1 -MsiPath "dist/OmniDiag-$env:OMNIDIAG_MSI_VERSION-x64.msi" -OutputDirectory test-results/msi-runner
+          exit $LASTEXITCODE
+      - name: Install, verify, and uninstall as a standard user (no admin)
+        run: |
+          # Only what the step needs: the test script, its helper module, and the MSI.
+          $src = Join-Path $env:RUNNER_TEMP 'msi-su-src'
+          New-Item -ItemType Directory -Path (Join-Path $src 'build') -Force | Out-Null
+          Copy-Item build/Test-MsiInstall.ps1, build/OmniDiag.Installer.psm1 -Destination (Join-Path $src 'build')
+          Copy-Item "dist/OmniDiag-$env:OMNIDIAG_MSI_VERSION-x64.msi" -Destination (Join-Path $src 'OmniDiag-x64.msi')
+          $steps = @(
+            @{ Name = 'msi'; FilePath = '{pwsh}'; TimeoutMinutes = 20
+               Arguments = '-NoProfile -ExecutionPolicy Bypass -File "{repo}\build\Test-MsiInstall.ps1" -MsiPath "{repo}\OmniDiag-x64.msi" -OutputDirectory "{out}"' }
+          )
+          ./build/Invoke-AsStandardUser.ps1 -Step $steps -SourcePath $src -OutputDirectory test-results/msi-standard-user
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $run = Get-Content -LiteralPath test-results/msi-standard-user/results.json -Raw | ConvertFrom-Json
+          $step = @($run.steps | Where-Object { $_.name -eq 'msi' })[0]
+          Get-Content -LiteralPath test-results/msi-standard-user/msi/stdout.txt -ErrorAction SilentlyContinue
+          if (-not $step -or $step.exitCode -ne 0) {
+            Get-Content -LiteralPath test-results/msi-standard-user/msi/stderr.txt -ErrorAction SilentlyContinue
+            Write-Host "::error::The standard-user MSI test failed (exit $(if ($step) { $step.exitCode } else { 'none' }))."
+            exit 1
+          }
+      - name: Generate the winget manifest
+        run: |
+          $msis = @(Get-ChildItem dist -Filter "OmniDiag-$env:OMNIDIAG_MSI_VERSION-*.msi" | ForEach-Object FullName)
+          ./build/New-WingetManifest.ps1 -Version $env:OMNIDIAG_MSI_VERSION -InstallerPath $msis -OutputDirectory dist/winget
+          exit $LASTEXITCODE
+      - name: Download the official winget v1.6.0 manifest schemas
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'winget-schemas'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          foreach ($type in 'version', 'installer', 'defaultLocale') {
+            $name = "manifest.$type.1.6.0.json"
+            $url = "https://raw.githubusercontent.com/microsoft/winget-cli/master/schemas/JSON/manifests/v1.6.0/$name"
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try { Invoke-WebRequest -Uri $url -OutFile (Join-Path $dir $name) -UseBasicParsing; break }
+              catch { if ($attempt -eq 3) { throw }; Start-Sleep -Seconds (5 * $attempt) }
+            }
+          }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "WINGET_SCHEMA_DIR=$dir" -Encoding utf8
+      - name: Validate the winget manifest (schemas, consistency, determinism)
+        run: |
+          ./build/Test-WingetManifest.ps1 -ManifestDirectory dist/winget -SchemaDirectory $env:WINGET_SCHEMA_DIR -InstallerDirectory dist
+          exit $LASTEXITCODE
+      - name: winget validate (when winget is available; report only)
+        continue-on-error: true
+        run: |
+          if (Get-Command winget -ErrorAction SilentlyContinue) {
+            winget validate --manifest dist/winget
+            exit $LASTEXITCODE
+          }
+          Write-Host 'winget is not installed on this runner image; schema validation above is the gate.'
+      - name: Upload installer artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omnidiag-installer
+          path: |
+            dist/*.msi
+            dist/winget/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  installer-arm64:
+    name: Installer (arm64 MSI on windows-11-arm, soft)
+    # The arm64 MSI installs natively on Windows 11 ARM64 (decision 6). Soft until it has
+    # been green on the ARM runner image: report only, never fails the workflow.
+    runs-on: windows-11-arm
+    timeout-minutes: 40
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install WiX Toolset 5.0.2 (build-time tool, not shipped)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $env:USERPROFILE '.dotnet\tools') -Encoding utf8
+      - name: Build the arm64 MSI, install, verify, and uninstall
+        run: |
+          $v = [version](Import-PowerShellDataFile -Path src/OmniDiag.psd1).ModuleVersion
+          $version = '{0}.{1}.{2}' -f $v.Major, $v.Minor, [math]::Max($v.Build, 0)
+          ./build/Build-Msi.ps1 -Version $version -OutputDirectory dist -Platform arm64 | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/Test-MsiInstall.ps1 -MsiPath "dist/OmniDiag-$version-arm64.msi" -OutputDirectory test-results/msi-arm64
+          exit $LASTEXITCODE
+      - name: Upload arm64 installer results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omnidiag-installer-arm64
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
