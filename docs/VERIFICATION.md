@@ -81,11 +81,19 @@ The `standard-user` job (blocking) runs on `windows-latest`:
 
 1. `build/Invoke-AsStandardUser.ps1` creates a local account `odsu-<random>` that is a member
    of Users only, with a random 32-character password generated in memory and never printed.
-   It copies the repository and Pester to `C:\omnidiag-su` and grants the account Modify there.
+   It copies the repository and Pester to `C:\omnidiag-su`, whose ACL is explicit and not
+   inherited from `C:\` (SYSTEM and Administrators Full, the account Modify). Folders the account
+   wrote are removed with `rmdir /s /q` and copied with `robocopy /XJ` (junctions not followed).
+   If the account was created at all, it is deleted by name at the end, even after a failure.
 2. Each step runs through a wrapper as that account. Launch: `Start-Process -Credential
    -LoadUserProfile` first; if that is not usable on the runner (probe `cmd /c ver` fails), a
    scheduled task registered with the account's credentials (logon type Password, RunLevel
-   Limited) after granting "Log on as a batch job" with `secedit` (restored afterwards).
+   Limited) after granting "Log on as a batch job" with `secedit`. The restore applies
+   `SeBatchLogonRight` explicitly with its original holders (empty if none), re-exports to
+   confirm, and fails the job (exit 2) if the account is still listed. Caveat: with PowerShell
+   module or script-block logging enabled, the `-Password` value bound to
+   `Register-ScheduledTask` could be recorded in the PowerShell event log. GitHub-hosted runners
+   don't enable it; don't run the fallback on a machine that does.
 3. Before running anything the wrapper records `whoami /user /groups /priv`, the token's
    integrity level, and Administrators membership, and refuses to run if it is elevated. After
    every step the parent checks the record (the account's SID, Medium integrity, no

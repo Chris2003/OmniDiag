@@ -15,7 +15,11 @@
        from PowerShell 7).
     2. Copies -SourcePath (the repository, without .git) to <WorkRoot>\repo, copies the
        -ShareModule modules (e.g. Pester, installed for the runner account) to
-       <WorkRoot>\modules, and grants the account Modify on <WorkRoot> (icacls, by SID).
+       <WorkRoot>\modules. <WorkRoot> gets an explicit ACL with inheritance removed
+       (SYSTEM and Administrators Full, the account Modify; icacls by SID), so the
+       "Authenticated Users: Modify" that C:\ hands to new folders does not apply. Folders the
+       account wrote are deleted with 'rmdir /s /q' and copied with 'robocopy /XJ', which do
+       not follow junctions or symbolic links.
     3. Runs every -Step through a small wrapper script, as the account. The wrapper first
        records its identity (whoami /user /groups /priv, the token's integrity level, and
        Administrators membership) and REFUSES to run the payload when it finds itself
@@ -29,8 +33,14 @@
          b. ScheduledTask - a one-shot scheduled task registered with the account's
                             credentials (logon type Password, RunLevel Limited). The account
                             gets SeBatchLogonRight ("Log on as a batch job") through
-                            secedit for the duration of the run; the previous user-rights
-                            assignment is restored afterwards.
+                            secedit for the duration of the run. Afterwards a template that
+                            sets SeBatchLogonRight explicitly to its original holders (empty
+                            when there were none) is applied and the result re-exported to
+                            confirm the account is gone; a failed restore is exit code 2.
+                            Note: with PowerShell module logging enabled, the -Password
+                            argument of Register-ScheduledTask could be written to the
+                            PowerShell event log (hosted runners do not enable it); don't use
+                            this fallback on a machine that logs pipeline execution.
        -Mechanism StartProcess or ScheduledTask forces one (no fallback).
     4. Self-check after every step: the identity file must exist, show the new account's
        SID, a Medium (or Low) integrity level, no Administrators group in the token, and
@@ -38,8 +48,9 @@
        loud error: results from an elevated child prove nothing about standard users.
     5. Copies every step folder to -OutputDirectory, writes results.json there (and a table
        to $GITHUB_STEP_SUMMARY when set), then - in a finally block - stops the account's
-       processes, unregisters the tasks, restores the user rights, deletes the account and
-       its profile, and removes <WorkRoot> (unless -KeepAccount / -KeepWorkRoot).
+       processes, unregisters the tasks, restores the user rights, deletes the account (by
+       name, whenever creation was attempted, even if it failed half-way) and its profile,
+       and removes <WorkRoot> (unless -KeepAccount / -KeepWorkRoot).
 
     Step exit codes are recorded, not judged: build/Test-PrivilegeReport.ps1 validates the
     outputs. Exit codes of this script: 0 = every step ran as a verified standard user;
@@ -187,14 +198,16 @@ function Add-StandardAccount {
     if (-not $created) {
         $computer = [ADSI]"WinNT://$env:COMPUTERNAME,computer"
         $user = $computer.Create('User', $Name)
-        $user.SetPassword([System.Net.NetworkCredential]::new('', $Secret).Password)
-        $user.Put('Description', $description)
-        $user.SetInfo()
+        # [void]: adapted ADSI methods return $null, which would otherwise leak into this
+        # function's output and turn the returned SID into an array.
+        [void]$user.SetPassword([System.Net.NetworkCredential]::new('', $Secret).Password)
+        [void]$user.Put('Description', $description)
+        [void]$user.SetInfo()
         Write-Step 'Account created with ADSI (WinNT provider).'
     }
     if (-not (Test-LocalGroupMember -GroupSid 'S-1-5-32-545' -Name $Name)) {
         $users = [ADSI]("WinNT://$env:COMPUTERNAME/$(Get-GroupName 'S-1-5-32-545'),group")
-        $users.psbase.Invoke('Add', "WinNT://$env:COMPUTERNAME/$Name,user")
+        [void]$users.psbase.Invoke('Add', "WinNT://$env:COMPUTERNAME/$Name,user")
     }
     if (Test-LocalGroupMember -GroupSid 'S-1-5-32-544' -Name $Name) {
         throw "The account '$Name' is a member of Administrators; refusing to continue."
@@ -212,7 +225,7 @@ function Unregister-StandardAccount {
     } catch { Write-Step "Could not stop the account's processes: $($_.Exception.Message)" }
     try {
         $computer = [ADSI]"WinNT://$env:COMPUTERNAME,computer"
-        $computer.Delete('User', $Name)
+        [void]$computer.Delete('User', $Name)
         Write-Step 'Account deleted.'
     } catch { Write-Step "Could not delete the account: $($_.Exception.Message)" }
     if ($Sid) {
@@ -231,6 +244,23 @@ function Invoke-Native {
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output.Trim() }
 }
 
+function Clear-Tree {
+    # Deletes a folder the standard account could write to. 'rmdir /s /q' removes junctions and
+    # symbolic links without following them (Remove-Item -Recurse can follow them on 5.1).
+    param([string] $Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+    $r = Invoke-Native (Join-Path $env:SystemRoot 'System32\cmd.exe') @('/d', '/c', 'rmdir', '/s', '/q', $Path)
+    if (Test-Path -LiteralPath $Path) { throw "Could not delete '$Path' (rmdir exit $($r.ExitCode)): $($r.Output)" }
+}
+
+function Copy-TreeNoReparse {
+    # Copies a folder the standard account wrote, skipping junctions and symbolic links (/XJ).
+    param([string] $Source, [string] $Destination)
+    $r = Invoke-Native (Join-Path $env:SystemRoot 'System32\robocopy.exe') @($Source, $Destination, '/E', '/XJ', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/XD', (Join-Path $Source 'temp'))
+    # robocopy: 0-7 = success (files copied / extra / mismatched), 8+ = failure.
+    if ($r.ExitCode -ge 8) { throw "robocopy '$Source' failed ($($r.ExitCode)): $($r.Output)" }
+}
+
 function Grant-BatchLogonRight {
     # Adds the SID to SeBatchLogonRight with secedit; returns the exported original policy.
     param([string] $Sid, [string] $Folder)
@@ -239,31 +269,44 @@ function Grant-BatchLogonRight {
     $after = Join-Path $Folder 'user-rights-after.inf'
     $r = Invoke-Native 'secedit.exe' @('/export', '/cfg', $before, '/areas', 'USER_RIGHTS', '/quiet')
     if ($r.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $before)) { throw "secedit /export failed ($($r.ExitCode)): $($r.Output)" }
-    $lines = [System.Collections.Generic.List[string]]::new()
-    $lines.AddRange([string[]](Get-Content -LiteralPath $before -Encoding Unicode))
-    $index = -1
-    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*SeBatchLogonRight\s*=') { $index = $i } }
-    if ($index -ge 0) {
-        $lines[$index] = $lines[$index].TrimEnd() + ",*$Sid"
-    } else {
-        $section = -1
-        for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*\[Privilege Rights\]') { $section = $i } }
-        if ($section -lt 0) { $lines.Add('[Privilege Rights]'); $section = $lines.Count - 1 }
-        $lines.Insert($section + 1, "SeBatchLogonRight = *$Sid")
+    $original = ''
+    foreach ($line in @(Get-Content -LiteralPath $before -Encoding Unicode)) {
+        if ($line -match '^\s*SeBatchLogonRight\s*=(.*)$') { $original = $Matches[1].Trim() }
     }
-    Set-Content -LiteralPath $after -Value $lines -Encoding Unicode
+    # The restore file names SeBatchLogonRight explicitly - with the original holders, or
+    # empty when nobody held it - so re-applying it really removes the grant.
+    $restore = Join-Path $Folder 'user-rights-restore.inf'
+    Write-BatchRightInf -Path $restore -Value $original
+    $granted = "*$Sid"
+    if ($original) { $granted = "$original,*$Sid" }
+    Write-BatchRightInf -Path $after -Value $granted
     $r = Invoke-Native 'secedit.exe' @('/configure', '/db', (Join-Path $Folder 'grant.sdb'), '/cfg', $after, '/areas', 'USER_RIGHTS', '/quiet')
     if ($r.ExitCode -ne 0) { throw "secedit /configure failed ($($r.ExitCode)): $($r.Output)" }
     Write-Step 'Granted SeBatchLogonRight to the account (secedit).'
-    return $before
+    return [pscustomobject]@{ RestoreInf = $restore; Sid = $Sid }
+}
+
+function Write-BatchRightInf {
+    # A minimal security template that sets only SeBatchLogonRight.
+    param([string] $Path, [string] $Value)
+    $text = @('[Unicode]', 'Unicode=yes', '[Version]', 'signature="$CHICAGO$"', 'Revision=1', '[Privilege Rights]', "SeBatchLogonRight = $Value")
+    Set-Content -LiteralPath $Path -Value $text -Encoding Unicode
 }
 
 function Restore-UserRight {
-    param([string] $Inf, [string] $Folder)
-    if (-not $Inf -or -not (Test-Path -LiteralPath $Inf)) { return }
-    $r = Invoke-Native 'secedit.exe' @('/configure', '/db', (Join-Path $Folder 'restore.sdb'), '/cfg', $Inf, '/areas', 'USER_RIGHTS', '/quiet')
-    if ($r.ExitCode -eq 0) { Write-Step 'Restored the previous user-rights assignment.' }
-    else { Write-Step "secedit restore returned $($r.ExitCode): $($r.Output)" }
+    # Re-applies the original SeBatchLogonRight holders and verifies the account is gone from
+    # it. Returns $true on success; the caller turns $false into exit code 2.
+    param($Backup, [string] $Folder)
+    if (-not $Backup) { return $true }
+    $r = Invoke-Native 'secedit.exe' @('/configure', '/db', (Join-Path $Folder 'restore.sdb'), '/cfg', $Backup.RestoreInf, '/areas', 'USER_RIGHTS', '/quiet')
+    if ($r.ExitCode -ne 0) { Write-Host "::error::secedit restore of SeBatchLogonRight returned $($r.ExitCode): $($r.Output)"; return $false }
+    $check = Join-Path $Folder 'user-rights-check.inf'
+    $null = Invoke-Native 'secedit.exe' @('/export', '/cfg', $check, '/areas', 'USER_RIGHTS', '/quiet')
+    $still = (Test-Path -LiteralPath $check) -and
+        (@(Get-Content -LiteralPath $check -Encoding Unicode | Where-Object { $_ -match '^\s*SeBatchLogonRight\s*=' -and $_ -match [regex]::Escape($Backup.Sid) }).Count -gt 0)
+    if ($still) { Write-Host '::error::SeBatchLogonRight still lists the temporary account after the restore.'; return $false }
+    Write-Step 'Restored the previous SeBatchLogonRight holders.'
+    return $true
 }
 
 # The wrapper the account runs. It never receives the password; it only reads its spec.
@@ -376,6 +419,7 @@ exit $code
 # --- State shared with the finally block ---------------------------------------------
 $accountName = 'odsu-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
 $accountSid = $null
+$accountAttempted = $false
 $secret = $null
 $taskPath = '\OmniDiagCI\'
 $registeredTasks = [System.Collections.Generic.List[string]]::new()
@@ -391,7 +435,7 @@ function Invoke-WrappedStep {
     param([hashtable] $Definition, [string] $Via)
     $name = [string]$Definition.Name
     $stepDir = Join-Path (Join-Path $WorkRoot 'steps') $name
-    if (Test-Path -LiteralPath $stepDir) { Remove-Item -LiteralPath $stepDir -Recurse -Force }
+    Clear-Tree $stepDir
     $outDir = Join-Path $stepDir 'out'
     $tempDir = Join-Path $stepDir 'temp'
     $null = New-Item -ItemType Directory -Path $outDir -Force
@@ -451,7 +495,7 @@ function Invoke-WrappedStep {
             Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $action -Settings $settings `
                 -User "$env:COMPUTERNAME\$accountName" -Password $credential.GetNetworkCredential().Password -RunLevel Limited -Force | Out-Null
             $registeredTasks.Add($taskName)
-            Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath
+            Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath | Out-Null
         }
     } catch {
         $launchError = $_.Exception.Message
@@ -487,7 +531,7 @@ function Invoke-WrappedStep {
         try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { Write-Verbose "Child already gone: $($_.Exception.Message)" }
     }
     if ($taskName) {
-        if ($launchError) { Stop-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue }
+        if ($launchError) { Stop-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue | Out-Null }
         try { Unregister-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Confirm:$false -ErrorAction Stop; [void]$registeredTasks.Remove($taskName) } catch { Write-Step "Could not unregister task ${taskName}: $($_.Exception.Message)" }
     }
 
@@ -529,11 +573,20 @@ try {
     # --- 1. Account ------------------------------------------------------------------
     $secret = Get-RandomSecret
     Write-Step "Creating local standard account '$accountName' (Users only; password generated in memory, never shown)."
-    $accountSid = Add-StandardAccount -Name $accountName -Secret $secret
+    # From here on the finally block deletes the account by name, even if creation throws
+    # half-way (after the account exists but before its SID is known).
+    $accountAttempted = $true
+    $accountSid = [string](@(Add-StandardAccount -Name $accountName -Secret $secret) | Where-Object { $_ -is [string] } | Select-Object -Last 1)
+    if ($accountSid -notmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { throw "Unexpected SID for the new account: '$accountSid'." }
     Write-Step "Account SID: $accountSid"
 
     # --- 2. Work root ----------------------------------------------------------------
-    if (Test-Path -LiteralPath $WorkRoot) { Remove-Item -LiteralPath $WorkRoot -Recurse -Force }
+    # Explicit ACL, no inheritance: C:\ grants Authenticated Users Modify on new folders.
+    Clear-Tree $WorkRoot
+    $null = New-Item -ItemType Directory -Path $WorkRoot -Force
+    $acl = Invoke-Native 'icacls.exe' @($WorkRoot, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', "*$($accountSid):(OI)(CI)M", '/Q')
+    if ($acl.ExitCode -ne 0) { throw "icacls failed ($($acl.ExitCode)): $($acl.Output)" }
+    Write-Step "Work root $WorkRoot`: SYSTEM and Administrators Full, the account Modify, nothing inherited."
     $null = New-Item -ItemType Directory -Path (Join-Path $WorkRoot 'repo') -Force
     $null = New-Item -ItemType Directory -Path (Join-Path $WorkRoot 'steps') -Force
     $skip = @('.git', 'test-results', 'OmniDiagData', 'coverage.xml', 'dist')
@@ -549,9 +602,6 @@ try {
         Write-Step "Shared module $($m.Name) $($m.Version)."
     }
     [System.IO.File]::WriteAllText((Join-Path $WorkRoot 'run-as-user.ps1'), $wrapperText, $utf8)
-    $grant = Invoke-Native 'icacls.exe' @($WorkRoot, '/grant', "*$($accountSid):(OI)(CI)M", '/T', '/C', '/Q')
-    if ($grant.ExitCode -ne 0) { throw "icacls failed ($($grant.ExitCode)): $($grant.Output)" }
-    Write-Step "Granted the account Modify on $WorkRoot."
 
     # --- 3. Mechanism ----------------------------------------------------------------
     $candidates = @($Mechanism)
@@ -622,9 +672,9 @@ try {
         foreach ($r in @($results) + @($failedProbes)) {
             if (Test-Path -LiteralPath $r.StepDir) {
                 $dest = Join-Path $OutputDirectory $r.Name
-                if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
-                Copy-Item -LiteralPath $r.StepDir -Destination $dest -Recurse -Force
-                Remove-Item -LiteralPath (Join-Path $dest 'temp') -Recurse -Force -ErrorAction SilentlyContinue
+                Clear-Tree $dest
+                # The account wrote this folder: copy without following junctions/symlinks.
+                Copy-TreeNoReparse -Source $r.StepDir -Destination $dest
             }
         }
         $doc = [ordered]@{
@@ -654,7 +704,9 @@ try {
         $md = [System.Collections.Generic.List[string]]::new()
         $md.Add('### Standard-user run')
         $md.Add('')
-        $md.Add(('Account `{0}` (Users only), mechanism **{1}**, self-check **{2}**.' -f $accountName, $usedMechanism, $doc.selfCheck))
+        # An empty value inside ** ** renders as '****' (it is not masking): name the missing value.
+        $mechanismText = if ($usedMechanism) { $usedMechanism } else { 'none (no launch mechanism worked)' }
+        $md.Add(('Account `{0}` (Users only), mechanism **{1}**, self-check **{2}**.' -f $accountName, $mechanismText, $doc.selfCheck))
         $md.Add('')
         $md.Add('| Step | Exit code | Seconds | User | Integrity | Administrators in token | Note |')
         $md.Add('|---|---:|---:|---|---|---|---|')
@@ -676,13 +728,25 @@ try {
     foreach ($t in @($registeredTasks)) {
         try { Unregister-ScheduledTask -TaskName $t -TaskPath $taskPath -Confirm:$false -ErrorAction Stop } catch { Write-Step "Could not unregister task ${t}: $($_.Exception.Message)" }
     }
-    if ($rightsBackup) { Restore-UserRight -Inf $rightsBackup -Folder $adminScratch }
-    if (-not $KeepAccount -and $accountSid) { Unregister-StandardAccount -Name $accountName -Sid $accountSid }
-    elseif ($KeepAccount) { Write-Step "Kept account '$accountName' (-KeepAccount)." }
-    if (-not $KeepWorkRoot -and (Test-Path -LiteralPath $WorkRoot)) {
-        Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
+    if ($rightsBackup) {
+        $restored = $false
+        try { $restored = Restore-UserRight -Backup $rightsBackup -Folder $adminScratch } catch { Write-Host "::error::Restoring SeBatchLogonRight failed: $($_.Exception.Message)" }
+        if (-not $restored -and $exitCode -eq 0) { $exitCode = 2 }
     }
-    Remove-Item -LiteralPath $adminScratch -Recurse -Force -ErrorAction SilentlyContinue
+    if ($KeepAccount) {
+        Write-Step "Kept account '$accountName' (-KeepAccount)."
+    } elseif ($accountAttempted) {
+        # By name: the account may exist even when Add-StandardAccount threw before returning its SID.
+        $sidForProfile = $accountSid
+        if (-not $sidForProfile) {
+            try { $sidForProfile = ([System.Security.Principal.NTAccount]::new($env:COMPUTERNAME, $accountName)).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $sidForProfile = $null }
+        }
+        Unregister-StandardAccount -Name $accountName -Sid $sidForProfile
+    }
+    if (-not $KeepWorkRoot) {
+        try { Clear-Tree $WorkRoot } catch { Write-Step "Could not remove ${WorkRoot}: $($_.Exception.Message)" }
+    }
+    try { Clear-Tree $adminScratch } catch { Write-Step "Could not remove the admin scratch folder: $($_.Exception.Message)" }
     $secret = $null
 }
 

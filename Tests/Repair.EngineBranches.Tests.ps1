@@ -120,7 +120,7 @@ Describe 'Repair engine: cancellation' {
     It 'stops between repairs when cancellation arrives mid-session' {
         $cts = [System.Threading.CancellationTokenSource]::new()
         $ctx = New-BranchContext -Token $cts.Token -Extra @{ Cts = $cts }
-        $session = Invoke-OmniRepair -Registration @((Get-Fake 'Br Canceller') + (Get-Fake 'Br Marker')) -Context $ctx
+        $session = Invoke-OmniRepair -Registration @((Get-Fake 'Br Canceller'), (Get-Fake 'Br Marker')) -Context $ctx
         $session.Cancelled | Should -BeTrue
         @($session.Results).Count | Should -Be 1
         $session.Results[0].Name | Should -Be 'Br Canceller'
@@ -162,7 +162,7 @@ Describe 'Repair engine: restore-point gate and approval' {
         $ctx = New-BranchContext
         $calls = Add-RestoreProvider $ctx -Status 'Created' -Protected $true
         $restore = Get-Fake 'Br Restore'
-        $session = Invoke-OmniRepair -Registration @($restore + $restore) -Context $ctx
+        $session = Invoke-OmniRepair -Registration @($restore, $restore) -Context $ctx
         $calls.Count | Should -Be 1
         @($session.Results | Where-Object Status -eq 'Succeeded').Count | Should -Be 2
         Get-MarkerCount $ctx | Should -Be 2
@@ -276,7 +276,7 @@ Describe 'Repair engine: malformed plugin results and dry-run guarantees' {
 
     It 'fails the same throwing plugin on a real run and continues with the next repair' {
         $ctx = New-BranchContext
-        $session = Invoke-OmniRepair -Registration @((Get-Fake 'Br Throws') + (Get-Fake 'Br Marker')) -Context $ctx
+        $session = Invoke-OmniRepair -Registration @((Get-Fake 'Br Throws'), (Get-Fake 'Br Marker')) -Context $ctx
         $session.Results[0].Status | Should -Be 'Failed'
         $session.Results[1].Status | Should -Be 'Succeeded'
         Get-MarkerCount $ctx | Should -Be 1
@@ -328,7 +328,7 @@ Describe 'Repair engine: progress callback' {
         $callback = { param($p) $events.Add(('{0}:{1}/{2}:{3}' -f $p.Phase, $p.Index, $p.Total, $p.PercentComplete)) }.GetNewClosure()
         $ctx = New-BranchContext
         $ctx.IsAdmin = $false
-        Invoke-OmniRepair -Registration @((Get-Fake 'Br Marker') + (Get-Fake 'Br Admin Restore')) -Context $ctx -ProgressCallback $callback | Out-Null
+        Invoke-OmniRepair -Registration @((Get-Fake 'Br Marker'), (Get-Fake 'Br Admin Restore')) -Context $ctx -ProgressCallback $callback | Out-Null
         ($events -join ',') | Should -Be 'Start:0/2:0,Done:1/2:50,Start:1/2:50,Skipped:2/2:100'
     }
 

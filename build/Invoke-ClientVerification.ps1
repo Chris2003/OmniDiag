@@ -157,8 +157,15 @@ Add-Result 'privilege' 'Prompt privilege' 'Info' ("{0}, integrity {1}" -f $privi
 
 # --- hosts ---------------------------------------------------------------------------------
 $hostExes = [ordered]@{ 'powershell-5.1' = (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') }
-$pwshCmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-if ($pwshCmd) { $hostExes['pwsh-7'] = $pwshCmd.Source }
+# The pinned locations OmniDiag.cmd uses (never a PATH lookup), in the launcher's precedence:
+# %ProgramW6432%, then %ProgramFiles%, then %ProgramFiles(x86)%.
+$pwshPath = $null
+foreach ($base in @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+    if (-not $base) { continue }
+    $candidate = Join-Path $base 'PowerShell\7\pwsh.exe'
+    if (Test-Path -LiteralPath $candidate) { $pwshPath = $candidate; break }
+}
+if ($pwshPath) { $hostExes['pwsh-7'] = $pwshPath }
 $hostInfo = [ordered]@{}
 foreach ($h in $hostExes.Keys) {
     $exe = $hostExes[$h]

@@ -27,6 +27,7 @@ BeforeAll {
         Set-Content -LiteralPath (Join-Path $Folder $File) -Value $text -Encoding ascii
     }
     function Get-LogMessage { param($Logger, [string] $Pattern) @($Logger.Buffer | Where-Object { $_.Message -match $Pattern }) }
+    function Get-LogText { param($Logger) "log: " + ((@($Logger.Buffer) | ForEach-Object { "[$($_.Level)] $($_.Message)" }) -join " / ") }
 }
 
 Describe 'Get-OmniRepair: discovery edge cases' {
@@ -37,7 +38,7 @@ Describe 'Get-OmniRepair: discovery edge cases' {
         $repairs = @(Get-OmniRepair -Path @((Join-Path $TestDrive 'does-not-exist'), $good) -Logger $logger)
         $repairs.Count | Should -Be 1
         $repairs[0].Name | Should -Be 'Rg Good'
-        (Get-LogMessage $logger 'Repair folder not found').Count | Should -Be 1
+        @(Get-LogMessage $logger 'Repair folder not found').Count | Should -Be 1 -Because (Get-LogText $logger)
     }
 
     It 'rejects a manifest without a Category' {
@@ -45,7 +46,8 @@ Describe 'Get-OmniRepair: discovery edge cases' {
         $dir = Join-Path $TestDrive 'disc-nocat'
         New-FakeRepairFile -Folder $dir -File 'RgNoCategory.psm1' -Manifest "@{ Name = 'Rg No Category' }"
         @(Get-OmniRepair -Path $dir -Logger $logger).Count | Should -Be 0
-        (Get-LogMessage $logger 'invalid manifest').Count | Should -Be 1
+        @(Get-LogMessage $logger 'invalid manifest').Count | Should -Be 1 -Because (Get-LogText $logger)
+        @(Get-LogMessage $logger "RgNoCategory\.psm1.*Name and Category are required").Count | Should -Be 1 -Because (Get-LogText $logger)
     }
 
     It 'rejects an unknown Risk level and names the valid ones' {
@@ -53,7 +55,7 @@ Describe 'Get-OmniRepair: discovery edge cases' {
         $dir = Join-Path $TestDrive 'disc-risk'
         New-FakeRepairFile -Folder $dir -File 'RgBadRisk.psm1' -Manifest "@{ Name = 'Rg Bad Risk'; Category = 'Test'; Risk = 'Extreme' }"
         @(Get-OmniRepair -Path $dir -Logger $logger).Count | Should -Be 0
-        $msg = Get-LogMessage $logger "invalid Risk 'Extreme'"
+        $msg = @(Get-LogMessage $logger "invalid Risk 'Extreme'")
         $msg.Count | Should -Be 1
         $msg[0].Message | Should -Match 'Safe, Moderate, Destructive'
     }
@@ -66,7 +68,7 @@ Describe 'Get-OmniRepair: discovery edge cases' {
         $repairs = @(Get-OmniRepair -Path $dir -Logger $logger)
         $repairs.Count | Should -Be 1
         $repairs[0].Id | Should -Be 'repair.rg-dup'
-        (Get-LogMessage $logger 'already used by').Count | Should -Be 1
+        @(Get-LogMessage $logger 'already used by').Count | Should -Be 1 -Because (Get-LogText $logger)
     }
 
     It 'ignores *.Tests.psm1 files' {
@@ -169,7 +171,7 @@ Describe 'New-OmniRestorePoint: fail-soft paths' {
         $status.Created | Should -BeFalse
         $status.Protected | Should -BeFalse
         $status.Message | Should -Match 'Could not create a restore point'
-        (Get-LogMessage $logger 'Could not create a restore point').Count | Should -Be 1
+        @(Get-LogMessage $logger 'Could not create a restore point').Count | Should -Be 1 -Because (Get-LogText $logger)
     }
 
     It 'skips with a Windows-only message on other systems' {
