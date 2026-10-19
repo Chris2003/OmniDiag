@@ -73,7 +73,10 @@ $script:OmniSecretPatterns = @(
     [pscustomobject]@{ Regex = [regex]::new('(?<!\d)\d{6}(?:-\d{6}){7}(?!\d)', $script:OmniSecretRegexOptions); Replacement = '[REDACTED-RECOVERY-KEY]' }
     # Credentials embedded in a URL: everything between scheme:// and the LAST '@' of the
     # authority (user:password@, a token used as the user name, or a password with '@').
-    [pscustomobject]@{ Regex = [regex]::new('\b([a-z][a-z0-9+.\-]*://)(?!\[REDACTED\]@)[^\s/?#]+@', $script:OmniSecretRegexOptions); Replacement = '$1[REDACTED]@' }
+    # The user-info class excludes characters RFC 3986 user info cannot hold unencoded
+    # ("'<>;,|\{}()[] and whitespace), so a '@' further along in JSON, CSV, or prose
+    # (an e-mail address after a proxy URL) never pulls the host into the match.
+    [pscustomobject]@{ Regex = [regex]::new('\b([a-z][a-z0-9+.\-]*://)(?!\[REDACTED\]@)[^\s/?#"''<>;,|\\{}()\[\]]+@', $script:OmniSecretRegexOptions); Replacement = '$1[REDACTED]@' }
     # JSON Web Tokens (header.payload.signature), with or without a Bearer prefix.
     [pscustomobject]@{ Regex = [regex]::new('(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*', $script:OmniSecretRegexOptions); Replacement = '[REDACTED-JWT]' }
     # Well-known token formats: GitHub (ghp_/gho_/ghu_/ghs_/ghr_, github_pat_), Slack (xoxb-, xoxp-, ...),
@@ -198,6 +201,16 @@ function Protect-OmniSecretData {
         return
     }
     if ($v -is [System.Management.Automation.PSCustomObject]) {
+        # A finding whose Id was generated from Component + Title (New-OmniFinding) embeds the
+        # title text, secrets included (a session saved before scrubbing existed). Remember
+        # that BEFORE scrubbing, and rebuild the Id from the scrubbed texts afterwards, so the
+        # Id stays auto-generated (the redactor relies on that) and carries no secret.
+        $idProp = $v.PSObject.Properties['Id']; $titleProp = $v.PSObject.Properties['Title']; $componentProp = $v.PSObject.Properties['Component']
+        $autoId = $false
+        if ($idProp -and $titleProp -and $componentProp -and $idProp.Value -is [string] -and $titleProp.Value -is [string] -and
+            ($null -eq $componentProp.Value -or $componentProp.Value -is [string]) -and $idProp.Value.Length -gt 0) {
+            $autoId = $idProp.Value -ceq (Get-OmniFindingAutoId -Component $componentProp.Value -Title $titleProp.Value)
+        }
         foreach ($prop in @($v.PSObject.Properties)) {
             if ([string]$prop.MemberType -ne 'NoteProperty') { continue }
             $item = $prop.Value
@@ -210,7 +223,34 @@ function Protect-OmniSecretData {
                 Protect-OmniSecretData $item ($Depth + 1)
             }
         }
+        if ($autoId) {
+            $rebuilt = Get-OmniFindingAutoId -Component $componentProp.Value -Title $titleProp.Value
+            if ($rebuilt -cne $idProp.Value) { $idProp.Value = $rebuilt }
+        }
     }
+}
+
+function Get-OmniFindingAutoId {
+    <#
+    .SYNOPSIS
+        The Id New-OmniFinding generates when none is given: kebab-case of 'Component|Title'.
+
+    .DESCRIPTION
+        The single definition of the auto-generated finding Id, shared by New-OmniFinding,
+        the secret scrubber (which rebuilds auto Ids after scrubbing a title), and the
+        redactor (which recognizes auto Ids and rebuilds them from the redacted texts).
+
+    .PARAMETER Component
+        The finding's component.
+
+    .PARAMETER Title
+        The finding's title.
+
+    .EXAMPLE
+        Get-OmniFindingAutoId -Component 'Network/DNS' -Title 'DNS resolution failing'   # 'network-dns-dns-resolution-failing'
+    #>
+    param([AllowNull()][AllowEmptyString()][string] $Component, [AllowNull()][AllowEmptyString()][string] $Title)
+    return ((('{0}|{1}' -f $Component, $Title).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
 }
 
 function ConvertTo-OmniSecretSafeData {
@@ -341,12 +381,10 @@ function New-OmniFinding {
         [string] $Id
     )
 
-    # Scrub first, so an Id derived from the title never carries a secret either.
+    # Scrub first, so an Id derived from the component and title never carries a secret either.
     $Title = Protect-OmniSecretText $Title
-    if ([string]::IsNullOrWhiteSpace($Id)) {
-        $seed = "{0}|{1}" -f $Component, $Title
-        $Id = ($seed.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
-    }
+    $Component = Protect-OmniSecretText $Component
+    if ([string]::IsNullOrWhiteSpace($Id)) { $Id = Get-OmniFindingAutoId -Component $Component -Title $Title }
 
     $finding = [pscustomobject]@{
         PSTypeName     = 'OmniDiag.Finding'
@@ -663,5 +701,5 @@ Export-ModuleMember -Function @(
     'New-OmniFinding', 'New-OmniResult', 'Add-OmniFinding',
     'Set-OmniResultMetric', 'Complete-OmniResult', 'Get-OmniTimeRange',
     'Test-OmniNetworkProbeEnabled', 'Get-OmniProbeTarget', 'New-OmniProbeSkippedFinding',
-    'Protect-OmniSecretText', 'Protect-OmniSecretData', 'ConvertTo-OmniSecretSafeData'
+    'Protect-OmniSecretText', 'Protect-OmniSecretData', 'ConvertTo-OmniSecretSafeData', 'Get-OmniFindingAutoId'
 )

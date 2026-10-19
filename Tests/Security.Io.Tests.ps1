@@ -612,6 +612,70 @@ Describe 'Security 5: no secrets in reports or logs' {
         Protect-OmniSecretText (Protect-OmniSecretText $In) | Should -BeExactly $Out
     }
 
+    It 'keeps hosts and structure when a later ''@'' is not URL user info: <_>' -ForEach @(
+        '{"proxy":"http://proxy.corp:8080","owner":"ops@corp.com"}',
+        'http://a;b@c',
+        'Proxy,http://proxy.corp:8080,ops@corp.com',
+        "see 'http://h:1' and y@z",
+        'proxy (http://proxy.corp:8080) owner ops@corp.com'
+    ) {
+        Protect-OmniSecretText $_ | Should -BeExactly $_
+    }
+
+    It 'still masks URL user info next to JSON / CSV punctuation' {
+        Protect-OmniSecretText '{"proxy":"http://bob:Hunter2@proxy:8080","owner":"ops@corp.com"}' |
+            Should -BeExactly '{"proxy":"http://[REDACTED]@proxy:8080","owner":"ops@corp.com"}'
+        Protect-OmniSecretText 'Proxy,http://bob:Hunter2@proxy:8080,ops@corp.com' |
+            Should -BeExactly 'Proxy,http://[REDACTED]@proxy:8080,ops@corp.com'
+    }
+
+    It 'New-OmniFinding derives its Id from the scrubbed component and title' {
+        $f = New-OmniFinding -Title 'Proxy http://bob:Title-S3cret@10.0.0.5 unreachable' -Severity 'Warning' -Component 'Net/http://u:Comp-S3cret@h'
+        $f.Id | Should -Not -Match 'title-s3cret|comp-s3cret'
+        $f.Id | Should -BeExactly (Get-OmniFindingAutoId -Component $f.Component -Title $f.Title)
+    }
+
+    It 'Protect-OmniSecretData rebuilds an auto-generated Id after scrubbing the title' {
+        $title = 'Proxy http://bob:Hunter2@10.0.0.5 unreachable'
+        $auto = [pscustomobject]@{ Id = (Get-OmniFindingAutoId -Component 'Network/Proxy' -Title $title); Title = $title; Component = 'Network/Proxy' }
+        $fixed = [pscustomobject]@{ Id = 'network-proxy-unreachable'; Title = $title; Component = 'Network/Proxy' }
+        Protect-OmniSecretData -InputObject $auto
+        Protect-OmniSecretData -InputObject $fixed
+        $auto.Id | Should -Not -Match 'hunter2'
+        $auto.Id | Should -BeExactly (Get-OmniFindingAutoId -Component $auto.Component -Title $auto.Title)
+        $fixed.Id | Should -BeExactly 'network-proxy-unreachable'
+    }
+
+    It 'a legacy session with a secret in an auto-generated Id leaks nothing into a redacted export' {
+        # Saved before scrubbing existed: raw title, and the Id generated from it.
+        $legacy = New-TinySession -ComputerName 'WS-IDS'
+        $f = $legacy.Results[0].Findings[0]
+        $f.Component = 'Network/Proxy'
+        $f.Title = 'Proxy http://bob:Hunter2@10.0.0.5 unreachable'
+        $f.Id = Get-OmniFindingAutoId -Component $f.Component -Title $f.Title
+        $f.Id | Should -Match 'hunter2-10-0-0-5'
+        $path = Save-OmniSession -Session $legacy -Path (Join-Path $TestDrive 'legacy-ids.json')
+
+        $imported = Import-OmniDiagSession -Path $path
+        $g = @($imported.Results[0].Findings)[0]
+        $g.Id | Should -BeExactly (Get-OmniFindingAutoId -Component $g.Component -Title $g.Title)
+        $set = Export-OmniDiagReport -Session $imported -OutputDirectory (Join-Path $TestDrive 'legacy-ids-out') -Format Html, Json, Csv, Md, Pdf, Zip -Redact
+        $texts = @{}
+        foreach ($file in $set.Files) {
+            if ($file -like '*.zip') {
+                $dest = Join-Path $TestDrive ('ids-unzip-' + [guid]::NewGuid().ToString('N'))
+                Expand-Archive -LiteralPath $file -DestinationPath $dest
+                foreach ($e in Get-ChildItem -LiteralPath $dest -File -Recurse) { $texts["$file!$($e.Name)"] = Read-OutputText $e.FullName }
+            } else { $texts[$file] = Read-OutputText $file }
+        }
+        $texts.Count | Should -BeGreaterThan 5
+        foreach ($k in $texts.Keys) {
+            foreach ($needle in @('hunter2', '10.0.0.5', '10-0-0-5')) {
+                $texts[$k].IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) | Should -Be -1 -Because "'$needle' must not appear in $k"
+            }
+        }
+    }
+
     It 'leaves identifiers alone: <_>' -ForEach @(
         'Thumbprint 3B1EFD3A66EA28B16697394703A72CA340A05BD5', '{6F9619FF-8B86-D011-B42D-00C04FC964FF}',
         'SHA256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',

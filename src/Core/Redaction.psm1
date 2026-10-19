@@ -500,9 +500,19 @@ function Find-OmniRedactionProfileName {
     }
 }
 
+# Get-OmniFindingAutoId (Core/Models), resolved on first use; $false when unavailable.
+$script:OmniFindingAutoIdCommand = $null
+
 function ConvertTo-OmniRedactionAutoId {
     <# .SYNOPSIS Internal: the id New-OmniFinding generates from a component and a title. #>
     param([AllowEmptyString()][string] $Component, [AllowEmptyString()][string] $Title)
+    # One definition (Core/Models Get-OmniFindingAutoId); the inline rule is the same and is
+    # only used when this module is imported on its own.
+    if ($null -eq $script:OmniFindingAutoIdCommand) {
+        $cmd = Get-Command -Name 'Get-OmniFindingAutoId' -CommandType Function -ErrorAction SilentlyContinue
+        $script:OmniFindingAutoIdCommand = if ($cmd) { $cmd } else { $false }
+    }
+    if ($script:OmniFindingAutoIdCommand) { return (& $script:OmniFindingAutoIdCommand -Component $Component -Title $Title) }
     return ((('{0}|{1}' -f $Component, $Title).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
 }
 

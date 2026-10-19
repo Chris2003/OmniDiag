@@ -58,7 +58,7 @@
         'Get-OmniToolRoot', 'Get-OmniDataRoot', 'Get-OmniDataPath', 'Clear-OmniTempData',
         # Path safety and secret scrubbing (docs/SECURITY-REVIEW.md); cross-module helpers,
         # so they must resolve globally (same lesson as Write-OmniTextFile).
-        'Resolve-OmniOutputPath', 'ConvertTo-OmniSafeFileName', 'Protect-OmniSecretText', 'Protect-OmniSecretData', 'ConvertTo-OmniSecretSafeData',
+        'Resolve-OmniOutputPath', 'ConvertTo-OmniSafeFileName', 'Protect-OmniSecretText', 'Protect-OmniSecretData', 'ConvertTo-OmniSecretSafeData', 'Get-OmniFindingAutoId',
         # Runbooks, saved-session search, and before/after comparison
         'Get-OmniRunbook', 'Find-OmniRunbook', 'Get-OmniDefaultRunbookPath',
         'Get-OmniSessionFinding', 'Import-OmniSession', 'Search-OmniEvidence', 'Compare-OmniSession',
