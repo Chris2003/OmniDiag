@@ -249,6 +249,8 @@ function Clear-Tree {
     # symbolic links without following them (Remove-Item -Recurse can follow them on 5.1).
     param([string] $Path)
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+    # cmd.exe would interpret & ^ % and quotes in the path: refuse anything outside a plain set.
+    if ($Path -notmatch '^[A-Za-z]:\\[\w .\\-]*$') { throw "Refusing to delete '$Path' with cmd rmdir: unexpected characters in the path." }
     $r = Invoke-Native (Join-Path $env:SystemRoot 'System32\cmd.exe') @('/d', '/c', 'rmdir', '/s', '/q', $Path)
     if (Test-Path -LiteralPath $Path) { throw "Could not delete '$Path' (rmdir exit $($r.ExitCode)): $($r.Output)" }
 }
