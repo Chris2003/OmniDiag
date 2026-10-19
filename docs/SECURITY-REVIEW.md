@@ -1,9 +1,69 @@
 # Security review (Phase 4)
 
-One row per review item from [ROADMAP.md](ROADMAP.md) (Phase 4: "Security review with a test
-per item"). Every finding is fixed with a test, or documented with a reason. Status values:
-**fixed** (a defect was found and fixed), **verified** (no defect found; a test now guards
-it), **documented** (accepted limitation, see the linked document).
+This is the Phase 4 security review from docs/ROADMAP.md. Each item has a finding, a fix
+or a documented reason, and a dedicated Pester test. This page covers the file and I/O
+items. Redaction correctness, HTML/CSV encoding, and fuzzed session import are reviewed
+separately and get their own rows when that work lands.
+
+All tests named below are in `Tests/Security.Io.Tests.ps1`. They are written for Windows
+PowerShell 5.1 and pwsh 7, and for both Windows and Ubuntu. The one Windows-only test
+skips on other systems.
+
+**Verification status:** the tests were written without a local PowerShell, so none of
+them has run yet. "Fixed (pending CI)" means the code change is done and its test still
+has to pass in Windows CI (both PowerShell versions) and in the Ubuntu leg.
+
+## Summary
+
+| # | Item | Finding | Fix | Test (Describe / It) | Status |
+|---|------|---------|-----|----------------------|--------|
+| 1 | `--output` / `-OutputDirectory` / `-Path` export path handling | **Real.** (a) A caller-supplied `-BaseName` (`Export-OmniReport`, `Export-OmniDiagReport`) was joined to the output folder as-is, so `..\..\x` or `C:\x` wrote report files outside it. (b) Nothing refused device paths (`\\.\`, `\\?\`), reserved names (`NUL`, `CON`, `COM1.json`), or NTFS streams (`report.json:hidden`); a stream silently creates hidden data. (c) `Get-OmniSafeName` (host name to file name) let `..` and device names through. In practice only embedded in `OmniDiag-<host>-<stamp>`, so low impact. (d) `Export-Csv -Path` and `Compress-Archive -Path` treated `[` and `]` in folder names as wildcards. | New `Resolve-OmniOutputPath` (Core/Paths): resolves against the PowerShell location and runs `GetFullPath`, so `..` is collapsed. It refuses device prefixes, reserved names in any path part, `:` after the root, NUL characters, and non-file-system providers, and takes an optional `-Root` jail. Used by `Export-OmniReport`, `Export-OmniReportPackage`, `Write-OmniTextFile` (JSON, HTML, Markdown, redaction map), both CSV exporters, the PDF exporter, `Save-OmniSession`, and every CLI `--output` / `--redaction-map` (where a refusal is a usage error, exit 10). New `ConvertTo-OmniSafeFileName`: one safe file-name part (separators, `:`, wildcard and control characters become `_`; `.` and `..` fall back to a default; device names get a `_` prefix). Applied to `-BaseName`, the host-derived name, and redacted package names. `-LiteralPath` for `Export-Csv` and `Compress-Archive`. | `Security 1: export path handling` (canonicalizes `..`; relative paths; device paths; reserved names; streams; `-Root`; name sanitizing for `..\`, `/`, `:`; hostile computer name; hostile `-BaseName`; redacted package name; CLI exit 10; CSV literal paths) | Fixed (pending CI) |
+| 2 | Zip-slip and zip bomb on report-package import | **Real, but not a write.** `Import-OmniSession` never extracts, so nothing could be written outside a folder. But it (a) accepted the first entry named `data.json` at any path, including `../../data.json`, and (b) read it into memory with no size limit, so a small zip that expands to gigabytes could exhaust memory. This also reached `Compare-OmniSession`, `omnidiag compare`, `--from-session`, and `OmniDiag.ps1 -FromSession`. (c) `install.ps1` ran `Expand-Archive` on the downloaded archive without checking entry names first. It depended on the Archive module's own checks, which this review could not confirm for the 1.0.1.0 version in Windows PowerShell 5.1. | New `Read-OmniZipEntryText` (Core/Evidence) validates every entry name before reading anything. It refuses absolute names, drive letters, any `:`, `..` parts, control characters, and device names, and one bad entry rejects the whole package. It also refuses more than 256 entries, and a `data.json` that declares more than 64 MB uncompressed or inflates past 64 MB while being read (a lying header). The read is streamed and nothing touches the disk. `install.ps1` now checks entry names (absolute, `:`, `..`), entry count (20,000 or fewer), and declared size (512 MB or less) before `Expand-Archive`. | `Security 2: report-package (.zip) import` (malicious zips built with System.IO.Compression: `../`, `..\`, nested traversal, `/abs`, `\abs`, `C:/`, `C:x`, `:stream`, `NUL`, `aux.json`; 300 entries; a 65 MB `data.json`; `compare` with a malicious zip; the `install.ps1` check comes before `Expand-Archive`) | Fixed (pending CI) |
+| 3 | Executable resolution in the launchers | **Real.** `OmniDiag.cmd` and `OmniDiag-GUI.cmd` ran `where pwsh` and then a bare `pwsh` or `powershell.exe`. cmd.exe looks in the **current directory** before `PATH`, so a `pwsh.exe` / `pwsh.bat` / `powershell.cmd` planted in the working folder (a share, a Downloads folder, a USB stick) or in a user-writable `PATH` entry ran with the user's rights, or an administrator's when OmniDiag is run elevated. Same class of bug: the Restart Explorer repair ran `Start-Process 'explorer.exe'`. | Both launchers now start from Windows PowerShell at `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` and switch to `pwsh.exe` only if it exists at `%ProgramFiles(x86)%`, `%ProgramFiles%`, or `%ProgramW6432%` `\PowerShell\7\` (later locations take priority, so native 64-bit / arm64 pwsh 7 is still preferred). Each optional variable is checked with `if defined` first: an unset one would expand to the drive root, which standard users can write to. A missing powershell.exe exits with an error. The portable environment setup is unchanged. The repair now starts `%SystemRoot%\explorer.exe`. `install.ps1` already starts the launcher by its full path. | `Security 3: launcher executable resolution` (parses the `.cmd` text: no `where`, no bare `pwsh` / `powershell`, every `PSEXE` path pinned, pwsh still preferred, `if defined` guards; environment setup unchanged; explorer path; **Windows only:** runs `OmniDiag.cmd version` with planted `pwsh` / `powershell` `.bat` / `.cmd` files in `PATH` and the working folder and checks none of them ran) | Fixed (pending CI) |
+| 4 | Temp files only through `Get-OmniDataPath` | **None in product code.** An audit of `src`, `OmniDiag.ps1`, and `install.ps1` for `GetTempPath`, `GetTempFileName`, `New-TemporaryFile`, `$env:TEMP` / `$env:TMP`, and `GetEnvironmentVariable('TEMP')` found only intended uses: the last-resort data root for read-only media (`Paths.psm1`, flagged `IsPortable = $false`), the temp scanner and the temp-clean repair (they check the **host** temp folder on purpose, through `OMNIDIAG_HOST_TEMP`), and the bootstrap installer (it runs before OmniDiag's data root exists). Scratch files (package staging, redacted single-file export) already go through `Get-OmniDataPath -Kind Temp`. | No product change. A static AST check now fails on any new use outside the allowlist, and on allowlist entries that no longer match any code. | `Security 4: temp files only through Get-OmniDataPath` (the AST finder flags a planted sample of every form; only allowlisted uses in `src`, `OmniDiag.ps1`, `install.ps1`; no stale allowlist entries; package staging uses the data root) | Fixed (pending CI): no finding, guard added |
+| 5 | No secrets in reports or logs | **Real.** (a) The proxy scanner copied `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` into a metric and, off Windows, into a finding, unchanged. These often contain `http://user:password@proxy:port`. The WinINET proxy server and PAC URL were copied unchanged too. (b) The scheduled-task and startup-folder findings include command-line arguments unchanged (for example `-Password ...`). (c) The run log stores messages and data unchanged. Checked and found clean: no scanner reads Winlogon `DefaultPassword` (the registry scanner reads only `Shell` / `Userinit`), Wi-Fi keys (no `key=clear`), or BitLocker key protectors (only protection and encryption status). The environment-variable scanner reports only `PATH` entries. | Central scrubbing in Core/Models: `Protect-OmniSecretText` masks BitLocker recovery passwords (48 digits in 8 groups), `user:password@` in URLs, `password=` / `pwd=` / `secret=` / `token=` / `api_key=` / `sig=` pairs (also `DB_PASSWORD=` and similar), `password:` labels, `-Password` / `--token` / `/secret:` switches, Bearer and Basic values, and netsh `Key Content` lines. It keeps the key (`password=[REDACTED]`) so the evidence still reads correctly. `Protect-OmniSecretData` walks results, metrics, and finding data in place. A string stored under a secret name (`DefaultPassword`, `Password`, `Token`, `KeyMaterial`, `RecoveryPassword`, ...) is replaced whole, while names like `PasswordLastSet` stay readable. Applied in `New-OmniFinding` (before an Id is built from the title), `Complete-OmniResult`, after every engine run, and to every log record (message and data). The proxy scanner also scrubs its values at the source. | `Security 5: no secrets in reports or logs` (scrubber unit cases; ordinary text left unchanged; the real proxy collector with a password in `HTTP_PROXY`; a fake session with a planted corpus (DefaultPassword, recovery key, `DB_PASSWORD=` / `password=` / `MYSQL_PWD=`, proxy URL, `-Password` / `--token`, Wi-Fi key, Bearer token, connection string, SAS `sig=`, log message and log data, the result error) exported through HTML, JSON, CSV, Markdown, PDF, and ZIP (every entry, including the run log), plain and redacted, plus the saved session, the log file, and `omnidiag report --from-session`; no secret may appear anywhere) | Fixed (pending CI) |
+
+## Residual risks and limits (documented, not fixed)
+
+- **Secret patterns are heuristic.** A secret with no keyword next to it is not
+  recognized, for example `net use \\srv\share P@ss /user:bob`, or a password passed as a
+  positional argument. The patterns are tuned so that common event text (`Elevated Token:
+  Yes`, "Reset the password of ...") is left alone, so some formats can still get through.
+  Treat reports as sensitive, and use `--redact` before sharing.
+- **Only data OmniDiag creates is scrubbed.** Sessions and reports saved by earlier
+  versions are not scrubbed again on import. Other .NET objects inside metrics (CIM
+  instances, process objects) are not walked; no scanner currently stores them.
+- **Other external tools** that scanners run by name from PowerShell (`netsh.exe`,
+  `ipconfig.exe`, `dsregcmd.exe`, ...) are resolved through `PATH`. PowerShell never
+  searches the current directory, and the default `PATH` entries are writable only by
+  administrators, so these are not pinned. A user-writable folder early in the machine
+  `PATH` is a host misconfiguration that the review does not try to defend against.
+- **Explicit `--output` paths with `..`** are allowed after canonicalization. The person
+  running the tool chooses where to write, so `..` is resolved rather than refused. Only
+  names that come from host data or a `-BaseName` are limited to the output folder.
+- **Plain `.json` session files** (not `.zip`) are read without a size limit. A file on
+  disk is the size it is, with no amplification. Fuzzed session import is reviewed with
+  the content items.
+- **pwsh outside the standard locations** (a Microsoft Store / MSIX install, a per-user
+  install, a preview build in `7-preview`) is not used by the launchers. They fall back to
+  Windows PowerShell 5.1. This is on purpose: those folders are user-writable or not
+  fixed.
+
+## Still to verify on Windows
+
+1. The full `Tests/Security.Io.Tests.ps1`, plus the existing suites (the changes touch the
+   models, logger, exporters, and CLI), on Windows PowerShell 5.1 and pwsh 7, and on Ubuntu.
+2. `OmniDiag.cmd` and `OmniDiag-GUI.cmd` on a real cmd.exe:
+   - a 64-bit host with pwsh 7 installed (pwsh is chosen);
+   - a host without pwsh (5.1 is chosen);
+   - 32-bit cmd.exe (`%ProgramW6432%` path);
+   - an arm64 host, if one is available.
+   The Windows-only test covers the planted-executable case.
+3. On .NET Framework 4.x, check two behaviours: that `ZipArchive.CreateEntry` / `OpenRead`
+   handle the malicious names used in the tests (`C:x`, `:stream`, a leading `/`), and
+   that `GetUnresolvedProviderPathFromPSPath` handles `report.json:hidden`.
+4. The cost of secret scrubbing on a large event-log session, against the 60-second
+   full-report target.
 
 ## Content and import
 

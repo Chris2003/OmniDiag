@@ -210,6 +210,8 @@ function Complete-OmniEngineRun {
     param($Result, $Registration)
     if ($null -eq $Result) { throw "Module '$($Registration.Name)' returned no result." }
     if (-not $Result.EndTime) { Complete-OmniResult -Result $Result | Out-Null }
+    # Anything a module added after completing its result is scrubbed too (secrets, item 5).
+    else { Protect-OmniSecretData -InputObject $Result }
     return $Result
 }
 

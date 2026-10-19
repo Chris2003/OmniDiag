@@ -687,13 +687,58 @@ function Show-OmniDiagGui {
         [string] $RepairsPath = $script:OmniApiRepairsPath
     )
     if (-not (Test-OmniWindowsHost)) { throw [System.PlatformNotSupportedException]::new('The OmniDiag GUI needs Windows (WPF).') }
-    if (-not (Get-Command Show-OmniDiagWindow -ErrorAction SilentlyContinue)) { throw [System.NotSupportedException]::new('The OmniDiag GUI module is not loaded.') }
-    Show-OmniDiagWindow -ModulesPath $ModulesPath -RepairsPath $RepairsPath -Theme $Theme
+    if (-not (Get-Command Start-OmniGuiWindow -ErrorAction SilentlyContinue)) { throw [System.NotSupportedException]::new('The OmniDiag GUI module is not loaded.') }
+    Start-OmniGuiWindow -ModulesPath $ModulesPath -RepairsPath $RepairsPath -Theme $Theme
+}
+
+function Show-OmniDiagWindow {
+    <#
+    .SYNOPSIS
+        Deprecated: opens the OmniDiag window. Use Show-OmniDiagGui.
+
+    .DESCRIPTION
+        The pre-1.0 name of Show-OmniDiagGui, kept for one minor version. It prints a
+        one-time deprecation warning when called from outside OmniDiag, then starts the
+        GUI (Start-OmniGuiWindow in UI/OmniDiagGui.psm1) with the same parameters.
+
+    .PARAMETER RootManifest
+        Path to OmniDiag.psd1. Default: the bundled src\OmniDiag.psd1.
+
+    .PARAMETER ModulesPath
+        Scanner plugin folder. Default: the bundled src\Modules.
+
+    .PARAMETER RepairsPath
+        Repair plugin folder. Default: the bundled src\Repairs.
+
+    .PARAMETER Theme
+        Initial theme: Light (default) or Dark.
+
+    .NOTES
+        Deprecated in 0.8.0: use Show-OmniDiagGui.
+
+    .EXAMPLE
+        Show-OmniDiagGui -Theme Dark
+    #>
+    [CmdletBinding()]
+    param(
+        [string] $RootManifest,
+        [string] $ModulesPath,
+        [string] $RepairsPath,
+        [ValidateSet('Dark', 'Light')] [string] $Theme = 'Light'
+    )
+    Write-OmniDeprecationWarning -Name 'Show-OmniDiagWindow' -Replacement 'Show-OmniDiagGui'
+    if (-not (Get-Command Start-OmniGuiWindow -ErrorAction SilentlyContinue)) { throw [System.NotSupportedException]::new('The OmniDiag GUI module is not loaded.') }
+    # Only the parameters the caller gave: Start-OmniGuiWindow has its own defaults.
+    $p = @{ Theme = $Theme }
+    foreach ($k in @('RootManifest', 'ModulesPath', 'RepairsPath')) {
+        if ($PSBoundParameters.ContainsKey($k)) { $p[$k] = $PSBoundParameters[$k] }
+    }
+    Start-OmniGuiWindow @p
 }
 
 Export-ModuleMember -Function @(
     'Write-OmniDeprecationWarning', 'Resolve-OmniSessionPath', 'Get-OmniRepairRunExitCode',
     'Import-OmniDiagSession', 'Compare-OmniDiagSession',
     'Export-OmniDiagReport', 'Invoke-OmniDiagReport',
-    'Get-OmniDiagRepair', 'Invoke-OmniDiagRepair', 'Show-OmniDiagGui'
+    'Get-OmniDiagRepair', 'Invoke-OmniDiagRepair', 'Show-OmniDiagGui', 'Show-OmniDiagWindow'
 )

@@ -57,6 +57,10 @@ function New-OmniLogger {
         }
     }
 
+    # Secret scrubbing for every record (Models.psm1, docs/SECURITY-REVIEW.md item 5). Resolved
+    # once; absent only when this module is imported on its own without the Core models.
+    $secretFilter = Get-Command -Name 'Protect-OmniSecretData' -CommandType Function -ErrorAction SilentlyContinue
+
     $logger = [pscustomobject]@{
         PSTypeName    = 'OmniDiag.Logger'
         Path          = $Path
@@ -64,6 +68,7 @@ function New-OmniLogger {
         Console       = [bool]$Console
         MaxBufferSize = $MaxBufferSize
         Buffer        = [System.Collections.Generic.List[object]]::new()
+        SecretFilter  = $secretFilter
     }
 
     $writer = {
@@ -94,6 +99,8 @@ function New-OmniLogger {
         $Level = [string]$Record.Level
         if (-not $levels.Contains($Level)) { $Level = 'Info' }
         if ($levels[$Level] -lt $levels[$this.MinimumLevel]) { return }
+        # Scrub secret-looking values (message and data) before the record is kept or written.
+        if ($this.SecretFilter -and $Record -is [System.Management.Automation.PSCustomObject]) { & $this.SecretFilter -InputObject $Record }
         $Component = [string]$Record.Component
         $Message = [string]$Record.Message
 

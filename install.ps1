@@ -86,6 +86,24 @@ param(
         }
         Write-Host "Archive SHA-256: $actualHash" -ForegroundColor DarkGray
 
+        # Zip-slip / zip-bomb guard: refuse the archive before anything is extracted when an
+        # entry name is absolute, carries a drive letter or ':' (NTFS stream), or has a '..'
+        # segment, or when it is implausibly large for OmniDiag.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $zipCheck = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+        try {
+            if ($zipCheck.Entries.Count -gt 20000) { throw "Downloaded archive has too many entries ($($zipCheck.Entries.Count))." }
+            $declaredBytes = [long]0
+            foreach ($zipEntry in $zipCheck.Entries) {
+                $entryName = $zipEntry.FullName.Replace('\', '/')
+                if ($entryName.StartsWith('/') -or $entryName.Contains(':') -or (@($entryName.Split('/')) -contains '..')) {
+                    throw "Downloaded archive contains an unsafe entry name: '$($zipEntry.FullName)'."
+                }
+                $declaredBytes += [long]$zipEntry.Length
+            }
+            if ($declaredBytes -gt 512MB) { throw "Downloaded archive expands to $declaredBytes bytes; refusing to extract." }
+        } finally { $zipCheck.Dispose() }
+
         Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force
         $sourceRoot = @(Get-ChildItem -LiteralPath $extractPath -Directory -ErrorAction Stop |
             Where-Object {

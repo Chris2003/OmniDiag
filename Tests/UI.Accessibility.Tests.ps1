@@ -2,35 +2,45 @@
 <#
     Accessibility, keyboard, high-contrast, and drill-down tests for the WPF GUI.
 
-    * Cross-platform: MainWindow.xaml is parsed as XML (every interactive control is named,
-      the keyboard shortcuts exist, access keys are unique, focus visuals are set, severity
-      colors are theme brushes), the code-behind's control list matches the XAML, and the
-      pure helpers behind the findings filter, finding details, and group summaries are
-      exercised on a synthetic session.
+    * Cross-platform: the shell (MainWindow.xaml) and every section fragment
+      (Sections/*.xaml, loaded on first navigation) are parsed as XML (every interactive
+      control is named, the keyboard shortcuts exist, access keys are unique, focus visuals
+      are set, severity colors are theme brushes), the code-behind's control list matches
+      the XAML, and the pure helpers behind the findings filter, finding details, and group
+      summaries are exercised on a synthetic session.
     * Windows desktop only: the real window is shown modelessly on its own STA thread and
-      inspected with UI Automation (System.Windows.Automation): every keyboard-focusable
-      element has a Name, Tab traversal reaches every tab stop, and first render is
-      measured (soft gate: a warning above 2 s, never a failure). It skips with a reason
-      on non-Windows hosts, non-interactive sessions, or when no window can be rendered
-      (e.g. a CI runner without a usable desktop).
+      inspected with UI Automation (System.Windows.Automation). The test visits every
+      section through the navigation (which loads each lazy section), and in each one
+      checks that every keyboard-focusable element has a Name and that Tab traversal
+      reaches every tab stop; first render is measured (soft gate: a warning above 2 s,
+      never a failure). It skips with a reason on non-Windows hosts, non-interactive
+      sessions, or when no window can be rendered (e.g. a CI runner without a usable
+      desktop).
 #>
 
 BeforeAll {
     $script:Root = Split-Path $PSScriptRoot -Parent
     $script:XamlPath = Join-Path $script:Root 'src/UI/MainWindow.xaml'
+    $script:SectionDir = Join-Path $script:Root 'src/UI/Sections'
     $script:GuiPath = Join-Path $script:Root 'src/UI/OmniDiagGui.psm1'
     $script:Manifest = Join-Path $script:Root 'src/OmniDiag.psd1'
     Import-Module $script:Manifest -Force -DisableNameChecking -Global
     $script:Gui = (Get-Module OmniDiag).NestedModules | Where-Object { $_.Name -eq 'OmniDiagGui' } | Select-Object -First 1
 
+    # The shell (window, top bar, navigation, Dashboard, status bar) ...
     $script:XamlRaw = Get-Content -LiteralPath $script:XamlPath -Raw
     [xml]$script:Xaml = $script:XamlRaw
+    # ... and the lazily loaded section fragments (plus their shared styles).
+    $script:FragmentPaths = @(Get-ChildItem -LiteralPath $script:SectionDir -Filter '*.xaml' -File | Sort-Object Name | ForEach-Object { $_.FullName })
+    $script:XamlDocs = @($script:Xaml) + @($script:FragmentPaths | ForEach-Object { [xml](Get-Content -LiteralPath $_ -Raw) })
+    $script:AllXamlRaw = (@($script:XamlRaw) + @($script:FragmentPaths | ForEach-Object { Get-Content -LiteralPath $_ -Raw })) -join "`n"
     $script:GuiSource = Get-Content -LiteralPath $script:GuiPath -Raw
     $script:XNs = 'http://schemas.microsoft.com/winfx/2006/xaml'
 
     function Get-XamlElement {
+        # Elements of the given types across the shell and every fragment.
         param([string[]] $LocalName)
-        @($script:Xaml.SelectNodes('//*') | Where-Object { $LocalName -contains $_.LocalName })
+        @(foreach ($doc in $script:XamlDocs) { $doc.SelectNodes('//*') | Where-Object { $LocalName -contains $_.LocalName } })
     }
     function Get-XamlLabel {
         # A control's accessible label: AutomationProperties.Name, else its Content text.
@@ -180,8 +190,9 @@ Describe 'GUI accessibility: XAML (cross-platform)' {
         $script:GuiSource | Should -Match "'LiveRegionChanged'"
     }
 
-    It 'is ASCII-only (XAML and code-behind)' {
-        foreach ($path in $script:XamlPath, $script:GuiPath) {
+    It 'is ASCII-only (XAML shell, section fragments, and code-behind)' {
+        $script:FragmentPaths.Count | Should -BeGreaterOrEqual 7
+        foreach ($path in @($script:XamlPath, $script:GuiPath) + $script:FragmentPaths) {
             $bytes = [System.IO.File]::ReadAllBytes($path)
             @($bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0 -Because $path
         }
@@ -189,10 +200,26 @@ Describe 'GUI accessibility: XAML (cross-platform)' {
 }
 
 Describe 'GUI code-behind matches the XAML (cross-platform)' {
-    It 'defines every x:Name the code looks up' {
+    It 'defines every x:Name the code looks up (in the shell or a section fragment)' {
         $names = & $script:Gui { $script:OmniUiControlNames }
         $names.Count | Should -BeGreaterThan 40
-        foreach ($n in $names) { $script:XamlRaw | Should -Match ('x:Name="' + $n + '"') }
+        foreach ($n in $names) { $script:AllXamlRaw | Should -Match ('x:Name="' + $n + '"') }
+    }
+
+    It 'loads sections lazily: the window factory parses only the shell, navigation loads the rest' {
+        $factory = [regex]::Match($script:GuiSource, '(?s)function Initialize-OmniMainWindow \{.*?\n\}\r?\n').Value
+        $factory | Should -Not -BeNullOrEmpty
+        # Code only: the factory's help and comments mention Import-OmniSection by name.
+        $factoryCode = (($factory -replace '(?s)<#.*?#>', '') -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+        $factoryCode | Should -Not -Match 'Import-OmniSection|Get-OmniSectionXaml'
+        $nav = [regex]::Match($script:GuiSource, '(?s)function Show-OmniNavPanel \{.*?\n\}\r?\n').Value
+        $nav | Should -Match 'Import-OmniSection'
+        # Every navigation panel except the Dashboard is a lazily loaded section.
+        $panels = & $script:Gui { $script:OmniNavPanels }
+        foreach ($p in @($panels | Select-Object -Skip 1)) {
+            (& $script:Gui { param($h) Get-OmniSectionForHost -HostName $h } $p) | Should -Not -BeNullOrEmpty -Because $p
+        }
+        (& $script:Gui { param($h) Get-OmniSectionForHost -HostName $h } 'PanelDashboard') | Should -BeNullOrEmpty
     }
 
     It 'only reaches for controls it looked up' {
@@ -234,11 +261,13 @@ Describe 'GUI code-behind matches the XAML (cross-platform)' {
     It 'measures startup to first render and defers slow work until after it' {
         $script:GuiSource | Should -Match 'Add_ContentRendered'
         $script:GuiSource | Should -Match 'DispatcherPriority\]::ApplicationIdle'
+        $script:GuiSource | Should -Match 'DispatcherPriority\]::Background'
         $script:GuiSource | Should -Match 'SetItemStatus\(\$ui\.Window, "StartupMs='
-        # The window factory itself does no CIM / plugin discovery.
+        # The window factory itself does no CIM / plugin discovery, elevation check, group
+        # catalog, or log-file creation (all after first paint).
         $factory = [regex]::Match($script:GuiSource, '(?s)function Initialize-OmniMainWindow \{.*?\n\}\r?\n').Value
         $factory | Should -Not -BeNullOrEmpty
-        $factory | Should -Not -Match 'Get-OmniSystemInfo|Get-OmniModule|Invoke-OmniRepairCenter|Get-CimInstance'
+        $factory | Should -Not -Match 'Get-OmniSystemInfo|Get-OmniModule|Get-OmniDiagRepair|Get-CimInstance|Test-OmniIsAdministrator|Initialize-OmniGroupCatalog|New-OmniLogger'
     }
 
     It 'declares the Light palette in the XAML, so startup does not apply the Light theme twice' {
@@ -253,9 +282,11 @@ Describe 'GUI code-behind matches the XAML (cross-platform)' {
 
     It 'records startup phase checkpoints and turns off the legacy accessibility switches before WPF loads' {
         foreach ($phase in 'Entry', 'StaRunspaceReady', 'WpfPreloaded', 'ModuleImported', 'InitializeStart', 'WpfAssembliesLoaded',
-            'XamlParsed', 'WindowConstructed', 'ShowCalled', 'ContentRendered') {
+            'XamlEngineReady', 'ShellParsed', 'XamlParsed', 'WindowConstructed', 'ShowCalled', 'ContentRendered') {
             $script:GuiSource | Should -Match ("Add-OmniStartupMark -Name '" + $phase + "'")
         }
+        # Each lazily loaded section is marked when it loads.
+        $script:GuiSource | Should -Match ([regex]::Escape('Add-OmniStartupMark -Name "Section${Name}Loaded"'))
         foreach ($sw in 'Switch.UseLegacyAccessibilityFeatures', 'Switch.UseLegacyAccessibilityFeatures.2', 'Switch.UseLegacyAccessibilityFeatures.3') {
             $script:GuiSource | Should -Match ([regex]::Escape("'$sw'"))
         }
@@ -285,8 +316,10 @@ Describe 'GUI code-behind matches the XAML (cross-platform)' {
         $script:GuiSource | Should -Match 'Bundle \(\.zip\)'
     }
 
-    It 'detects whether Export-OmniReport supports -Redact' {
-        $expected = (Get-Command Export-OmniReport).Parameters.ContainsKey('Redact')
+    It 'detects whether Export-OmniDiagReport -Redact can run' {
+        $expected = (Get-Command Export-OmniDiagReport).Parameters.ContainsKey('Redact') -and
+            [bool](Get-Command New-OmniRedactionContext -ErrorAction SilentlyContinue) -and
+            [bool](Get-Command ConvertTo-OmniRedacted -ErrorAction SilentlyContinue)
         (& $script:Gui { Test-OmniRedactSupported }) | Should -Be $expected
     }
 }
@@ -423,9 +456,14 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
 
         # Host the window on its own STA thread with a running dispatcher. UI Automation
         # client calls must not come from the window's own thread, so they run here.
+        # Protocol per section: this thread sets NavRequest = <index>; the window thread
+        # navigates there (loading a lazy section on first visit), walks Tab traversal,
+        # stores the result in Sections[<index>], and sets NavDone = <index>; this thread
+        # then runs the UI Automation name check on what is now shown.
         $sync = [hashtable]::Synchronized(@{
             Stage = 'starting'; Ready = $false; Error = $null; Hwnd = [IntPtr]::Zero
-            StartupMs = $null; StartupTimings = ''; Mode = ''; Visited = @(); Unreached = @(); Stop = $false; Closed = $false
+            StartupMs = $null; StartupTimings = ''; Stop = $false; Closed = $false
+            Sections = [hashtable]::Synchronized(@{}); NavRequest = -1; NavDone = -1; NavBusy = $false
         })
         $rs = [runspacefactory]::CreateRunspace()
         $rs.ApartmentState = 'STA'
@@ -462,68 +500,110 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
                 if ($null -eq $Sync.StartupMs) { throw 'the window never rendered (no ContentRendered within 20 s)' }
                 $Sync.Hwnd = ([System.Windows.Interop.WindowInteropHelper]::new($window)).Handle
 
-                # Tab traversal: start at the first top-bar control and press "Tab" (MoveFocus
-                # Next) until focus returns to an element already visited.
                 $Sync.Stage = 'tab'
                 [void]$window.Activate()
                 & $pump
+                # Same hashtable the GUI fills as sections load.
                 $ctl = & $gui { $script:OmniUi.Controls }
+                $panels = @(& $gui { $script:OmniNavPanels })
                 $describe = {
                     param($el)
                     $n = [System.Windows.Automation.AutomationProperties]::GetName($el)
                     $id = if ($el -is [System.Windows.FrameworkElement] -and $el.Name) { $el.Name } else { $el.GetType().Name }
                     if ($n) { "$id ($n)" } else { $id }
                 }
-                [void]$ctl.ChkNetworkProbes.Focus()
-                & $pump
-                $visited = [System.Collections.Generic.List[object]]::new()
-                if ([System.Windows.Input.Keyboard]::FocusedElement -eq $ctl.ChkNetworkProbes) {
-                    $Sync.Mode = 'MoveFocus'
-                    for ($i = 0; $i -lt 400; $i++) {
-                        $cur = [System.Windows.Input.Keyboard]::FocusedElement
-                        if (-not $cur -or $visited.Contains($cur)) { break }
-                        $visited.Add($cur)
-                        [void]$cur.MoveFocus([System.Windows.Input.TraversalRequest]::new([System.Windows.Input.FocusNavigationDirection]::Next))
-                        & $pump
-                    }
-                } else {
-                    $Sync.Mode = 'Static'   # window could not take keyboard focus (inactive desktop)
-                }
-                $Sync.Visited = @($visited | ForEach-Object { & $describe $_ })
 
-                # Every visible, enabled tab stop must be in the traversal - except items inside
-                # list/grid/combo containers (one stop per container; arrows move within).
-                $stops = [System.Collections.Generic.List[object]]::new()
-                $walk = {
-                    param($node, [bool] $insideItems)
-                    $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($node)
-                    for ($k = 0; $k -lt $count; $k++) {
-                        $child = [System.Windows.Media.VisualTreeHelper]::GetChild($node, $k)
-                        if ($child -is [System.Windows.UIElement] -and -not $child.IsVisible) { continue }
-                        $isTabStop = $child -is [System.Windows.Controls.Control] -and $child.Focusable -and $child.IsEnabled -and $child.IsTabStop
-                        if ($isTabStop -and -not $insideItems) { $stops.Add($child) }
-                        $nextInside = $insideItems -or $child -is [System.Windows.Controls.ItemsControl] -or $child -is [System.Windows.Controls.Primitives.TextBoxBase]
-                        & $walk $child $nextInside
+                # Show section $Index (loading it on first visit), then press "Tab" (MoveFocus
+                # Next) from the first top-bar control until focus returns to an element
+                # already visited, and compare with every visible, enabled tab stop.
+                $walkSection = {
+                    param([int] $Index)
+                    & $gui { param($i) Select-OmniNavSection -Index $i -NoFocus } $Index
+                    & $pump
+                    $window.UpdateLayout()
+                    & $pump
+                    $panel = $panels[$Index]
+                    $section = & $gui { param($p) Get-OmniSectionForHost -HostName $p } $panel
+                    $loaded = $true
+                    if ($section) { $loaded = [bool](& $gui { param($n) Test-OmniSectionLoaded -Name $n } $section) }
+
+                    [void]$ctl.ChkNetworkProbes.Focus()
+                    & $pump
+                    $visited = [System.Collections.Generic.List[object]]::new()
+                    $mode = 'Static'   # window could not take keyboard focus (inactive desktop)
+                    if ([System.Windows.Input.Keyboard]::FocusedElement -eq $ctl.ChkNetworkProbes) {
+                        $mode = 'MoveFocus'
+                        for ($i = 0; $i -lt 400; $i++) {
+                            $cur = [System.Windows.Input.Keyboard]::FocusedElement
+                            if (-not $cur -or $visited.Contains($cur)) { break }
+                            $visited.Add($cur)
+                            [void]$cur.MoveFocus([System.Windows.Input.TraversalRequest]::new([System.Windows.Input.FocusNavigationDirection]::Next))
+                            & $pump
+                        }
+                    }
+
+                    # Tab stops - except items inside list/grid/combo/text containers (one
+                    # stop per container; arrows move within).
+                    $stops = [System.Collections.Generic.List[object]]::new()
+                    $walk = {
+                        param($node, [bool] $insideItems)
+                        $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($node)
+                        for ($k = 0; $k -lt $count; $k++) {
+                            $child = [System.Windows.Media.VisualTreeHelper]::GetChild($node, $k)
+                            if ($child -is [System.Windows.UIElement] -and -not $child.IsVisible) { continue }
+                            $isTabStop = $child -is [System.Windows.Controls.Control] -and $child.Focusable -and $child.IsEnabled -and $child.IsTabStop
+                            if ($isTabStop -and -not $insideItems) { $stops.Add($child) }
+                            $nextInside = $insideItems -or $child -is [System.Windows.Controls.ItemsControl] -or $child -is [System.Windows.Controls.Primitives.TextBoxBase]
+                            & $walk $child $nextInside
+                        }
+                    }
+                    & $walk $window $false
+                    # A stop counts as reached when focus landed on it or inside it (an
+                    # editable combo box focuses its text part; a grid may focus a cell).
+                    $isReached = {
+                        param($stop)
+                        if ($visited.Contains($stop)) { return $true }
+                        foreach ($v in $visited) {
+                            if ($v -is [System.Windows.Media.Visual] -and $v.IsDescendantOf($stop)) { return $true }
+                        }
+                        return $false
+                    }
+                    $unreached = @()
+                    if ($mode -eq 'MoveFocus') { $unreached = @($stops | Where-Object { -not (& $isReached $_) } | ForEach-Object { & $describe $_ }) }
+                    return @{
+                        Panel = $panel; Section = $section; Loaded = $loaded; Mode = $mode
+                        Visited = @($visited | ForEach-Object { & $describe $_ })
+                        Unreached = $unreached
+                        TabStops = @($stops | ForEach-Object { & $describe $_ })
                     }
                 }
-                & $walk $window $false
-                if ($Sync.Mode -eq 'MoveFocus') {
-                    $Sync.Unreached = @($stops | Where-Object { -not $visited.Contains($_) } | ForEach-Object { & $describe $_ })
-                } else {
-                    $Sync.Unreached = @()
-                }
-                $Sync.TabStops = @($stops | ForEach-Object { & $describe $_ })
 
+                # Section 0 (the Dashboard, already shown) before handing over.
+                $Sync.Sections[0] = & $walkSection 0
+                $Sync.NavDone = 0
                 $Sync.Stage = 'ready'
                 $Sync.Ready = $true
 
                 # Keep the dispatcher pumping (UI Automation requests are served on this thread)
-                # until the test asks us to stop, or a safety timeout.
+                # and serve navigation requests until the test asks us to stop, or a safety timeout.
                 $frame = [System.Windows.Threading.DispatcherFrame]::new()
-                $limit = [DateTime]::UtcNow.AddSeconds(180)
+                $limit = [DateTime]::UtcNow.AddSeconds(240)
                 $timer = [System.Windows.Threading.DispatcherTimer]::new()
                 $timer.Interval = [TimeSpan]::FromMilliseconds(100)
                 $timer.Add_Tick({
+                    $want = [int]$Sync.NavRequest
+                    if (-not $Sync.NavBusy -and $want -ge 0 -and $want -ne [int]$Sync.NavDone) {
+                        # NavBusy: walkSection pumps the dispatcher, so this tick can re-enter.
+                        $Sync.NavBusy = $true
+                        try {
+                            $Sync.Sections[$want] = & $walkSection $want
+                        } catch {
+                            $Sync.Sections[$want] = @{ Panel = "#$want"; Error = $_.Exception.Message }
+                        } finally {
+                            $Sync.NavDone = $want
+                            $Sync.NavBusy = $false
+                        }
+                    }
                     if ($Sync.Stop -or [DateTime]::UtcNow -gt $limit) {
                         $timer.Stop()
                         try { $window.Close() } catch { $null = $_ }
@@ -555,27 +635,46 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
             return
         }
 
-        # UI Automation walk (from this thread).
+        # Visit every section (forcing each lazy section to load), then run the UI
+        # Automation walk (from this thread) on what that section shows.
+        $panels = @(& $script:Gui { $script:OmniNavPanels })
         $root = [System.Windows.Automation.AutomationElement]::FromHandle($sync.Hwnd)
         $cond = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::IsKeyboardFocusableProperty, $true)
-        $focusable = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond))
-        $unnamed = @(foreach ($el in $focusable) {
-            $c = $el.Current
-            if ($c.ClassName -eq 'DataGridCell') { continue }   # cells are read through their named row
-            if (-not ([string]$c.Name).Trim()) { '{0} id={1} class={2}' -f $c.ControlType.ProgrammaticName, $c.AutomationId, $c.ClassName }
-        })
+        $unnamed = [System.Collections.Generic.List[string]]::new()
+        $problems = [System.Collections.Generic.List[string]]::new()
         $byId = @{}
-        foreach ($el in $focusable) { if ($el.Current.AutomationId) { $byId[$el.Current.AutomationId] = $el.Current } }
+        $focusableCount = 0
+        for ($i = 0; $i -lt $panels.Count; $i++) {
+            if ($i -gt 0) {
+                $sync.NavRequest = $i
+                $navDeadline = [DateTime]::UtcNow.AddSeconds(30)
+                while ([int]$sync.NavDone -ne $i -and -not $sync.Closed -and [DateTime]::UtcNow -lt $navDeadline) { Start-Sleep -Milliseconds 50 }
+                if ([int]$sync.NavDone -ne $i) { $problems.Add("$($panels[$i]): the window did not navigate there within 30 s"); continue }
+            }
+            $info = $sync.Sections[$i]
+            if ($info.ContainsKey('Error')) { $problems.Add("$($panels[$i]): $($info.Error)"); continue }
+            if (-not $info.Loaded) { $problems.Add("$($panels[$i]): section $($info.Section) did not load") }
+            $focusable = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond))
+            $focusableCount = [Math]::Max($focusableCount, $focusable.Count)
+            foreach ($el in $focusable) {
+                $c = $el.Current
+                if ($c.AutomationId) { $byId[$c.AutomationId] = $c }
+                if ($c.ClassName -eq 'DataGridCell') { continue }   # cells are read through their named row
+                if (-not ([string]$c.Name).Trim()) {
+                    $unnamed.Add(('[{0}] {1} id={2} class={3}' -f $panels[$i], $c.ControlType.ProgrammaticName, $c.AutomationId, $c.ClassName))
+                }
+            }
+        }
+        $sections = @(for ($i = 0; $i -lt $panels.Count; $i++) { if ($sync.Sections.ContainsKey($i)) { $sync.Sections[$i] } })
         $script:UiaResult = [pscustomobject]@{
-            FocusableCount = $focusable.Count
-            Unnamed        = $unnamed
+            FocusableCount = $focusableCount
+            Unnamed        = @($unnamed | Select-Object -Unique)
+            Problems       = @($problems)
             ById           = $byId
             WindowStatus   = $root.Current.ItemStatus
             StartupMs      = $sync.StartupMs
             StartupTimings = $sync.StartupTimings
-            Mode           = $sync.Mode
-            Visited        = @($sync.Visited)
-            Unreached      = @($sync.Unreached)
+            Sections       = $sections
         }
     }
 
@@ -595,33 +694,43 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
         }
     }
 
-    It 'builds and renders the main window' {
+    It 'builds and renders the main window, and loads every section on navigation' {
         if ($script:UiaSkip) { Set-ItResult -Skipped -Because $script:UiaSkip; return }
         $script:UiaResult | Should -Not -BeOfType [string] -Because "$script:UiaResult"
         $script:UiaResult.FocusableCount | Should -BeGreaterThan 5
+        $script:UiaResult.Problems | Should -BeNullOrEmpty
+        @($script:UiaResult.Sections).Count | Should -Be @(& $script:Gui { $script:OmniNavPanels }).Count
     }
 
-    It 'gives every keyboard-focusable element a UI Automation Name' {
+    It 'gives every keyboard-focusable element a UI Automation Name, in every section' {
         if ($script:UiaSkip) { Set-ItResult -Skipped -Because $script:UiaSkip; return }
         if ($script:UiaResult -is [string]) { throw $script:UiaResult }
         $script:UiaResult.Unnamed | Should -BeNullOrEmpty
         $script:UiaResult.ById['BtnScan'].Name | Should -Be 'Run scan'
         $script:UiaResult.ById['BtnHelp'].Name | Should -Be 'Keyboard shortcuts and help'
+        # Controls of lazily loaded sections were reached (and named) too.
+        $script:UiaResult.ById['TxtFindingFilter'].Name | Should -Be 'Filter findings'
+        $script:UiaResult.ById['BtnRunRepairs'].Name | Should -Be 'Run selected repairs'
+        $script:UiaResult.ById['BtnAiCheck'].Name | Should -Be 'Check Ollama'
     }
 
-    It 'reaches every tab stop with Tab, in top bar -> navigation -> content order' {
+    It 'reaches every tab stop with Tab in every section, in top bar -> navigation -> content order' {
         if ($script:UiaSkip) { Set-ItResult -Skipped -Because $script:UiaSkip; return }
         if ($script:UiaResult -is [string]) { throw $script:UiaResult }
-        if ($script:UiaResult.Mode -ne 'MoveFocus') {
+        $sections = @($script:UiaResult.Sections)
+        if ($sections.Count -eq 0 -or $sections[0].Mode -ne 'MoveFocus') {
             Set-ItResult -Inconclusive -Because 'the window could not take keyboard focus on this desktop'
             return
         }
-        $script:UiaResult.Unreached | Should -BeNullOrEmpty
-        $v = @($script:UiaResult.Visited)
-        $scan = [array]::FindIndex([string[]]$v, [Predicate[string]] { param($s) $s -like 'BtnScan*' })
-        $nav = [array]::FindIndex([string[]]$v, [Predicate[string]] { param($s) $s -like 'NavList*' -or $s -like 'ListBoxItem*' })
-        $scan | Should -BeGreaterOrEqual 0
-        $nav | Should -BeGreaterThan $scan
+        foreach ($s in $sections) {
+            if ($s.Mode -ne 'MoveFocus') { continue }
+            @($s.Unreached) | Should -BeNullOrEmpty -Because "every tab stop in $($s.Panel) must be reachable with Tab"
+            $v = @($s.Visited)
+            $scan = [array]::FindIndex([string[]]$v, [Predicate[string]] { param($x) $x -like 'BtnScan*' })
+            $nav = [array]::FindIndex([string[]]$v, [Predicate[string]] { param($x) $x -like 'NavList*' -or $x -like 'ListBoxItem*' })
+            $scan | Should -BeGreaterOrEqual 0 -Because $s.Panel
+            $nav | Should -BeGreaterThan $scan -Because $s.Panel
+        }
     }
 
     It 'renders first paint within 2 s (soft gate) and exposes the measurement' {
@@ -637,6 +746,7 @@ Describe 'GUI under UI Automation (Windows desktop only)' {
         } else {
             Write-Host "    GUI first render: $ms ms ($phases)"
         }
+        $phases | Should -Match 'ShellParsed=\d+ ms'
         $phases | Should -Match 'XamlParsed=\d+ ms'
         $phases | Should -Match 'ContentRendered=\d+ ms'
     }

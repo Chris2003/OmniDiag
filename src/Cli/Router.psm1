@@ -429,9 +429,15 @@ function Get-OmniCliFormatFromPath {
 }
 
 function Resolve-OmniCliPath {
-    <# .SYNOPSIS Internal: resolve a path against PowerShell's location (not the process directory). #>
+    <#
+    .SYNOPSIS
+        Internal: canonical --output / --redaction-map path, resolved against PowerShell's
+        location (not the process directory). Device paths (\\.\, \\?\), NTFS streams
+        (file:stream), and reserved names (NUL, CON, ...) are usage errors.
+    #>
     param([string] $Path)
-    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    try { return (Resolve-OmniOutputPath -Path $Path -Purpose '--output') }
+    catch { throw (New-OmniCliUsageError $_.Exception.Message) }
 }
 
 function Test-OmniCliDirectoryTarget {
@@ -1358,7 +1364,7 @@ function Invoke-OmniCliGui {
     if ($Parsed.Options.Format.Count -gt 0 -or $Parsed.Options.Output) { throw (New-OmniCliUsageError 'gui takes no --format or --output') }
     if (-not (Test-OmniCliWindows)) { throw (New-OmniCliUsageError 'the GUI needs Windows (WPF); use the other omnidiag commands on this system') }
     Write-OmniCliStatus $Io 'Opening the OmniDiag window...'
-    Show-OmniDiagWindow -ModulesPath @($ModulesPath)[0] -RepairsPath $RepairsPath
+    Show-OmniDiagGui -ModulesPath @($ModulesPath)[0] -RepairsPath $RepairsPath
     return 0
 }
 

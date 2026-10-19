@@ -63,6 +63,94 @@ function Get-OmniSessionFinding {
     }
 }
 
+# Report-package (.zip) import limits (docs/SECURITY-REVIEW.md, zip-slip / zip bomb).
+$script:OmniZipMaxEntries = 256
+$script:OmniZipMaxEntryBytes = 64MB
+$script:OmniZipReservedNameRegex = [regex]::new('^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9]|CONIN\$|CONOUT\$|CLOCK\$)$',
+    [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+
+function Get-OmniZipEntryNameProblem {
+    <#
+    .SYNOPSIS
+        Internal: why a zip entry name is unsafe to extract or trust, or $null when it is safe.
+
+    .DESCRIPTION
+        Refuses absolute names (/x, \x), drive letters (C:x), any ':' (drive or NTFS
+        stream), '..' segments (zip-slip), control characters, and Win32 device names.
+        Both '/' and '\' count as separators (Windows tools accept either).
+    #>
+    [OutputType([string])]
+    param([AllowEmptyString()][string] $FullName)
+    if ([string]::IsNullOrEmpty($FullName)) { return 'has an empty name' }
+    if ($FullName -match '[\x00-\x1F]') { return 'contains control characters' }
+    $n = $FullName.Replace('\', '/')
+    if ($n.StartsWith('/')) { return 'is an absolute path' }
+    if ($n -match '^[A-Za-z]:') { return 'starts with a drive letter' }
+    if ($n.IndexOf(':') -ge 0) { return "contains ':' (drive letter or NTFS stream)" }
+    foreach ($segment in $n.Split('/')) {
+        if ($segment -eq '..') { return "contains a '..' segment (path traversal)" }
+        $base = $segment.TrimEnd(' ', '.')
+        $dot = $base.IndexOf('.')
+        if ($dot -ge 0) { $base = $base.Substring(0, $dot) }
+        if ($script:OmniZipReservedNameRegex.IsMatch($base.TrimEnd(' '))) { return "names the reserved device '$segment'" }
+    }
+    return $null
+}
+
+function Read-OmniZipEntryText {
+    <#
+    .SYNOPSIS
+        Internal: reads one text entry of a report package, with zip-slip and zip-bomb guards.
+
+    .DESCRIPTION
+        Every entry name is validated first (Get-OmniZipEntryNameProblem); one unsafe name
+        rejects the whole package. At most $script:OmniZipMaxEntries entries are accepted.
+        The entry (shallowest match on its file name) must declare at most
+        $script:OmniZipMaxEntryBytes uncompressed, and the read stops with an error as soon
+        as more than that many bytes are actually inflated (the header can lie). Nothing is
+        written to disk.
+    #>
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string] $Path, [Parameter(Mandatory)][string] $EntryName)
+
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    $max = [long]$script:OmniZipMaxEntryBytes
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        $entries = @($zip.Entries)
+        if ($entries.Count -gt $script:OmniZipMaxEntries) {
+            throw "Report package rejected: it has $($entries.Count) entries (limit $($script:OmniZipMaxEntries)): $Path"
+        }
+        $match = $null; $matchDepth = [int]::MaxValue
+        foreach ($e in $entries) {
+            $problem = Get-OmniZipEntryNameProblem -FullName $e.FullName
+            if ($problem) { throw "Report package rejected: entry '$($e.FullName)' $problem`: $Path" }
+            # Leaf name computed here: on Linux .NET, ZipArchiveEntry.Name does not split on '\'.
+            $parts = @($e.FullName.Replace('\', '/').Split('/'))
+            if ($parts[$parts.Count - 1] -eq $EntryName -and $parts.Count -lt $matchDepth) { $match = $e; $matchDepth = $parts.Count }
+        }
+        if ($null -eq $match) { throw "Report package has no $EntryName`: $Path" }
+        if ([long]$match.Length -gt $max) {
+            throw "Report package rejected: $EntryName is $($match.Length) bytes uncompressed (limit $max): $Path"
+        }
+        $buffer = [System.IO.MemoryStream]::new()
+        $stream = $match.Open()
+        try {
+            $chunk = New-Object byte[] 81920
+            $total = [long]0
+            while (($n = $stream.Read($chunk, 0, $chunk.Length)) -gt 0) {
+                $total += $n
+                if ($total -gt $max) { throw "Report package rejected: $EntryName inflates past $max bytes: $Path" }
+                $buffer.Write($chunk, 0, $n)
+            }
+        } finally { $stream.Dispose() }
+        $buffer.Position = 0
+        $reader = [System.IO.StreamReader]::new($buffer, [System.Text.UTF8Encoding]::new($false), $true)
+        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+    } finally { $zip.Dispose() }
+}
+
 function Save-OmniSession {
     <#
     .SYNOPSIS
@@ -97,7 +185,8 @@ function Save-OmniSession {
         $Path = Get-OmniDataPath -Kind Sessions -ChildPath "session-$stamp.json"
     }
     # .NET resolves relative paths against the process directory, not PowerShell's location.
-    $Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    # Canonical path; device paths, NTFS streams, and reserved names are refused.
+    $Path = Resolve-OmniOutputPath -Path $Path -Purpose 'session'
     $dir = Split-Path -Path $Path -Parent
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     # Depth 12 captures findings -> Data -> nested event groups/timeline entries.
@@ -148,14 +237,9 @@ function Import-OmniSession {
     }
 
     if ($item.Extension -eq '.zip') {
-        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
-        $zip = [System.IO.Compression.ZipFile]::OpenRead($item.FullName)
-        try {
-            $entry = $zip.Entries | Where-Object { $_.Name -eq 'data.json' } | Select-Object -First 1
-            if (-not $entry) { throw "Report package has no data.json: $($item.FullName)" }
-            $reader = [System.IO.StreamReader]::new($entry.Open())
-            try { $json = $reader.ReadToEnd() } finally { $reader.Dispose() }
-        } finally { $zip.Dispose() }
+        # Validated, size-bounded read: nothing is extracted to disk, and a package with
+        # unsafe entry names, too many entries, or an oversized data.json is refused.
+        $json = Read-OmniZipEntryText -Path $item.FullName -EntryName 'data.json'
     } else {
         $json = [System.IO.File]::ReadAllText($item.FullName)
     }

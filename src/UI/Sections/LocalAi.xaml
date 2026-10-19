@@ -1,0 +1,69 @@
+<!--
+    Local AI section: advisory Ollama analysis of the latest scan. Loaded on first
+    navigation into PanelLocalAi (MainWindow.xaml).
+-->
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <StackPanel Grid.Row="0" Margin="0,0,0,14">
+        <TextBlock Text="Local AI Assistant" FontSize="20" FontWeight="Bold"/>
+        <TextBlock Text="Uses Ollama on this computer to correlate the latest scan. Guidance is advisory only and cannot run repairs."
+                   Foreground="{DynamicResource BrushMuted}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+    </StackPanel>
+
+    <Border Grid.Row="1" Background="{DynamicResource BrushPanel}" BorderBrush="{DynamicResource BrushLine}"
+            BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,12">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="220"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="240"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Label Grid.Column="0" Content="_Model" Target="{Binding ElementName=CmbAiModel}" Margin="0,0,2,0"/>
+            <ComboBox x:Name="CmbAiModel" Grid.Column="1" IsEditable="True" VerticalContentAlignment="Center" Margin="0,0,16,0"
+                      AutomationProperties.Name="Ollama model">
+                <ComboBoxItem Content="gemma4:e2b" IsSelected="True"/>
+                <ComboBoxItem Content="gemma3:1b"/>
+            </ComboBox>
+            <Label Grid.Column="2" Content="E_ndpoint" Target="{Binding ElementName=TxtAiEndpoint}" Margin="0,0,2,0"/>
+            <TextBox x:Name="TxtAiEndpoint" Grid.Column="3" Text="http://127.0.0.1:11434" Padding="7,5"
+                     Background="{DynamicResource BrushPanel2}" Foreground="{DynamicResource BrushText}"
+                     BorderBrush="{DynamicResource BrushLine}"
+                     AutomationProperties.Name="Ollama endpoint"
+                     AutomationProperties.HelpText="Loopback address of the local Ollama service."/>
+            <Button x:Name="BtnAiCheck" Grid.Column="4" Content="C_heck Ollama" HorizontalAlignment="Right" Margin="12,0,0,0"
+                    AutomationProperties.Name="Check Ollama"/>
+        </Grid>
+    </Border>
+
+    <StackPanel Grid.Row="2" Margin="0,0,0,10">
+        <Label Content="_Question for the assistant" Target="{Binding ElementName=TxtAiQuestion}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+        <TextBox x:Name="TxtAiQuestion" MinHeight="58" TextWrapping="Wrap" AcceptsReturn="True" Padding="8"
+                 Text="What are the most likely root causes and safest next diagnostic steps?"
+                 Background="{DynamicResource BrushPanel}" Foreground="{DynamicResource BrushText}"
+                 BorderBrush="{DynamicResource BrushLine}"
+                 AutomationProperties.Name="Question for the assistant"/>
+        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <Button x:Name="BtnAiAnalyze" Content="Analy_ze Latest Scan" IsEnabled="False"
+                    Style="{DynamicResource AccentButton}"
+                    AutomationProperties.Name="Analyze latest scan"/>
+            <TextBlock x:Name="TxtAiStatus" Text="Run a scan, then analyze it here."
+                       Foreground="{DynamicResource BrushMuted}" VerticalAlignment="Center" Margin="4,0,0,0"/>
+        </StackPanel>
+    </StackPanel>
+
+    <TextBox x:Name="TxtAiOutput" Grid.Row="3" IsReadOnly="True" IsReadOnlyCaretVisible="True" AcceptsReturn="True"
+             TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="12"
+             Text="No local AI analysis yet."
+             Background="{DynamicResource BrushPanel}" Foreground="{DynamicResource BrushText}"
+             BorderBrush="{DynamicResource BrushLine}"
+             AutomationProperties.Name="Local AI output"/>
+</Grid>
