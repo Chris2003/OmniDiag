@@ -13,7 +13,7 @@ is the "v1.0 target" section of [ARCHITECTURE.md](ARCHITECTURE.md).
 | 1 — Foundation | ✅ Done 2026-10-18 | 0.5.0 | PR #2; CI run 39154720085 green on all legs |
 | 2 — Diagnostic modules | ✅ Done 2026-10-18 | 0.6.0 + 0.7.0 | PR #4 (wave A), PR #5 (wave B); CI run 39164402996 green on all legs |
 | 3 — Interfaces & UX | ✅ Done 2026-10-18 (GUI startup carried to Phase 4) | 0.8.0 | PR #6; CI run 39169868812 green on all legs |
-| 4 — Hardening & verification | ✅ Done 2026-10-19 (client OS runs pending, see below) | 0.9.0 | PR #7; CI run 39180424054 green on all jobs |
+| 4 — Hardening & verification | ✅ Done 2026-10-19 (client OS runs pending, see below) | 0.9.0 | PR #7; CI runs 39180424054 and 39182094529 green on all jobs |
 | 5 — Release readiness | In progress | 1.0.0 | — |
 
 ### Phase 1 results (0.5.0)
@@ -49,11 +49,11 @@ is the "v1.0 target" section of [ARCHITECTURE.md](ARCHITECTURE.md).
 | Standard-user and elevated legs green | ✅ | Blocking `standard-user` job: a fresh non-admin account (Medium integrity, self-checked) runs the full Pester suite, `report` and `scan`; report validates against schema v1, 3 elevation notices (TPM, Secure Boot, listening-port paths) are Information findings; compared with an elevated report on the same VM; account and rights removed afterwards |
 | Every security finding fixed with a test or documented | ✅ | `docs/SECURITY-REVIEW.md`; `Tests/Security.Io.Tests.ps1`, `Tests/Security.Content.Tests.ps1`. Real findings fixed: export path traversal / device paths, zip import without name or size limits, PATH-based launcher resolution, unscrubbed proxy credentials and command lines, Markdown and CSV injection, redaction misses next to URL/JSON escapes and in generated finding ids, unbounded and loosely validated session import, unredacted Ollama prompts and unsanitized model output |
 | Full report < 60 s | ✅ | Median full scan 24.3 s; `omnidiag version` 1.26 s |
-| GUI startup < 2 s | ✅ | `gui-startup` job, fresh processes, median of 3, from process start (launcher path, module import included): first paint 1.07 s (5.1) / 1.09 s (7), fully interactive 1.20 s / 1.24 s. The in-suite measurement (inside a Pester process that has already run ~1,300 tests) reads 2.0-3.0 s and is kept as a soft regression signal only |
+| GUI startup < 2 s | ✅ | `gui-startup` job, fresh processes, median of 3, from process start (launcher path, module import included): first paint 1.07-1.58 s, fully interactive 1.20-1.83 s across two runs (runs 39180424054, 39182094529; both hosts). The in-suite measurement (inside a Pester process that has already run ~1,300 tests) reads 2.0-3.0 s and is kept as a soft regression signal only |
 | Win10 / Win11 client verified or listed as unverified | 🟡 | Windows 11 ARM64 client verified in CI (`windows-11-arm`, pwsh 7). Windows 10 22H2 x64 and Windows 11 x64 are **unverified** until the owner runs `build/Invoke-ClientVerification.ps1` (`docs/VERIFICATION.md`); stated in the release notes |
 
-Other results: Windows pwsh 7 1310 passed / 0 failed, Windows PowerShell 5.1 1305 / 0, ARM64 1309 / 0,
-Ubuntu 1294 / 0; runtime no-network test PASS; lint 0 errors.
+Other results (final run, after the second review round): Windows pwsh 7 1336 passed / 0 failed,
+Windows PowerShell 5.1 1331 / 0, ARM64 1335 / 0, Ubuntu 1320 / 0; full scan 21.5 s; runtime no-network test PASS; lint 0 errors.
 
 **How Phase 4 ran:** 4 parallel agents (I/O security, content security, GUI startup, CI), two
 review passes, fix rounds by the owning agents. CI found what static work could not: a SID
