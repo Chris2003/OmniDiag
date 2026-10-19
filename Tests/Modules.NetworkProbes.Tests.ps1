@@ -1,6 +1,6 @@
 #Requires -Module @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
-    Connectivity probes are opt-in (decision 1). For the three scanners that can contact
+    Connectivity probes are opt-in (decision 1). For three of the scanners that can contact
     the network (Network, DNS Resolver, Active Directory), every network call goes through
     a private helper in the plugin; these tests mock that helper inside the plugin's module
     scope and assert it is NOT invoked without probes (an Information finding says how to

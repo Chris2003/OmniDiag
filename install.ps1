@@ -70,6 +70,11 @@ param(
     if ($destination.TrimEnd('\') -eq $destinationRoot.TrimEnd('\')) {
         throw 'InstallPath cannot be the root of a drive.'
     }
+    # The MSI installs to the same default folder and marks it; replacing those files would
+    # leave Windows Installer with a broken product. Update an MSI install with a newer MSI.
+    if (Test-Path -LiteralPath (Join-Path $destination '.omnidiag-installed')) {
+        throw "OmniDiag at '$destination' was installed with the MSI. Update it with the newer MSI (or winget), or uninstall it first, instead of using this script."
+    }
 
     # Windows PowerShell 5.1 may not enable TLS 1.2 by default on older hosts.
     try {

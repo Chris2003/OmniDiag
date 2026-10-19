@@ -120,10 +120,19 @@ jobs:
           "| Portable zip | $(Split-Path $r.Package -Leaf) | signed: $($r.Signed) | ``$($r.Sha256)`` |" |
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 
+      - name: Install WiX Toolset 5.0.2 (build-time only; v6+ is not used, see docs/INSTALLER.md)
+        if: hashFiles('build/Build-Msi.ps1') != ''
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { throw "dotnet tool install wix failed ($LASTEXITCODE)." }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $env:USERPROFILE '.dotnet\tools') -Encoding utf8
+
       - name: Build the MSI (when build/Build-Msi.ps1 exists)
         run: |
           if (Test-Path build/Build-Msi.ps1) {
-            ./build/Build-Msi.ps1 -Version $env:RELEASE_VERSION -OutputDirectory dist
+            # Package the zip just built (signed when a certificate was available), not the raw tree.
+            ./build/Build-Msi.ps1 -Version $env:RELEASE_VERSION -OutputDirectory dist -PayloadZip "dist/OmniDiag-$($env:RELEASE_VERSION)-portable.zip"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } else {
             Write-Host 'build/Build-Msi.ps1 not present: no MSI in this release.'
           }
@@ -131,9 +140,11 @@ jobs:
       - name: Build the winget manifest (when build/New-WingetManifest.ps1 exists)
         run: |
           if (Test-Path build/New-WingetManifest.ps1) {
-            $msi = @(Get-ChildItem -LiteralPath dist -Filter '*.msi' -File)
-            if ($msi.Count -ne 1) { throw "Expected exactly one MSI in dist for the winget manifest, found $($msi.Count)." }
-            ./build/New-WingetManifest.ps1 -Version $env:RELEASE_VERSION -InstallerPath $msi[0].FullName -OutputDirectory dist/winget
+            # One manifest covering every architecture's MSI (x64 and arm64).
+            $msi = @(Get-ChildItem -LiteralPath dist -Filter "OmniDiag-$($env:RELEASE_VERSION)-*.msi" -File)
+            if ($msi.Count -lt 1) { throw 'No MSI in dist for the winget manifest.' }
+            ./build/New-WingetManifest.ps1 -Version $env:RELEASE_VERSION -InstallerPath @($msi.FullName) -OutputDirectory dist/winget
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } else {
             Write-Host 'build/New-WingetManifest.ps1 not present: no winget manifest in this release.'
           }
