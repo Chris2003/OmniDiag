@@ -73,16 +73,21 @@ None. Every scanner in this group is local-only.
 
 | Scanner | Finding (Id when explicit) | Severity | When |
 |---|---|---|---|
-| CPU | Sustained high CPU load | Warning | Load above 90% |
-| Memory | High memory usage | Warning | More than 90% of RAM in use |
-| Performance | High CPU usage / High memory usage | Warning | At or above `CpuWarnPct` / `RamWarnPct` |
+| CPU | Sustained high CPU load (N%) | Warning | Load above 90% |
+| CPU | CPU metrics collected | Pass | No Warning was raised |
+| Memory | High memory usage (N%) | Warning | More than 90% of RAM in use |
+| Memory | Memory metrics collected | Pass | No Warning was raised |
+| Performance | High CPU usage (N%) / High memory usage (N%) | Warning | At or above `CpuWarnPct` / `RamWarnPct` |
 | Performance | `<process>` is using N GB of RAM | Information | One process holds more than 2 GB |
+| Performance | Performance is within normal limits | Pass | No Warning was raised |
 | Processes | N process(es) not responding (`performance.processes.not-responding`) | Warning | A windowed process is not responding |
-| Processes | N process(es) hold more than 20000 handles (`performance.processes.handle-count-high`) | Warning | A process other than Idle/System is above `HandleWarnCount` |
+| Processes | N process(es) hold more than 20000 handles (`performance.processes.handle-count-high`) | Warning | A process other than Idle/System is above `HandleWarnCount` (the title shows the configured threshold) |
 | Processes | Handle and thread totals (`performance.processes.handle-summary`) | Information | No process is above the threshold |
 | Processes | Top resource consumers | Information | Always (top 5 by CPU time) |
-| Startup Performance | Slow boot / High number of startup items | Warning | Boot over 60 s / more than 30 autostart entries |
-| All | `... metrics collected` / within normal limits | Pass | No Warning was raised |
+| Processes | Process inventory collected | Pass | No Warning was raised |
+| Startup Performance | Slow boot (N s) | Warning | Last boot (event 100 `MainPathBootTime`) over 60 s |
+| Startup Performance | High number of startup items (N) | Warning | More than 30 autostart entries |
+| Startup Performance | Startup metrics collected | Pass | No Warning was raised |
 
 Processes metrics: `ProcessCount`, `TopCpu`, `TopMemory`, `TotalHandleCount`,
 `TotalThreadCount`, `TopHandles` (name, PID, handle count), `HighHandleProcessCount`,

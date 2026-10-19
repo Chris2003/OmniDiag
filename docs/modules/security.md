@@ -116,44 +116,47 @@ membership is not listed in a default scan rather than listed partially.
 
 ## Findings it can emit
 
-| Scanner | Finding | Severity | When |
+| Scanner | Finding (Id when explicit) | Severity | When |
 |---|---|---|---|
 | Security | Real-time protection is disabled | Warning | Defender real-time protection off |
 | Security | Antimalware service is not running | Warning | `AMServiceEnabled` false |
-| Security | Antivirus signatures are *n* days old | Warning | Signature age above 7 days |
+| Security | Antivirus signatures are *n* days old (`security-defender-signatures-outdated`) | Warning | Signature age above 7 days |
 | Security | Firewall disabled for *profile* profile | Warning | A firewall profile is off |
 | Security | User Account Control (UAC) is disabled | Warning | `EnableLUA` = 0 |
-| Security | UAC elevates administrators without prompting | Warning | `ConsentPromptBehaviorAdmin` = 0 |
-| Security | UAC prompts do not use the secure desktop | Warning | `PromptOnSecureDesktop` = 0 |
+| Security | UAC elevates administrators without prompting (`security-uac-elevate-without-prompting`) | Warning | `ConsentPromptBehaviorAdmin` = 0 |
+| Security | UAC prompts do not use the secure desktop (`security-uac-secure-desktop-disabled`) | Warning | `PromptOnSecureDesktop` = 0 |
 | Security | Baseline security posture is healthy | Pass | No warning |
-| Firewall Rules | *n* enabled inbound allow rule(s) | Information | Any enabled inbound Allow rule |
-| Firewall Rules | Unusually high number of inbound allow rules | Warning | More than 150 |
+| Firewall Rules | *n* enabled inbound allow rule(s) (`security-firewall-inbound-allow-rules`) | Information | Any enabled inbound Allow rule |
+| Firewall Rules | Unusually high number of inbound allow rules (*n*) (`security-firewall-inbound-allow-rules-high`) | Warning | More than 150 |
 | Firewall Rules | Firewall rule set reviewed | Pass | No warning |
 | BitLocker | BitLocker protection is not active on the OS volume | Warning | Protection status not On |
 | BitLocker | BitLocker volume status could not be read | Information | No OS volume data |
 | BitLocker | Recovery-key escrow is not locally verifiable | Information | Protected, no escrow policy evidence |
-| BitLocker | BitLocker protection posture healthy | Pass | No warning |
+| BitLocker | BitLocker protection posture healthy | Pass | OS volume read and no warning |
 | Defender Onboarding | Defender for Endpoint is not onboarded | Warning | `OnboardingState` not 1 |
 | Defender Onboarding | MDE sensor service is not running | Warning | Onboarded, Sense not running |
 | Defender Onboarding | Microsoft Defender Antivirus protection is reduced | Warning | Antivirus or real-time protection off |
 | Defender Onboarding | Defender for Endpoint onboarding is not locally evident | Information | No readable `OnboardingState` |
-| Defender Onboarding | Defender onboarding posture healthy | Pass | No finding |
-| Certificates | Expired certificate: *subject* | Error | `NotAfter` in the past |
-| Certificates | Certificate expires soon: *subject* | Warning | Expires within 30 days |
+| Defender Onboarding | Defender onboarding posture healthy | Pass | No other finding |
+| Certificates | Expired certificate: *subject* (`certificate-expired-<thumbprint>`) | Error | `NotAfter` in the past (first 10) |
+| Certificates | Certificate expires soon: *subject* (`certificate-expiring-<thumbprint>`) | Warning | Expires within 30 days (first 10) |
+| Certificates | Windows certificate stores are unavailable | Information | Not Windows |
 | Certificates | Personal certificate expiration posture healthy | Pass | Neither |
-| Local Admins | Built-in Administrator account is enabled | Warning | RID-500 account enabled |
-| Local Admins | *n* member(s) in the local Administrators group | Information | Membership listed |
-| Local Admins | *n* additional local account(s) with administrator rights | Information | Local accounts other than RID 500 are members |
-| Local Admins | *n* Administrators member(s) could not be resolved to a name | Information | Orphaned or unresolvable SIDs |
-| Local Admins | No administrator besides the built-in account | Information | Only RID 500 (or nobody) is a member |
-| Local Admins | Administrators group membership not available | Information | Neither enumeration path worked |
-| Local Admins | Connectivity probe not run | Information | Joined device, probes off |
-| Local Admins | Local administrator posture reviewed | Pass | No warning |
+| Local Admins | Built-in Administrator account is enabled (`security-local-admins-builtin-administrator-enabled`) | Warning | RID-500 account enabled |
+| Local Admins | *n* member(s) in the local Administrators group (`security-local-admins-members`) | Information | Membership listed |
+| Local Admins | *n* additional local account(s) with administrator rights (`security-local-admins-extra-local-accounts`) | Information | Local accounts other than RID 500 are members |
+| Local Admins | *n* Administrators member(s) could not be resolved to a name (`security-local-admins-unresolved`) | Information | Orphaned or unresolvable SIDs |
+| Local Admins | No administrator besides the built-in account (`security-local-admins-only-builtin`) | Information | Only RID 500 (or nobody) is a member |
+| Local Admins | Administrators group membership not available (`security-local-admins-unavailable`) | Information | Neither enumeration path worked |
+| Local Admins | Connectivity probe not run | Information | Joined device, probes off (the scan stops after the built-in Administrator check) |
+| Local Admins | Local administrator posture reviewed (`security-local-admins-reviewed`) | Pass | No warning |
 
-Finding ids are stable and contain no live values (for example
+Explicit finding ids are stable and contain no live values (for example
 `security-local-admins-builtin-administrator-enabled`, `security-uac-elevate-without-prompting`,
 `security-defender-signatures-outdated`), except the per-certificate ids, which carry the
-certificate thumbprint so each certificate is tracked on its own.
+certificate thumbprint so each certificate is tracked on its own. A finding without an
+explicit id gets one derived from its component and title (for example
+`security-bitlocker-bitlocker-protection-is-not-active-on-the-os-volume`).
 
 ## Platforms
 

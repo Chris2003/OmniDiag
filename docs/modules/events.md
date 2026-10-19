@@ -75,19 +75,22 @@ None. Every scanner in this group is local-only.
 
 | Scanner | Finding (Id) | Severity | When |
 |---|---|---|---|
-| Event Logs | Catalog title or "Event ID n from provider", `(xN)` (`events.group.<provider>-<id>-<level>`) | Catalog severity, else the event level | Critical/Error group, or a Warning group seen `RecurringThreshold`+ times |
+| Event Logs | Catalog title or "Event ID n from provider", plus `(xN)` when seen more than once (`events.group.<provider>-<id>-<level>`) | Catalog severity, else the event level | Critical/Error group, or a Warning group seen `RecurringThreshold`+ times |
 | Event Logs | N failed logon attempts detected (`events.pattern.failed-logons`) | Critical | 10+ events 4625 |
 | Event Logs | Repeated service crashes (`events.pattern.service-crashes`) | Error | `RecurringThreshold`+ events 7031/7034 |
 | Event Logs | N unexpected shutdowns (`events.pattern.unexpected-shutdowns`) | Critical | 2+ events 41/6008 |
 | Event Logs | N channel(s) skipped (require administrator) | Information | Not elevated |
 | Event Logs | No notable events in the selected window | Pass | Nothing collected |
+| Event Logs | Windows Event Logs are unavailable on this platform | Information | Not running on Windows |
 | Error Summary | N error/critical event(s) in range | Information | Any error events |
 | Error Summary | N unexpected shutdown/bugcheck event(s) | Warning | Kernel-Power 41 present |
-| Error Summary | Elevated error volume | Warning | More than 25 error events |
-| Error Summary | No significant error activity | Pass | Otherwise |
+| Error Summary | Elevated error volume (N events) | Warning | More than 25 error events |
+| Error Summary | No significant error activity | Pass | No Warning-or-higher finding was raised (can accompany the Information count) |
 
-Finding Ids never contain counts or other live values, so the same problem keeps the same Id
-across scans.
+The Event Logs group and pattern finding Ids never contain counts or other live values, so the
+same problem keeps the same Id across scans. Findings listed without an Id have none set
+explicitly; their Id is derived from the component and title, so a title that carries a
+count (for example the Error Summary findings) yields an Id that changes with the count.
 
 ## Platforms
 

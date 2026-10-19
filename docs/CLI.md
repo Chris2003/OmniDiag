@@ -74,12 +74,15 @@ With no selection, every scanner runs. `--profile`/`--workflow` can't be combine
 other or with `--group`/`--module`.
 
 **Network access (connectivity probes are opt-in).** A default scan contacts no other
-machine. Three scanners can probe connectivity: `network.network` (ping the default gateway
-and `1.1.1.1`, resolve `www.microsoft.com`), `network.dns-resolver` (resolve
-`www.microsoft.com` through the configured resolvers), and `extras.active-directory` (the
-domain secure-channel check against a domain controller). They run in every scan, group, and
-plan, but without `--network-probes` they do only their local checks (adapters, IP and DNS
-configuration, domain membership) and add an Information finding, "Connectivity probe not
+machine. Five scanners have an opt-in connectivity probe: `network.network` (ping the default
+gateway and `1.1.1.1`, resolve `www.microsoft.com`), `network.dns-resolver` (resolve
+`www.microsoft.com` through the configured resolvers), `extras.active-directory` (the domain
+secure-channel check against a domain controller), `extras.entra-id` (`dsregcmd /status`, which
+contacts Microsoft Entra ID), and `security.local-admins` (on a domain- or Entra-joined device,
+listing the local Administrators group, whose member-name lookups can query a domain controller
+or Entra ID). They run in every scan, group, and plan, but without `--network-probes` they do
+only their local checks (adapters, IP and DNS configuration, domain and Entra join state, the
+built-in Administrator account) and add an Information finding, "Connectivity probe not
 run", whose recommendation says how to run it. The router also prints which scanners have
 probes turned off. With `--network-probes` the probes run and the report's `options` records
 `networkProbes: true`. Probe targets can be changed from PowerShell with

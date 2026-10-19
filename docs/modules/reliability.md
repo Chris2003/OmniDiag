@@ -94,10 +94,10 @@ None. Every scanner in this group is local-only.
 
 | Scanner | Finding (Id) | Severity | When |
 |---|---|---|---|
-| Reliability | N application crashes (`reliability.reliability.app-crashes`) | Warning | More than 5 events 1000 |
+| Reliability | N application crashes (range) (`reliability.reliability.app-crashes`) | Warning | More than 5 events 1000 |
 | Reliability | Could not read some crash and shutdown events (`reliability.reliability.unreadable`) | Information | A query failed with an error other than "no matching events" (no healthy Pass then) |
-| Reliability | N unexpected shutdown(s) (`reliability.reliability.unexpected-shutdowns`) | Warning | Any Kernel-Power 41 |
-| Reliability | System stability looks healthy (`reliability.reliability.healthy`) | Pass | Otherwise |
+| Reliability | N unexpected shutdown(s) (range) (`reliability.reliability.unexpected-shutdowns`) | Warning | Any Kernel-Power 41 |
+| Reliability | System stability looks healthy (`reliability.reliability.healthy`) | Pass | Every query read and no Warning raised |
 | Reliability Monitor | System stability index is very low / low / healthy (`reliability.reliability-monitor.stability-index`) | Error / Warning / Pass | Latest index < 1 / < 3 / otherwise |
 | Reliability Monitor | N application failure(s) recorded (`...application-failures`) | Warning / Information | 5+ / 1-4 |
 | Reliability Monitor | N Windows failure(s) recorded (`...windows-failures`) | Warning | Any bug check or unexpected shutdown record |
