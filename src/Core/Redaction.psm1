@@ -500,6 +500,34 @@ function Find-OmniRedactionProfileName {
     }
 }
 
+function ConvertTo-OmniRedactionAutoId {
+    <# .SYNOPSIS Internal: the id New-OmniFinding generates from a component and a title. #>
+    param([AllowEmptyString()][string] $Component, [AllowEmptyString()][string] $Title)
+    return ((('{0}|{1}' -f $Component, $Title).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
+}
+
+function Get-OmniRedactionAutoIdProperty {
+    <#
+    .SYNOPSIS
+        Internal: when an object is a finding whose id was generated from its component and
+        title, returns the property names and the original texts; otherwise $null.
+    #>
+    param($InputObject)
+    $found = @{}
+    foreach ($p in $InputObject.PSObject.Properties) {
+        $n = [string]$p.Name
+        if ($n -eq 'Id' -or $n -eq 'Title' -or $n -eq 'Component') {
+            $v = $null
+            try { $v = $p.Value } catch { $v = $null }
+            if ($v -isnot [string]) { return $null }
+            $found[$n.ToLowerInvariant()] = @{ Name = $n; Value = $v }
+        }
+    }
+    if ($found.Count -ne 3 -or [string]::IsNullOrEmpty($found['id'].Value)) { return $null }
+    if ($found['id'].Value -cne (ConvertTo-OmniRedactionAutoId -Component $found['component'].Value -Title $found['title'].Value)) { return $null }
+    return @{ Id = $found['id'].Name; Component = $found['component'].Value; Title = $found['title'].Value }
+}
+
 function ConvertTo-OmniRedactedValue {
     <# .SYNOPSIS Internal: recursive deep copy with redaction (see ConvertTo-OmniRedacted). #>
     param($Value, $Context, [int] $Depth = 0)
@@ -562,12 +590,24 @@ function ConvertTo-OmniRedactedValue {
             if ([string]$p.MemberType -eq 'Property' -and $p.IsGettable) { $props.Add($p) }
         }
     }
+    # A finding id generated from its component and title (New-OmniFinding, report v1)
+    # holds that text in kebab case, where an identifier is no longer delimited
+    # ('%22host%22' -> '22host-22', '10.1.2.3' -> '10-1-2-3'). Such an id is rebuilt from the
+    # redacted component and title instead of being redacted as text.
+    $autoId = $null
+    if ($isCustom) { $autoId = Get-OmniRedactionAutoIdProperty -InputObject $Value }
+    $autoIdName = $null
     foreach ($p in $props) {
         $v = $null
         try { $v = $p.Value } catch { $v = $null }
         $name = Get-OmniRedactedString -Text ([string]$p.Name) -Context $Context
         if ($ordered.Contains($name)) { $base = $name; $i = 2; while ($ordered.Contains($name)) { $name = '{0} ({1})' -f $base, $i; $i++ } }
+        if ($null -ne $autoId -and [string]$p.Name -eq $autoId.Id) { $ordered[$name] = $null; $autoIdName = $name; continue }
         $ordered[$name] = ConvertTo-OmniRedactedValue -Value $v -Context $Context -Depth ($Depth + 1)
+    }
+    if ($null -ne $autoIdName) {
+        $ordered[$autoIdName] = ConvertTo-OmniRedactionAutoId -Component (Get-OmniRedactedString -Text $autoId.Component -Context $Context) `
+            -Title (Get-OmniRedactedString -Text $autoId.Title -Context $Context)
     }
     $copy = [pscustomobject]$ordered
     if ($isCustom) {

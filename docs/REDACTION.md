@@ -150,6 +150,10 @@ omitted because timings and errors in it are often what a vendor needs.
   IPv4 address and is redacted.
 * A real name that already looks like a pseudonym in upper case (a computer named `HOST-12`) is
   not redacted again.
+* A finding id that OmniDiag generated from the component and title (kebab case, where
+  `10.20.30.40` reads `10-20-30-40`) is rebuilt from the redacted component and title. An id
+  set explicitly by a scanner is redacted as text, so an address written there with dashes
+  (`gw-10-20-30-40`) is not recognized.
 * An identifier whose own characters are escaped (`10%2E20%2E30%2E40`, `fe80%3A%3A1`,
   `\u006adoe`) is not recognized; only escapes before or after it are.
 * Because `\n`, `\r`, and `\t` are treated as JSON escapes, a name that is the rest of a path

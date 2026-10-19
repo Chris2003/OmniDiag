@@ -282,7 +282,8 @@ Describe 'Report encoding: XSS payloads in every field' {
     It 'Markdown (<_>): no raw HTML, no injected blocks, links, or table columns' -ForEach @('A', 'B') {
         $md = $script:Out["$_.md"]
         # Ids are shown in code spans, where text is literal (no HTML, no links); the rest is escaped.
-        $text = [regex]::Replace($md, '`[^`\n]*`', '')
+        # An escaped backtick (\`) in text is not a code-span delimiter.
+        $text = [regex]::Replace($md, '(?<!\\)`[^`\n]*(?<!\\)`', '')
         $text.IndexOf('<') | Should -Be -1 -Because 'every < from the session is encoded outside code spans'
         foreach ($line in ($md -split "`n")) {
             $line | Should -Not -Match '^\s*(# Heading|```|<|\| a \| b \|)' -Because 'a finding must not start a Markdown block of its own'
@@ -593,7 +594,8 @@ Describe 'Redaction: property-based leak test across every format' {
 
     It 'maps every value to exactly one pseudonym, whatever its spelling (iteration <_>)' -ForEach @(0, 1, 2, 3) {
         $c = $script:Cases[$_]
-        $map = @(Get-OmniRedactionMap -Context $c.Context)
+        # Get-OmniRedactionMap returns its array as one object: assign it, do not wrap it in @().
+        $map = Get-OmniRedactionMap -Context $c.Context
         $of = { param($cat) @($map | Where-Object { $_.Category -eq $cat }) }
 
         $ipv4 = & $of 'IPv4'
@@ -615,7 +617,8 @@ Describe 'Redaction: property-based leak test across every format' {
 
     It 'uses only the context''s pseudonyms in every format, and each value''s pseudonym appears (iteration <_>)' -ForEach @(0, 1, 2, 3) {
         $c = $script:Cases[$_]
-        $map = @(Get-OmniRedactionMap -Context $c.Context)
+        # Get-OmniRedactionMap returns its array as one object: assign it, do not wrap it in @().
+        $map = Get-OmniRedactionMap -Context $c.Context
         $known = @{}
         foreach ($e in $map) { foreach ($m in [regex]::Matches([string]$e.Pseudonym, $script:PseudonymToken)) { $known[$m.Value] = $true } }
         foreach ($f in $c.Files) {
@@ -681,6 +684,19 @@ Describe 'Redaction regressions: identifiers glued to escape sequences' {
         Invoke-Redact 'path%5Cjdoe%5Cfile' | Should -Match '^path%5CUSER-\d+%5Cfile$'
     }
 
+    It 'rebuilds a generated finding id from the redacted text (no dashed address or glued name survives)' {
+        $f = New-OmniFinding -Title 'Gateway 10.20.30.40 unreachable from %22ACME-WS-042%22' -Severity 'Warning' -Component 'Network/00-15-5D-AA-BB-CC'
+        $f.Id | Should -BeLike '*10-20-30-40*'
+        $copy = ConvertTo-OmniRedacted -InputObject $f -Context $script:Ctx
+        $copy.Id | Should -BeExactly ((('{0}|{1}' -f $copy.Component, $copy.Title).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
+        foreach ($gone in @('10-20-30-40', 'acme-ws-042', '00-15-5d-aa-bb-cc', '15-5d-aa')) { $copy.Id | Should -Not -BeLike "*$gone*" }
+        $explicit = New-OmniFinding -Id 'gw-ACME-WS-042' -Title 'Gateway 10.20.30.40' -Severity 'Warning'
+        (ConvertTo-OmniRedacted -InputObject $explicit -Context $script:Ctx).Id | Should -Match '^gw-HOST-\d+$'
+        # v1 report findings (lower-case members) get the same treatment.
+        $v1 = [pscustomobject]@{ id = $f.Id; title = $f.Title; component = $f.Component }
+        (ConvertTo-OmniRedacted -InputObject $v1 -Context $script:Ctx).id | Should -BeExactly $copy.Id
+    }
+
     It 'still keeps versions, times, and words next to escapes' {
         $text = 'build%2010.0.19045.1 at%2012:30:45 %20jdoes %5Cxjdoe'
         Invoke-Redact $text | Should -BeExactly $text
@@ -735,7 +751,7 @@ Describe 'Session import: targeted malformed input' {
     }
 
     It 'rejects truncated JSON at any point' {
-        foreach ($cut in @(1, 2, 10, 100, [int]($script:GoldenJson.Length / 2), $script:GoldenJson.Length - 3)) {
+        foreach ($cut in @(1, 2, 10, 100, [int]($script:GoldenJson.Length / 2), ($script:GoldenJson.Length - 3))) {
             $p = Write-TestJson (New-CasePath) $script:GoldenJson.Substring(0, $cut)
             Test-ImportRejected (Get-ImportOutcome $p) | Should -BeTrue -Because "a report cut at $cut characters is invalid"
         }
