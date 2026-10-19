@@ -37,18 +37,24 @@ network access, so PDF works even on locked-down machines.
 From PowerShell or Windows Terminal:
 
 ```powershell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/Chris2003/OmniDiag/main/install.ps1')))
+& ([scriptblock]::Create((irm 'https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1')))
 ```
 
-The bootstrap downloads a whitelisted application surface from GitHub, validates
-required launcher/module/UI files, optionally verifies `-ExpectedSha256`, recursively
-uses `Unblock-File`, installs to `%LOCALAPPDATA%\Programs\OmniDiag`, and opens the GUI.
-An existing installation is moved to a dated backup. It does not elevate or change
-the machine-wide execution policy. Use `-NoLaunch` for automated deployment.
+The bootstrap resolves the latest release tag through the GitHub releases API, downloads
+that release's portable zip and `SHA256SUMS`, and **verifies the zip's SHA-256
+automatically** - it stops if `SHA256SUMS` is missing, does not list the zip, or does not
+match. It then refuses unsafe archive entries, validates the required
+launcher/module/UI files, recursively uses `Unblock-File`, installs to
+`%LOCALAPPDATA%\Programs\OmniDiag`, and opens the GUI. An existing installation is moved
+to a dated backup. It does not elevate or change the machine-wide execution policy. Use
+`-NoLaunch` for automated deployment.
 
 Because the one-liner executes remote code, review `install.ps1` before running it.
-Enterprise deployments should pin `-Ref` to an approved tag or commit instead of
-tracking `main`.
+Enterprise deployments should pin an approved version: download that release's
+`OmniDiag-<version>-portable.zip` and `SHA256SUMS` and verify them
+([docs/RELEASING.md](docs/RELEASING.md#verifying-a-release)), or run
+`install.ps1 -Ref v<version> -ExpectedSha256 <hash>` (installs from the tag's source
+archive; the hash is the SHA-256 of that archive).
 
 ### Extracted portable package
 

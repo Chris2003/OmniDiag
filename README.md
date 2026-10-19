@@ -21,24 +21,27 @@ but fully open and scriptable.
 Open **PowerShell** or **Windows Terminal**, paste this command, and press Enter:
 
 ```powershell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/Chris2003/OmniDiag/main/install.ps1')))
+& ([scriptblock]::Create((irm 'https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1')))
 ```
 
-This installs OmniDiag for the current user, clears Windows' downloaded-file block
-from the validated application files, and opens the GUI immediately. No administrator
-rights or machine-wide execution-policy change is required. Run the same command later
-to update; the previous installation is retained as a dated backup.
+This installs the latest OmniDiag release for the current user: it downloads the
+release's portable zip, verifies it against the release's `SHA256SUMS` (and refuses to
+install on any mismatch), clears Windows' downloaded-file block from the validated
+application files, and opens the GUI immediately. No administrator rights or
+machine-wide execution-policy change is required. Run the same command later to update;
+the previous installation is retained as a dated backup.
 
 > **Security:** this convenience command executes code retrieved from GitHub. Review
 > [`install.ps1`](install.ps1) first, or use the inspect-then-run method below. For
-> managed deployment, pin `-Ref` to a release tag or commit and provide
-> `-ExpectedSha256`.
+> managed deployment, download a specific release's assets and check them as described
+> in [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release), or pin `-Ref` to a
+> release tag or commit and provide `-ExpectedSha256`.
 
 <details>
 <summary>Safer inspect-then-run method</summary>
 
 ```powershell
-$url = 'https://raw.githubusercontent.com/Chris2003/OmniDiag/main/install.ps1'
+$url = 'https://github.com/Chris2003/OmniDiag/releases/latest/download/install.ps1'
 $installer = Join-Path $env:TEMP 'Install-OmniDiag.ps1'
 Invoke-WebRequest $url -OutFile $installer
 notepad $installer
@@ -133,6 +136,11 @@ copy-anywhere package (folder + zip), run:
 ```powershell
 .\build\Build-Portable.ps1        # writes dist\OmniDiag-<version>-portable.zip (+ .sha256)
 ```
+
+The zip is reproducible (fixed timestamps, sorted entries): two builds of the same commit
+are byte-identical. Releases also ship `SHA256SUMS`, a CycloneDX SBOM, and (once a
+certificate is configured) Authenticode-signed scripts; see
+[docs/RELEASING.md](docs/RELEASING.md).
 
 Extract it anywhere and run it — no install, no remoting, admin optional:
 

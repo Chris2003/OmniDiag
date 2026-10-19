@@ -306,6 +306,110 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  reproducible:
+    name: Reproducible portable zip
+    # Phase 5 gate: two clean checkouts of the same commit, built separately on the same
+    # host with PowerShell 7, must produce byte-identical zips (docs/RELEASING.md). Blocking.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: build-a
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: build-b
+      - name: Build twice and compare SHA-256
+        run: |
+          # No SOURCE_DATE_EPOCH: each build takes the HEAD commit time from its own checkout.
+          $outA = Join-Path $env:RUNNER_TEMP 'repro-a'
+          $outB = Join-Path $env:RUNNER_TEMP 'repro-b'
+          $a = & ./build-a/build/Build-Portable.ps1 -OutputDirectory $outA
+          $b = & ./build-b/build/Build-Portable.ps1 -OutputDirectory $outB
+          $runtime = [System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription
+          $summary = "### Reproducible portable zip`n`nPowerShell $($PSVersionTable.PSVersion), $runtime`n`n| Build | Zip | SHA-256 |`n|---|---|---|`n" +
+            "| A | $(Split-Path $a.Package -Leaf) | ``$($a.Sha256)`` |`n| B | $(Split-Path $b.Package -Leaf) | ``$($b.Sha256)`` |`n"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary -Encoding utf8
+          if ($a.Sha256 -ne $b.Sha256) {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $za = [System.IO.Compression.ZipFile]::OpenRead($a.Package); $zb = [System.IO.Compression.ZipFile]::OpenRead($b.Package)
+            try {
+              $ea = @($za.Entries | ForEach-Object { '{0} {1} {2} {3}' -f $_.FullName, $_.Length, $_.Crc32, $_.LastWriteTime })
+              $eb = @($zb.Entries | ForEach-Object { '{0} {1} {2} {3}' -f $_.FullName, $_.Length, $_.Crc32, $_.LastWriteTime })
+              Compare-Object $ea $eb | Format-Table -AutoSize | Out-String -Width 400 | Write-Host
+            } finally { $za.Dispose(); $zb.Dispose() }
+            throw "The two builds differ: $($a.Sha256) vs $($b.Sha256)."
+          }
+          Write-Host "Byte-identical: $($a.Sha256)"
+
+  signing:
+    name: Code signing (throwaway certificate)
+    # Phase 5 gate: build/Sign.ps1 signs every script and a file catalog BEFORE zipping, and
+    # every signature verifies. A throwaway self-signed code-signing certificate is created
+    # in CurrentUser\My and trusted on this runner only (LocalMachine Root and
+    # TrustedPublisher; the runner is elevated, so no UI prompt), then removed from every
+    # store. Blocking.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create and trust a throwaway code-signing certificate
+        run: |
+          $created = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=OmniDiag CI throwaway code signing' `
+            -CertStoreLocation Cert:\CurrentUser\My -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddDays(1)
+          # Re-read from the store (a live X509Certificate2 even if the PKI module ran out of process).
+          $cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$($created.Thumbprint)"
+          $public = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($cert.RawData)
+          foreach ($storeName in 'Root', 'TrustedPublisher') {
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'LocalMachine')
+            $store.Open('ReadWrite')
+            try { $store.Add($public) } finally { $store.Close() }
+          }
+          "OMNIDIAG_CI_CERT_THUMBPRINT=$($cert.Thumbprint)" | Add-Content -LiteralPath $env:GITHUB_ENV
+          Write-Host "Throwaway certificate $($cert.Thumbprint) created and trusted on this runner."
+      - name: Sign a portable build (before zipping) and verify every signature and the catalog
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'signed'
+          $r = ./build/Build-Portable.ps1 -OutputDirectory $out -KeepStaging -Sign -CertificateThumbprint $env:OMNIDIAG_CI_CERT_THUMBPRINT
+          if (-not $r.Signed) { throw 'Build-Portable.ps1 -Sign did not sign the package.' }
+          # 1. The signed staging folder.
+          ./build/Test-ReleaseSignature.ps1 -Path $r.Staging -ExpectedThumbprint $env:OMNIDIAG_CI_CERT_THUMBPRINT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # 2. What users get: the zip, extracted.
+          $extract = Join-Path $env:RUNNER_TEMP 'signed-extract'
+          Expand-Archive -LiteralPath $r.Package -DestinationPath $extract -Force
+          ./build/Test-ReleaseSignature.ps1 -Path (Join-Path $extract (Split-Path $r.Staging -Leaf)) -ExpectedThumbprint $env:OMNIDIAG_CI_CERT_THUMBPRINT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # 3. The signed module still loads.
+          Import-Module (Join-Path $r.Staging 'src/OmniDiag.psd1') -Force
+          "### Code signing`n`n$((Get-Module OmniDiag).Version): every script and the catalog are Valid (throwaway certificate)." |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+      - name: Remove the throwaway certificate from every store
+        if: always()
+        run: |
+          $thumb = $env:OMNIDIAG_CI_CERT_THUMBPRINT
+          if (-not $thumb) { Write-Host 'No certificate was created.'; return }
+          # Private key first (CurrentUser\My), then every remaining copy of the certificate.
+          if (Test-Path "Cert:\CurrentUser\My\$thumb") { Remove-Item "Cert:\CurrentUser\My\$thumb" -DeleteKey }
+          foreach ($loc in @(@{ Name = 'Root'; Location = 'LocalMachine' }, @{ Name = 'TrustedPublisher'; Location = 'LocalMachine' }, @{ Name = 'My'; Location = 'CurrentUser' })) {
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($loc.Name, $loc.Location)
+            $store.Open('ReadWrite')
+            try {
+              foreach ($c in @($store.Certificates.Find('FindByThumbprint', $thumb, $false))) { $store.Remove($c) }
+            } finally { $store.Close() }
+          }
+          Write-Host "Removed $thumb from LocalMachine\Root, LocalMachine\TrustedPublisher, and CurrentUser\My."
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'
