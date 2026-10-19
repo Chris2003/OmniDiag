@@ -86,22 +86,48 @@ param(
         }
         Write-Host "Archive SHA-256: $actualHash" -ForegroundColor DarkGray
 
-        # Zip-slip / zip-bomb guard: refuse the archive before anything is extracted when an
-        # entry name is absolute, carries a drive letter or ':' (NTFS stream), or has a '..'
-        # segment, or when it is implausibly large for OmniDiag.
+        # Zip-slip / zip-bomb guard: refuse the archive before anything is extracted.
+        # Entry-name rules are a copy of Get-OmniZipEntryNameProblem in src/Core/Evidence.psm1
+        # (this bootstrapper runs standalone, before OmniDiag is installed): no empty names,
+        # control characters, absolute paths, drive letters, ':' (NTFS streams), '..'
+        # segments, or Win32 device names. Sizes are enforced on the bytes actually
+        # inflated (streamed with a cap), not on the header, which an attacker controls.
+        Add-Type -AssemblyName System.IO.Compression -ErrorAction SilentlyContinue
         Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $reservedName = '^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9]|CONIN\$|CONOUT\$|CLOCK\$)$'
+        $maxEntryBytes = [long]64MB
+        $maxTotalBytes = [long]512MB
         $zipCheck = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
         try {
             if ($zipCheck.Entries.Count -gt 20000) { throw "Downloaded archive has too many entries ($($zipCheck.Entries.Count))." }
-            $declaredBytes = [long]0
+            $inflatedBytes = [long]0
+            $chunk = New-Object byte[] 81920
             foreach ($zipEntry in $zipCheck.Entries) {
-                $entryName = $zipEntry.FullName.Replace('\', '/')
-                if ($entryName.StartsWith('/') -or $entryName.Contains(':') -or (@($entryName.Split('/')) -contains '..')) {
-                    throw "Downloaded archive contains an unsafe entry name: '$($zipEntry.FullName)'."
+                $entryName = $zipEntry.FullName
+                $unsafe = [string]::IsNullOrEmpty($entryName) -or ($entryName -match '[\x00-\x1F]')
+                $normalized = ([string]$entryName).Replace('\', '/')
+                if ($normalized.StartsWith('/') -or $normalized -match '^[A-Za-z]:' -or $normalized.Contains(':')) { $unsafe = $true }
+                foreach ($segment in $normalized.Split('/')) {
+                    if ($segment -eq '..') { $unsafe = $true }
+                    $base = $segment.TrimEnd(' ', '.')
+                    $dot = $base.IndexOf('.')
+                    if ($dot -ge 0) { $base = $base.Substring(0, $dot) }
+                    if ($base.TrimEnd(' ') -match $reservedName) { $unsafe = $true }
                 }
-                $declaredBytes += [long]$zipEntry.Length
+                if ($unsafe) { throw "Downloaded archive contains an unsafe entry name: '$entryName'." }
+
+                # Stream the entry to count what it really inflates to.
+                $entryBytes = [long]0
+                $entryStream = $zipEntry.Open()
+                try {
+                    while (($read = $entryStream.Read($chunk, 0, $chunk.Length)) -gt 0) {
+                        $entryBytes += $read
+                        $inflatedBytes += $read
+                        if ($entryBytes -gt $maxEntryBytes) { throw "Downloaded archive entry '$entryName' inflates past $maxEntryBytes bytes; refusing to extract." }
+                        if ($inflatedBytes -gt $maxTotalBytes) { throw "Downloaded archive inflates past $maxTotalBytes bytes; refusing to extract." }
+                    }
+                } finally { $entryStream.Dispose() }
             }
-            if ($declaredBytes -gt 512MB) { throw "Downloaded archive expands to $declaredBytes bytes; refusing to extract." }
         } finally { $zipCheck.Dispose() }
 
         Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force

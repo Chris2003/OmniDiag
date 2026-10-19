@@ -17,6 +17,12 @@ quick installer only uses the network to download that same application folder.
 
 - Windows 10 / 11 / Server 2019+ (x64)
 - Windows PowerShell 5.1 (built in on every supported Windows) **or** PowerShell 7+
+  - The launchers never look PowerShell up through `PATH` or the current folder. They use
+    `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`, or `pwsh.exe` when it
+    is installed at `%ProgramFiles%\PowerShell\7\` (also the `%ProgramW6432%` and
+    `%ProgramFiles(x86)%` equivalents). A Microsoft Store / MSIX pwsh, a `7-preview`
+    build, a per-user install, or any other custom location is **not** used; the launchers
+    fall back to Windows PowerShell 5.1 (see docs/SECURITY-REVIEW.md, item 3).
 - Administrator rights are **optional** — without them, admin-only checks and
   repairs are skipped gracefully and everything else still runs.
 

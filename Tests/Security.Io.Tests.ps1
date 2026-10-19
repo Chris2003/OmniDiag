@@ -105,7 +105,8 @@ Describe 'Security 1: export path handling (--output / -OutputPath)' {
         } finally { Pop-Location }
     }
 
-    It 'refuses the device path <_>' -ForEach @('\\.\PhysicalDrive0', '\\.\pipe\omnidiag', '\\?\C:\Windows\x.json', '//./COM1', '//?/C:/x.json', '\??\C:\x.json') {
+    It 'refuses the device path <_>' -ForEach @('\\.\PhysicalDrive0', '\\.\pipe\omnidiag', '\\?\C:\Windows\x.json', '//./COM1', '//?/C:/x.json', '\??\C:\x.json',
+        '\\localhost\pipe\omnidiag', '\\127.0.0.1\pipe\x', '//localhost/PIPE/x', '\\server\mailslot\x', '\\localhost\pipe') {
         { Resolve-OmniOutputPath -Path $_ } | Should -Throw '*device path*'
     }
 
@@ -203,6 +204,13 @@ Describe 'Security 1: export path handling (--output / -OutputPath)' {
         $r.Code | Should -Be 10
     }
 
+    It 'the CLI names the offending option (--redaction-map) in the refusal' {
+        $saved = Save-OmniSession -Session (New-TinySession) -Path (Join-Path $TestDrive 'map-session.json')
+        $r = Invoke-Cli -Arguments @('report', '--from-session', $saved, '--output', (Join-Path $TestDrive 'map-out'), '--redact', '--redaction-map', (Join-Path $TestDrive 'NUL.json'))
+        $r.Code | Should -Be 10
+        $r.Err | Should -Match '--redaction-map'
+    }
+
     It 'the CLI writes a traversing --output to its canonical location' {
         $r = Invoke-Cli -Arguments @('version', '--output', (Join-Path $TestDrive 'cli/sub/../version.txt'))
         $r.Code | Should -Be 0
@@ -285,8 +293,39 @@ Describe 'Security 2: report-package (.zip) import' {
         $expand = $text.IndexOf('Expand-Archive -LiteralPath', [System.StringComparison]::Ordinal)
         $guard | Should -BeGreaterThan 0
         $guard | Should -BeLessThan $expand
-        $text | Should -Match "Contains\(':'\)"
-        $text | Should -Match "-contains '\.\.'"
+        $text | Should -Match 'Get-OmniZipEntryNameProblem'
+    }
+
+    It 'install.ps1 archive check refuses <Why> (the real block, run against a malicious zip)' -ForEach @(
+        @{ Name = '../evil.txt'; Why = 'traversal'; ZeroBytes = $null }
+        @{ Name = 'C:/evil.txt'; Why = 'a drive letter'; ZeroBytes = $null }
+        @{ Name = 'repo/readme.txt:ads'; Why = 'an NTFS stream'; ZeroBytes = $null }
+        @{ Name = 'repo/NUL.txt'; Why = 'a device name'; ZeroBytes = $null }
+        @{ Name = "repo/bad`tname.txt"; Why = 'control characters'; ZeroBytes = $null }
+        @{ Name = 'repo/bomb.bin'; Why = 'an entry inflating past 64 MB'; ZeroBytes = (65MB) }
+    ) {
+        $text = [System.IO.File]::ReadAllText((Join-Path $script:Root 'install.ps1'))
+        $start = $text.IndexOf('# Zip-slip / zip-bomb guard', [System.StringComparison]::Ordinal)
+        $end = $text.IndexOf('Expand-Archive -LiteralPath', [System.StringComparison]::Ordinal)
+        $start | Should -BeGreaterThan 0
+        $block = [scriptblock]::Create($text.Substring($start, $end - $start))
+        $entry = @{ Name = $Name; Text = 'x' }
+        if ($null -ne $ZeroBytes) { $entry = @{ Name = $Name; ZeroBytes = $ZeroBytes } }
+        # The block reads $archivePath from the calling scope, as in install.ps1.
+        $archivePath = New-TestZip -Path (Join-Path $script:ZipDir ('inst-' + [guid]::NewGuid().ToString('N') + '.zip')) -Entry @(@{ Name = 'repo/OmniDiag.ps1'; Text = '#' }, $entry)
+        $message = $null
+        try { . $block } catch { $message = $_.Exception.Message }
+        $message | Should -Not -BeNullOrEmpty
+        $message | Should -Match 'unsafe entry name|refusing to extract'
+    }
+
+    It 'install.ps1 archive check accepts a normal archive' {
+        $text = [System.IO.File]::ReadAllText((Join-Path $script:Root 'install.ps1'))
+        $start = $text.IndexOf('# Zip-slip / zip-bomb guard', [System.StringComparison]::Ordinal)
+        $end = $text.IndexOf('Expand-Archive -LiteralPath', [System.StringComparison]::Ordinal)
+        $block = [scriptblock]::Create($text.Substring($start, $end - $start))
+        $archivePath = New-TestZip -Path (Join-Path $script:ZipDir 'inst-ok.zip') -Entry @(@{ Name = 'repo/OmniDiag.ps1'; Text = '#' }, @{ Name = 'repo/src/OmniDiag.psd1'; Text = '@{}' })
+        { . $block } | Should -Not -Throw
     }
 }
 
@@ -553,6 +592,48 @@ Describe 'Security 5: no secrets in reports or logs' {
         Protect-OmniSecretText (Protect-OmniSecretText $In) | Should -BeExactly $Out
     }
 
+    It 'Protect-OmniSecretText scrubs token formats: <In>' -ForEach @(
+        @{ In = 'https://ghp_abcdefghijklmnopqrstuvwxyz0123@example.com/o/r'; Out = 'https://[REDACTED]@example.com/o/r' }
+        @{ In = 'http://u:p@ss@host.example/x'; Out = 'http://[REDACTED]@host.example/x' }
+        @{ In = 'jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.abc-DEF_ghi end'; Out = 'jwt [REDACTED-JWT] end' }
+        @{ In = 'pat ghp_abcdefghijklmnopqrstuvwxyz0123 end'; Out = 'pat [REDACTED-TOKEN] end' }
+        @{ In = 'github_pat_11ABCDEFG0123456789_abcdefXYZ'; Out = '[REDACTED-TOKEN]' }
+        @{ In = 'slack xoxb-1234567890-abcdefghij'; Out = 'slack [REDACTED-TOKEN]' }
+        @{ In = 'aws AKIAIOSFODNN7EXAMPLE'; Out = 'aws [REDACTED-TOKEN]' }
+    ) {
+        Protect-OmniSecretText $In | Should -BeExactly $Out
+        Protect-OmniSecretText (Protect-OmniSecretText $In) | Should -BeExactly $Out
+    }
+
+    It 'leaves identifiers alone: <_>' -ForEach @(
+        'Thumbprint 3B1EFD3A66EA28B16697394703A72CA340A05BD5', '{6F9619FF-8B86-D011-B42D-00C04FC964FF}',
+        'SHA256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        'Account S-1-5-21-1004336348-1177238915-682003330-1001', 'Gateway 1.2.3.4 unreachable', 'Update KB5034441 failed'
+    ) {
+        Protect-OmniSecretText $_ | Should -BeExactly $_
+    }
+
+    It 'the logger scrubs a copy: the caller''s Data is not modified, ErrorRecords become text' {
+        $path = Join-Path $TestDrive 'copy-log.jsonl'
+        $logger = New-OmniLogger -Path $path -MinimumLevel Debug
+        $data = @{ password = 'Caller-S3cret'; nested = [pscustomobject]@{ Url = 'http://a:Caller-Pw@h' } }
+        $err = $null
+        try { throw 'connect failed: password=Err-Rec-S3cret' } catch { $err = $_ }
+        $logger.Warn('x', 'Test', $data)
+        $logger.Error('y', 'Test', @{ Error = $err; Exception = $err.Exception })
+        $data.password | Should -Be 'Caller-S3cret'
+        $data.nested.Url | Should -Be 'http://a:Caller-Pw@h'
+        $text = [System.IO.File]::ReadAllText($path)
+        foreach ($secret in @('Caller-S3cret', 'Caller-Pw', 'Err-Rec-S3cret')) { $text | Should -Not -Match $secret }
+        $text | Should -Match 'connect failed'
+    }
+
+    It 'New-OmniFinding leaves the caller''s -Data object unmodified' {
+        $data = [ordered]@{ password = 'Finding-S3cret' }
+        $null = New-OmniFinding -Title 't' -Severity 'Information' -Data $data
+        $data.password | Should -Be 'Finding-S3cret'
+    }
+
     It 'leaves ordinary diagnostic text alone: <_>' -ForEach @(
         'Elevated Token: Yes', 'Reset the password of jdoe.', 'It is a common password-guessing target.',
         'powershell.exe -ExecutionPolicy Bypass -File C:\Scripts\x.ps1', 'Basic Display Adapter', 'PasswordNeverExpires'
@@ -597,5 +678,61 @@ Describe 'Security 5: no secrets in reports or logs' {
         $json | Should -Match ([regex]::Escape('DB_PASSWORD=[REDACTED]'))
         $json | Should -Match ([regex]::Escape('[REDACTED-RECOVERY-KEY]'))
         $json | Should -Match 'kiosk'
+    }
+
+    It 'an imported legacy (0.7-style) session is scrubbed before any export' {
+        # An older OmniDiag saved sessions unscrubbed. Reproduce that: a real session shape,
+        # with secrets planted AFTER Complete-OmniResult (so nothing scrubbed them), saved raw.
+        $legacy = New-TinySession -ComputerName 'WS-OLD'
+        $res = $legacy.Results[0]
+        $res.Metrics['Winlogon'] = [ordered]@{ DefaultUserName = 'kiosk'; DefaultPassword = 'Legacy-Autologon-Pw' }
+        $res.Metrics['EnvironmentProxy'] = 'http://olduser:Legacy-Pr0xy@proxy:8080'
+        $res.Findings[0].Detail = 'Uses http://olduser:Legacy-Pr0xy@proxy:8080 (DefaultPassword=Legacy-Autologon-Pw)'
+        $res.Findings[0].Data = [ordered]@{ Password = 'Legacy-Data-Pw' }
+        Add-Member -InputObject $legacy.Host -MemberType NoteProperty -Name Note -Value 'proxy http://olduser:Legacy-Pr0xy@proxy:8080'
+        $legacyPath = Save-OmniSession -Session $legacy -Path (Join-Path $TestDrive 'legacy-session.json')
+        [System.IO.File]::ReadAllText($legacyPath) | Should -Match 'Legacy-Autologon-Pw' -Because 'the fixture must start out unscrubbed'
+
+        $imported = Import-OmniDiagSession -Path $legacyPath
+        $imported.Host.Note | Should -Not -Match 'Legacy-Pr0xy'
+        $set = Export-OmniDiagReport -Session $imported -OutputDirectory (Join-Path $TestDrive 'legacy-out') -Format Html, Json, Csv, Md, Pdf, Zip
+        $texts = @{}
+        foreach ($f in $set.Files) {
+            if ($f -like '*.zip') {
+                $dest = Join-Path $TestDrive ('legacy-unzip-' + [guid]::NewGuid().ToString('N'))
+                Expand-Archive -LiteralPath $f -DestinationPath $dest
+                foreach ($e in Get-ChildItem -LiteralPath $dest -File -Recurse) { $texts["$f!$($e.Name)"] = Read-OutputText $e.FullName }
+            } else { $texts[$f] = Read-OutputText $f }
+        }
+        $texts.Count | Should -BeGreaterThan 5
+        foreach ($k in $texts.Keys) {
+            foreach ($secret in @('Legacy-Autologon-Pw', 'Legacy-Pr0xy', 'Legacy-Data-Pw')) {
+                $texts[$k].IndexOf($secret, [System.StringComparison]::OrdinalIgnoreCase) | Should -Be -1 -Because "'$secret' must not appear in $k"
+            }
+        }
+    }
+
+    It 'Export-OmniReport scrubs a session changed outside the collectors (session-level fields too)' {
+        $s = New-TinySession
+        Add-Member -InputObject $s -MemberType NoteProperty -Name Notes -Value 'DefaultPassword=Late-Added-Pw'
+        $s.Results[0].Metrics['LateMetric'] = 'http://late:Late-Metric-Pw@proxy'
+        $s.Host.UserName = 'tester (token=Late-Host-Tok)'
+        $set = Export-OmniDiagReport -Session $s -OutputDirectory (Join-Path $TestDrive 'late-out') -Format Json, Md, Html
+        foreach ($f in $set.Files) {
+            $t = [System.IO.File]::ReadAllText($f)
+            foreach ($secret in @('Late-Added-Pw', 'Late-Metric-Pw', 'Late-Host-Tok')) { $t | Should -Not -Match $secret }
+        }
+    }
+
+    It 'a completed result is scrubbed once (the engine does not walk it again; hot helpers are simple functions)' {
+        $engine = [System.IO.File]::ReadAllText((Join-Path $script:Root 'src/Core/Engine.psm1'))
+        $engine | Should -Not -Match 'Protect-OmniSecretData'
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:Root 'src/Core/Models.psm1'), [ref]$tokens, [ref]$errors)
+        foreach ($name in @('Protect-OmniSecretText', 'Protect-OmniSecretData')) {
+            $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            $fn | Should -Not -BeNullOrEmpty
+            @($fn.Body.ParamBlock.Attributes).Count | Should -Be 0 -Because "$name must not be an advanced function"
+        }
     }
 }

@@ -239,6 +239,9 @@ function Import-OmniSession {
     }
 
     try { $session = $json | ConvertFrom-Json -ErrorAction Stop } catch { throw "Not a valid OmniDiag JSON report: $($item.FullName)" }
+    # Sessions saved by older versions (or edited by hand) were never scrubbed: scrub the whole
+    # parsed document once, session-level fields included (docs/SECURITY-REVIEW.md item 5).
+    Protect-OmniSecretData -InputObject $session
     if ($null -eq $session -or $session -isnot [System.Management.Automation.PSCustomObject]) { throw "JSON does not contain an OmniDiag session (no Results): $($item.FullName)" }
 
     # Report schema v1 (Export-OmniJsonReport, report packages from 0.5.0 on).
