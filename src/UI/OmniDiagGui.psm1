@@ -402,15 +402,38 @@ function Sync-OmniEffectiveTheme {
         contrast is on (the dark/light toggle is disabled then).
 
     .DESCRIPTION
-        The brushes always go on the window, so the code-built frame (shown before the
-        shell XAML loads) already has the right background, including high contrast.
-        The theme button and the score color are updated once the shell is in place.
+        Both steps: the brushes (Set-OmniEffectiveBrush) and the theme-dependent controls
+        (Sync-OmniThemeControl). Used at startup for the frame and at runtime (theme
+        toggle, high-contrast changes). The shell swap needs only the controls step: the
+        frame already holds the right brushes, and re-applying them would create new
+        brush instances and invalidate every DynamicResource in the new tree again.
+    #>
+    $ui = $script:OmniUi
+    if (-not $ui) { return }
+    Set-OmniEffectiveBrush
+    Sync-OmniThemeControl
+}
+
+function Set-OmniEffectiveBrush {
+    <#
+    .SYNOPSIS
+        Internal: put the effective theme's brushes on the window - the user's theme, or
+        SystemColors brushes while Windows high contrast is on (also sets $ui.HighContrast).
     #>
     $ui = $script:OmniUi
     if (-not $ui) { return }
     $ui.HighContrast = Test-OmniHighContrast
     if ($ui.HighContrast) { Set-OmniTheme -Window $ui.Window -Name HighContrast } else { Set-OmniTheme -Window $ui.Window -Name $ui.Theme }
-    if (-not $ui.ShellReady) { return }
+}
+
+function Sync-OmniThemeControl {
+    <#
+    .SYNOPSIS
+        Internal: update the theme toggle (label, tooltip, accessible name, enabled in high
+        contrast) and the score color for the current theme. No-op before the shell is ready.
+    #>
+    $ui = $script:OmniUi
+    if (-not $ui -or -not $ui.ShellReady) { return }
     $btn = $ui.Controls.BtnTheme
     $btn.Content = Get-OmniThemeButtonLabel -Current $ui.Theme
     $target = if ($ui.Theme -eq 'Dark') { 'light' } else { 'dark' }
@@ -2328,6 +2351,13 @@ function Invoke-OmniPostRenderSetup {
         $ui.Logger = New-OmniLogger -Path (Get-OmniDataPath -Kind Logs -ChildPath "omnidiag-gui-$stamp.jsonl") -MinimumLevel Info
     } catch { $ui.Logger = $null }
     Write-OmniStartupLog
+    # Hook warnings raised before the log existed (Write-OmniHookWarning).
+    if ($ui.Logger) {
+        foreach ($w in @($ui.PendingWarnings)) {
+            try { $ui.Logger.Log('Warn', [string]$w, 'Gui', @{ Hook = $true }) } catch { $null = $_ }
+        }
+        $ui.PendingWarnings.Clear()
+    }
     $ui.Controls.BtnHelp.ToolTip = Get-OmniShortcutHelpText
     Initialize-OmniGroupCatalog
     Show-OmniGroupSummary
@@ -2397,7 +2427,10 @@ function Complete-OmniShellLoad {
         $ui.ShellRoot = $root
         $window.Content = $root
         $ui.ShellReady = $true
-        Sync-OmniEffectiveTheme
+        # Controls only: the frame already holds the effective brushes (and the shell's
+        # Light fallbacks were not copied over them above). A high-contrast change in the
+        # meantime re-applied the brushes through the StaticPropertyChanged handler.
+        Sync-OmniThemeControl
         Sync-OmniBusyState
         [System.Windows.Input.FocusManager]::SetFocusedElement($window, $controls.BtnScan)
         if ($window.IsActive) { [void]$controls.BtnScan.Focus() }
@@ -2440,12 +2473,26 @@ function Complete-OmniShellReady {
     $ui.ShellReadyUtc = [DateTime]::UtcNow
     $ui.ShellReadyMs = $ms
     try { [System.Windows.Automation.AutomationProperties]::SetItemStatus($ui.Window, "StartupMs=$($ui.StartupMs);ShellReadyMs=$ms") } catch { $null = $_ }
-    if ($env:OMNIDIAG_GUI_STARTUP_FILE) { Write-OmniStartupFile -Path $env:OMNIDIAG_GUI_STARTUP_FILE }
+
+    # Benchmark hooks. Honoring one is never silent: a stray variable must not make the
+    # GUI quietly write files or flash and close (Warn in the GUI log, and stderr).
+    if ($env:OMNIDIAG_GUI_STARTUP_FILE) {
+        try {
+            $written = Write-OmniStartupFile -Path $env:OMNIDIAG_GUI_STARTUP_FILE
+            Write-OmniHookWarning -Message "OMNIDIAG_GUI_STARTUP_FILE is set (a benchmark hook): wrote the GUI startup timings to $written."
+        } catch {
+            Write-OmniHookWarning -Message "OMNIDIAG_GUI_STARTUP_FILE is set (a benchmark hook), but the startup timings were not written: $($_.Exception.Message)"
+        }
+    }
+    $exitAfterRender = Test-OmniEnvFlag -Name 'OMNIDIAG_GUI_EXIT_AFTER_RENDER'
+    if ($exitAfterRender) {
+        Write-OmniHookWarning -Message 'OMNIDIAG_GUI_EXIT_AFTER_RENDER is set (a benchmark hook): the window closes as soon as it has loaded. Unset it to use OmniDiag normally.'
+    }
 
     [void]$ui.Window.Dispatcher.BeginInvoke(
         [System.Windows.Threading.DispatcherPriority]::Background,
         [Action] { Invoke-OmniPostRenderSetup })
-    if (Test-OmniEnvFlag -Name 'OMNIDIAG_GUI_EXIT_AFTER_RENDER') {
+    if ($exitAfterRender) {
         [void]$ui.Window.Dispatcher.BeginInvoke(
             [System.Windows.Threading.DispatcherPriority]::ApplicationIdle,
             [Action] { try { $script:OmniUi.Window.Close() } catch { $null = $_ } })
@@ -2457,26 +2504,65 @@ function Complete-OmniShellReady {
 }
 
 function Write-OmniStartupFile {
-    <# .SYNOPSIS Internal: OMNIDIAG_GUI_STARTUP_FILE hook - the startup timings as JSON (UTF-8, no BOM). #>
+    <#
+    .SYNOPSIS
+        Internal: OMNIDIAG_GUI_STARTUP_FILE hook - the startup timings as JSON (UTF-8, no BOM).
+
+    .DESCRIPTION
+        The path goes through Resolve-OmniOutputPath first, like every other OmniDiag
+        output, so device, named-pipe, mailslot, alternate-stream, and non-file-system
+        targets are refused. Throws when the path is refused or the write fails; returns
+        the canonical path written.
+    #>
+    [OutputType([string])]
     param([Parameter(Mandatory)] [string] $Path)
     $ui = $script:OmniUi
-    try {
-        $processStart = $null
-        try { $processStart = [System.Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o') } catch { $processStart = $null }
-        $marks = [ordered]@{}
-        if ($ui.StartupTimings) { foreach ($k in @($ui.StartupTimings.Keys)) { $marks[[string]$k] = $ui.StartupTimings[$k] } }
-        $doc = [ordered]@{
-            StartupMs        = $ui.StartupMs
-            ShellReadyMs     = $ui.ShellReadyMs
-            ProcessStartUtc  = $processStart
-            FramePaintedUtc  = $(if ($ui.FramePaintedUtc) { $ui.FramePaintedUtc.ToString('o') } else { $null })
-            ShellReadyUtc    = $(if ($ui.ShellReadyUtc) { $ui.ShellReadyUtc.ToString('o') } else { $null })
-            PSEdition        = [string]$PSVersionTable.PSEdition
-            PSVersion        = [string]$PSVersionTable.PSVersion
-            Marks            = $marks
+    if (-not (Get-Command -Name Resolve-OmniOutputPath -ErrorAction SilentlyContinue)) {
+        throw 'Resolve-OmniOutputPath is not available, so the path cannot be checked.'
+    }
+    $target = Resolve-OmniOutputPath -Path $Path -Purpose 'GUI startup file'
+    $processStart = $null
+    try { $processStart = [System.Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o') } catch { $processStart = $null }
+    $marks = [ordered]@{}
+    if ($ui.StartupTimings) { foreach ($k in @($ui.StartupTimings.Keys)) { $marks[[string]$k] = $ui.StartupTimings[$k] } }
+    $framePainted = $null
+    if ($ui.FramePaintedUtc) { $framePainted = $ui.FramePaintedUtc.ToString('o') }
+    $shellReady = $null
+    if ($ui.ShellReadyUtc) { $shellReady = $ui.ShellReadyUtc.ToString('o') }
+    $doc = [ordered]@{
+        StartupMs        = $ui.StartupMs
+        ShellReadyMs     = $ui.ShellReadyMs
+        ProcessStartUtc  = $processStart
+        FramePaintedUtc  = $framePainted
+        ShellReadyUtc    = $shellReady
+        PSEdition        = [string]$PSVersionTable.PSEdition
+        PSVersion        = [string]$PSVersionTable.PSVersion
+        Marks            = $marks
+    }
+    [System.IO.File]::WriteAllText($target, ($doc | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
+    return $target
+}
+
+function Write-OmniHookWarning {
+    <#
+    .SYNOPSIS
+        Internal: report that a benchmark/test hook was honored - Warn in the GUI log and a
+        line on stderr (a no-op when no console is attached).
+
+    .DESCRIPTION
+        The GUI log opens after ShellReady (Invoke-OmniPostRenderSetup), so messages are
+        queued in $ui.PendingWarnings and written there once it exists.
+    #>
+    param([Parameter(Mandatory)] [string] $Message)
+    $ui = $script:OmniUi
+    if ($ui) {
+        if ($ui.Logger) {
+            try { $ui.Logger.Log('Warn', $Message, 'Gui', @{ Hook = $true }) } catch { $null = $_ }
+        } else {
+            [void]$ui.PendingWarnings.Add($Message)
         }
-        [System.IO.File]::WriteAllText($Path, ($doc | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
-    } catch { $null = $_ }
+    }
+    try { [Console]::Error.WriteLine("OmniDiag GUI: $Message") } catch { $null = $_ }
 }
 
 function Test-OmniEnvFlag {
@@ -2579,6 +2665,7 @@ function Initialize-OmniMainWindow {
         ShellRoot      = $null   # MainWindow.xaml root (a Grid), the window's Content once loaded
         ShellReady     = $false  # true once the shell is the Content and wired
         ShellError     = $null
+        PendingWarnings = [System.Collections.ArrayList]::new()   # Warn lines waiting for the GUI log
         Closed         = $false
         Controls       = $controls
         Theme          = $Theme
