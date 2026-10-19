@@ -312,7 +312,14 @@ Describe 'Security 2: report-package (.zip) import' {
         $entry = @{ Name = $Name; Text = 'x' }
         if ($null -ne $ZeroBytes) { $entry = @{ Name = $Name; ZeroBytes = $ZeroBytes } }
         # The block reads $archivePath from the calling scope, as in install.ps1.
-        $archivePath = New-TestZip -Path (Join-Path $script:ZipDir ('inst-' + [guid]::NewGuid().ToString('N') + '.zip')) -Entry @(@{ Name = 'repo/OmniDiag.ps1'; Text = '#' }, $entry)
+        try {
+            $archivePath = New-TestZip -Path (Join-Path $script:ZipDir ('inst-' + [guid]::NewGuid().ToString('N') + '.zip')) -Entry @(@{ Name = 'repo/OmniDiag.ps1'; Text = '#' }, $entry)
+        } catch {
+            # .NET Framework's ZipArchive refuses to write some of these names ("Illegal
+            # characters in path"), and Expand-Archive on it refuses to extract them too.
+            if ($PSVersionTable.PSEdition -eq 'Desktop') { Set-ItResult -Skipped -Because "this .NET Framework cannot create the entry '$Name'"; return }
+            throw
+        }
         $message = $null
         try { . $block } catch { $message = $_.Exception.Message }
         $message | Should -Not -BeNullOrEmpty

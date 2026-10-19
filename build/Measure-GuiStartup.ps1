@@ -306,9 +306,16 @@ foreach ($exe in $PowerShellPath) {
                 if ($v -eq 'Launcher') {
                     # Wall time from the child's own process start.
                     try {
-                        $start = [DateTime]::Parse([string]$doc.ProcessStartUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
-                        $paint = [DateTime]::Parse([string]$doc.FramePaintedUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
-                        $ready = [DateTime]::Parse([string]$doc.ShellReadyUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+                        # pwsh 7's ConvertFrom-Json already turns ISO 8601 strings into DateTime;
+                        # [string] on that drops the milliseconds, so only parse real strings.
+                        $toUtc = {
+                            param($v)
+                            if ($v -is [DateTime]) { return $v.ToUniversalTime() }
+                            return [DateTime]::Parse([string]$v, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+                        }
+                        $start = & $toUtc $doc.ProcessStartUtc
+                        $paint = & $toUtc $doc.FramePaintedUtc
+                        $ready = & $toUtc $doc.ShellReadyUtc
                         $run.FirstPaintMs = [math]::Round(($paint - $start).TotalMilliseconds, 1)
                         $run.ReadyMs = [math]::Round(($ready - $start).TotalMilliseconds, 1)
                         $run.EntryFirstPaintMs = $doc.StartupMs
