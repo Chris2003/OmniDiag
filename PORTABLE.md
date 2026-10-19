@@ -50,6 +50,13 @@ Because the one-liner executes remote code, review `install.ps1` before running 
 Enterprise deployments should pin `-Ref` to an approved tag or commit instead of
 tracking `main`.
 
+### Per-user MSI
+
+Prefer a regular installation? The per-user MSI (and winget) installs the same files to
+`%LOCALAPPDATA%\Programs\OmniDiag` without admin rights, adds Start menu entries and the
+`omnidiag` command, and keeps data in `%LOCALAPPDATA%\OmniDiag\Data` instead of next to
+the tool. It is not zero-footprint by design. See [docs/INSTALLER.md](docs/INSTALLER.md).
+
 ### Extracted portable package
 
 1. Extract the whole package folder anywhere (e.g. `C:\Tools\OmniDiag`).
@@ -104,6 +111,9 @@ cache to the profile.
 
 If the tool folder is read-only (e.g. write-protected media), OmniDiag warns you and
 falls back to `%TEMP%\OmniDiag`. Set `OMNIDIAG_DATA` to choose another location.
+An MSI-installed copy (it carries a `.omnidiag-installed` marker; the portable package
+never does) uses `%LOCALAPPDATA%\OmniDiag\Data` instead; see
+[docs/INSTALLER.md](docs/INSTALLER.md#where-data-goes-installed-mode).
 
 ### What zero footprint can't cover
 

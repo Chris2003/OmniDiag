@@ -53,6 +53,16 @@ Unblock-File $installer
 
 </details>
 
+### Install with the MSI or winget
+
+Per-user Windows Installer packages (`OmniDiag-<version>-x64.msi` / `-arm64.msi`) are
+attached to each [release](https://github.com/Chris2003/OmniDiag/releases): no admin
+rights, Start menu entries, and `omnidiag` on your PATH (open a new terminal, then run
+`omnidiag version`). Silent: `msiexec /i OmniDiag-<version>-x64.msi /qn`. Once the package
+is published to winget: `winget install Chris2003.OmniDiag`. Data goes to
+`%LOCALAPPDATA%\OmniDiag\Data` and is kept on uninstall. See
+[docs/INSTALLER.md](docs/INSTALLER.md).
+
 ---
 
 ## Why OmniDiag
