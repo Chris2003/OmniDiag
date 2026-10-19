@@ -75,6 +75,8 @@ function New-OmniPromptRedactionContext {
 function ConvertTo-OmniPromptAutoId {
     <# .SYNOPSIS Internal: the id New-OmniFinding generates from a component and a title. #>
     param([AllowEmptyString()][string] $Component, [AllowEmptyString()][string] $Title)
+    # One rule for auto ids: Get-OmniFindingAutoId (Models.psm1) when loaded; the same formula otherwise.
+    if (Get-Command -Name Get-OmniFindingAutoId -ErrorAction SilentlyContinue) { return (Get-OmniFindingAutoId -Component $Component -Title $Title) }
     return ((('{0}|{1}' -f $Component, $Title).ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
 }
 
