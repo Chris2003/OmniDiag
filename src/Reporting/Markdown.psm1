@@ -16,18 +16,43 @@
 Set-StrictMode -Version Latest
 
 function ConvertTo-OmniMarkdownText {
-    <# .SYNOPSIS Internal: escape session text for Markdown (optionally for a table cell). #>
+    <#
+    .SYNOPSIS
+        Internal: escape session text for Markdown.
+
+    .DESCRIPTION
+        Every place the report puts session text is a single line (a table cell, a
+        heading, a list item), so line breaks and other control characters always become
+        spaces: a crafted title cannot end its line and start a block of its own (raw
+        HTML after a blank line, a fence, a heading, a table). '&', '<', '>' are
+        HTML-encoded, Markdown punctuation is backslash-escaped, and '|' is escaped so a
+        value cannot add table columns. -Cell is kept for callers; the output is the same.
+    #>
     param([AllowNull()] $Value, [switch] $Cell)
     if ($null -eq $Value) { return '' }
     $s = [string]$Value
     $s = $s.Replace('&', '&amp;').Replace('<', '&lt;').Replace('>', '&gt;')
     # Characters that start Markdown constructs inside inline text.
     $s = [regex]::Replace($s, '([\\`*_\[\]])', '\$1')
-    if ($Cell) {
-        $s = $s.Replace('|', '\|')
-        $s = [regex]::Replace($s, '\r?\n', ' ')
-    }
+    $s = $s.Replace('|', '\|')
+    # Line breaks (also U+0085, U+2028, U+2029) and other control characters.
+    $s = [regex]::Replace($s, '[\x00-\x1F\x7F\u0085\u2028\u2029]+', ' ')
     return $s.Trim()
+}
+
+function ConvertTo-OmniMarkdownCode {
+    <#
+    .SYNOPSIS
+        Internal: text for an inline code span (ids): no backticks (they would end the
+        span), no line breaks or control characters (they would end the line), and '|'
+        escaped inside a table (GFM splits cells on it even inside code spans).
+    #>
+    param([AllowNull()] $Value, [switch] $Cell)
+    if ($null -eq $Value) { return '' }
+    $s = ([string]$Value).Replace('`', '')
+    $s = [regex]::Replace($s, '[\x00-\x1F\x7F\u0085\u2028\u2029]+', ' ').Trim()
+    if ($Cell) { $s = $s.Replace('|', '\|') }
+    return $s
 }
 
 function ConvertTo-OmniMarkdownReport {
@@ -92,7 +117,7 @@ function ConvertTo-OmniMarkdownReport {
             $status = [string]$m.status
             if ($m.skippedReason) { $status = "$status ($($m.skippedReason))" }
             $notPassed = @($m.findings | Where-Object { -not $_.passed }).Count
-            [void]$sb.Append('| ').Append((ConvertTo-OmniMarkdownText $m.name -Cell)).Append(' | `').Append(([string]$m.id).Replace('`', '')).Append('` | ')
+            [void]$sb.Append('| ').Append((ConvertTo-OmniMarkdownText $m.name -Cell)).Append(' | `').Append((ConvertTo-OmniMarkdownCode $m.id -Cell)).Append('` | ')
             [void]$sb.Append((ConvertTo-OmniMarkdownText $m.group -Cell)).Append(' | ').Append((ConvertTo-OmniMarkdownText $status -Cell)).Append(' | ').Append($notPassed).Append(' |').Append($nl)
         }
         [void]$sb.Append($nl)
@@ -110,7 +135,7 @@ function ConvertTo-OmniMarkdownReport {
             [void]$sb.Append('- **Module:** ').Append((ConvertTo-OmniMarkdownText $it.Module)).Append($nl)
             [void]$sb.Append('- **Component:** ').Append((ConvertTo-OmniMarkdownText $f.component)).Append($nl)
             [void]$sb.Append('- **Severity:** ').Append($f.severity).Append(' (').Append($f.severityNative).Append(')').Append($nl)
-            [void]$sb.Append('- **Finding id:** `').Append(([string]$f.id).Replace('`', '')).Append('`').Append($nl)
+            [void]$sb.Append('- **Finding id:** `').Append((ConvertTo-OmniMarkdownCode $f.id)).Append('`').Append($nl)
             if ($f.evidence.detail) { [void]$sb.Append('- **Detail:** ').Append((ConvertTo-OmniMarkdownText $f.evidence.detail -Cell)).Append($nl) }
             if ($f.likelyCause) {
                 $cause = ConvertTo-OmniMarkdownText $f.likelyCause -Cell

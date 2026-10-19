@@ -114,7 +114,34 @@ PowerShell 7 for the same input:
   property. A new schema file (`omnidiag-report.v2.json`) is added; v1 stays published.
 
 OmniDiag reads any `1.x` document (`Import-OmniSession`, `ConvertFrom-OmniReportV1`) and
-refuses other major versions with a clear error. Every change is covered by the golden-file
+refuses other major versions with a clear error.
+
+### Importing reports and saved sessions
+
+`Import-OmniDiagSession` (and the deprecated `Import-OmniSession`) treats every file as
+untrusted input. For a JSON file it either returns a well-formed session or throws one error
+type: `System.IO.InvalidDataException`, error id `OmniDiag.SessionImportInvalid`, category
+`InvalidData`, with a message naming the file and the first problem. It rejects:
+
+* files larger than 64 MB (checked before the file is read) and text nested deeper than
+  100 objects/arrays (checked before the JSON parser runs; brackets inside strings do not count);
+* text that is not one JSON object (truncated or malformed JSON, a top-level array or scalar,
+  an empty file);
+* a `schemaVersion` that is not a string of the form `1.x.y`;
+* a missing `modules` (v1) or `Results` (native session), or `null` there;
+* a member of the wrong JSON type: an array or object where text, a number, or a boolean
+  belongs (`title`, `id`, `name`, `status`, `host.computerName`, ...), and text, a number, or
+  an array where an object (`host`, `scan`, `summary`, `metrics`, `evidence`, a module, a
+  finding) or an array (`modules`, `findings`, `Results`, `Findings`) belongs.
+
+Members that are not documented are ignored, `null` is accepted for optional members, and
+`null` entries in `modules` / `findings` carry no data and are skipped. Byte order marks
+(UTF-8, UTF-16) are honoured; bytes that are not valid UTF-8 are read as U+FFFD. Strings are
+data: nothing in a file is ever evaluated (`$(...)` stays literal text). A key repeated
+with the same spelling keeps its last value (the behavior of the JSON readers of both
+PowerShell editions) and that value is validated like any other; keys that differ only in
+letter case are rejected by the reader.
+Report packages (`.zip`) are read the same way once `data.json` is extracted. Every change is covered by the golden-file
 test, which must be regenerated deliberately (see the header of `ReportFixture.ps1`).
 
 ## Version history

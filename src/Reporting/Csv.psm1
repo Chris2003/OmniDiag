@@ -67,6 +67,35 @@ function ConvertTo-OmniEventTable {
     return @($rows)
 }
 
+function ConvertTo-OmniCsvSafeValue {
+    <#
+    .SYNOPSIS
+        Internal: one CSV cell value with spreadsheet formulas neutralized.
+
+    .DESCRIPTION
+        A cell whose first character is = + - @ TAB CR or LF - also after leading
+        whitespace or quote characters, which spreadsheets skip (' =cmd', '"=cmd') - or
+        whose first non-blank character is a full-width = + - @ is prefixed with a single
+        quote, so it is shown as text and never evaluated. Numbers, booleans, and dates
+        pass through unchanged; anything else (an object or array from an imported
+        session) is rendered as text first, so it cannot smuggle a formula past the
+        check. Quoting of commas, quotes, and line breaks is left to Export-Csv, which
+        quotes every field and doubles embedded quotes.
+    #>
+    param([AllowNull()] $Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Management.Automation.PSObject]) { $Value = $Value.PSObject.BaseObject }
+    if ($Value -is [bool] -or $Value -is [datetime] -or $Value -is [System.DateTimeOffset] -or $Value -is [enum]) { return $Value }
+    if ($Value -is [byte] -or $Value -is [sbyte] -or $Value -is [int16] -or $Value -is [uint16] -or $Value -is [int] -or
+        $Value -is [uint32] -or $Value -is [long] -or $Value -is [uint64] -or $Value -is [double] -or $Value -is [single] -or
+        $Value -is [decimal]) { return $Value }
+    if ($Value -is [string]) { $text = $Value }
+    elseif ($Value -is [System.Collections.IEnumerable]) { $text = (@($Value) | ForEach-Object { [string]$_ }) -join '; ' }
+    else { $text = [string]$Value }
+    if ($text -match '^[\t\r\n]' -or $text -match '^[\s"'']*[=+\-@\uFF1D\uFF0B\uFF0D\uFF20]') { return "'" + $text }
+    return $text
+}
+
 function ConvertTo-OmniCsvSafeRow {
     <#
     .SYNOPSIS
@@ -74,18 +103,17 @@ function ConvertTo-OmniCsvSafeRow {
 
     .DESCRIPTION
         Event messages, provider names, hosts entries, and printer names can be written
-        by any program, so a cell starting with = + - @ (or tab/CR) would run as a
-        formula when the CSV is opened in Excel. Such cells are prefixed with a single
-        quote. Applied only at export, so the GUI grid keeps the raw values.
+        by any program, so a cell starting with = + - @ (or TAB/CR/LF, also after leading
+        whitespace or quotes) would run as a formula when the CSV is opened in Excel.
+        Such cells are prefixed with a single quote (ConvertTo-OmniCsvSafeValue). Applied
+        only at export, so the GUI grid keeps the raw values.
     #>
     param([Parameter(ValueFromPipeline)] [object] $Row)
     process {
         if ($null -eq $Row) { return }
         $copy = [ordered]@{}
         foreach ($p in $Row.PSObject.Properties) {
-            $v = $p.Value
-            if ($v -is [string] -and $v -match '^[=+\-@\t\r]') { $v = "'" + $v }
-            $copy[$p.Name] = $v
+            $copy[$p.Name] = ConvertTo-OmniCsvSafeValue -Value $p.Value
         }
         [pscustomobject]$copy
     }
