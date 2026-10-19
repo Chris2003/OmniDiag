@@ -217,8 +217,15 @@ Describe 'GUI XAML loads under WPF' {
                 # Shortcuts before the shell is ready are ignored, not errors.
                 Invoke-OmniShortcut -Action 'Nav2'
                 Invoke-OmniShortcut -Action 'Scan'
+                # The swap must not re-apply the brushes (same instances before and after).
+                $bgBefore = $w.Resources['BrushWindowBg']
+                $textBefore = $w.Resources['BrushText']
                 Complete-OmniShellLoad
                 [pscustomobject]@{
+                    SameBrushes = [object]::ReferenceEquals($bgBefore, $w.Resources['BrushWindowBg']) -and
+                                  [object]::ReferenceEquals($textBefore, $w.Resources['BrushText'])
+                    ThemeLabel  = [string]$script:OmniUi.Controls.BtnTheme.Content
+                    HighContrast = [bool]$script:OmniUi.HighContrast
                     FrameName   = $frameName
                     Before      = $before
                     After       = [bool]$script:OmniUi.ShellReady
@@ -246,8 +253,15 @@ Describe 'GUI XAML loads under WPF' {
         $r.Bindings | Should -BeGreaterOrEqual 15
         $r.HasStyle | Should -BeTrue
         $r.ShellBrush | Should -BeFalse -Because 'the shell must not shadow the window theme brushes'
-        $r.DarkBg | Should -Be ('#FF' + (Get-OmniThemePalette -Name Dark)['BrushWindowBg'].TrimStart('#')).ToUpperInvariant()
+        $r.SameBrushes | Should -BeTrue -Because 'the shell swap updates the theme controls only, not the brushes'
+        # The controls step still ran: the toggle names the theme it switches to.
+        $expectedLabel = if ($r.HighContrast) { $r.ThemeLabel } else { 'Light Mode' }
+        $r.ThemeLabel | Should -Be $expectedLabel
         $r.BtnScan | Should -BeTrue
+        # In high contrast the brushes are SystemColors, not the Dark palette.
+        if (-not $r.HighContrast) {
+            $r.DarkBg | Should -Be ('#FF' + (Get-OmniThemePalette -Name Dark)['BrushWindowBg'].TrimStart('#')).ToUpperInvariant()
+        }
     }
 
     It 'parses every section fragment on its own and finds its controls (Windows + STA only)' {

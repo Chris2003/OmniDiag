@@ -282,6 +282,70 @@ Describe 'GUI code-behind matches the XAML (cross-platform)' {
         $script:GuiSource | Should -Match 'ShellReadyMs=\$ms'
     }
 
+    It 'routes the startup-file hook through Resolve-OmniOutputPath (devices, pipes, and streams refused)' {
+        $ok = Join-Path $TestDrive 'gui-startup.json'
+        $r = & $script:Gui {
+            param($okPath)
+            $saved = $script:OmniUi
+            try {
+                $script:OmniUi = @{
+                    StartupTimings = $null; StartupMs = 11; ShellReadyMs = 22; FramePaintedUtc = $null
+                    ShellReadyUtc = [DateTime]::UtcNow; Logger = $null; PendingWarnings = [System.Collections.ArrayList]::new()
+                }
+                $refused = @(foreach ($bad in @('\\.\pipe\omnidiag-gui-test', '\\localhost\pipe\omnidiag-gui-test', '\\.\NUL', ($okPath + ':stream'))) {
+                    $threw = $false
+                    try { $null = Write-OmniStartupFile -Path $bad } catch { $threw = $true }
+                    [pscustomobject]@{ Path = $bad; Refused = $threw }
+                })
+                $written = Write-OmniStartupFile -Path $okPath
+                # A honored hook is never silent: queued for the GUI log until it opens.
+                Write-OmniHookWarning -Message 'test hook warning'
+                [pscustomobject]@{ Refused = $refused; Written = $written; Pending = @($script:OmniUi.PendingWarnings) }
+            } finally { $script:OmniUi = $saved }
+        } $ok 2>$null
+        foreach ($x in $r.Refused) { $x.Refused | Should -BeTrue -Because "$($x.Path) must be refused" }
+        $r.Written | Should -Be ([System.IO.Path]::GetFullPath($ok))
+        $doc = Get-Content -LiteralPath $ok -Raw | ConvertFrom-Json
+        $doc.StartupMs | Should -Be 11
+        $doc.ShellReadyMs | Should -Be 22
+        $r.Pending | Should -Be @('test hook warning')
+    }
+
+    It 'never honors a test hook silently (Warn in the GUI log and stderr)' {
+        $ready = [regex]::Match($script:GuiSource, '(?s)function Complete-OmniShellReady \{.*?\n\}\r?\n').Value
+        $ready | Should -Match 'Write-OmniHookWarning -Message "OMNIDIAG_GUI_STARTUP_FILE is set'
+        $ready | Should -Match "Write-OmniHookWarning -Message 'OMNIDIAG_GUI_EXIT_AFTER_RENDER is set"
+        # The file write goes through the output-path check, never straight to the raw value.
+        $file = [regex]::Match($script:GuiSource, '(?s)function Write-OmniStartupFile \{.*?\n\}\r?\n').Value
+        $file | Should -Match 'Resolve-OmniOutputPath -Path \$Path'
+        $file | Should -Match 'WriteAllText\(\$target,'
+        $file | Should -Not -Match 'WriteAllText\(\$Path'
+        $warn = [regex]::Match($script:GuiSource, '(?s)function Write-OmniHookWarning \{.*?\n\}\r?\n').Value
+        $warn | Should -Match "Log\('Warn'"
+        $warn | Should -Match '\[Console\]::Error\.WriteLine'
+        $post = [regex]::Match($script:GuiSource, '(?s)function Invoke-OmniPostRenderSetup \{.*?\n\}\r?\n').Value
+        $post | Should -Match 'PendingWarnings'
+    }
+
+    It 'applies the brushes once: the shell swap updates only the theme controls' {
+        $load = [regex]::Match($script:GuiSource, '(?s)function Complete-OmniShellLoad \{.*?\n\}\r?\n').Value
+        $loadCode = (($load -replace '(?s)<#.*?#>', '') -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+        $loadCode | Should -Match 'Sync-OmniThemeControl'
+        $loadCode | Should -Not -Match 'Sync-OmniEffectiveTheme|Set-OmniEffectiveBrush|Set-OmniTheme'
+        # The combined step (brushes + controls) stays for startup and runtime changes.
+        $sync = [regex]::Match($script:GuiSource, '(?s)function Sync-OmniEffectiveTheme \{.*?\n\}\r?\n').Value
+        $sync | Should -Match 'Set-OmniEffectiveBrush'
+        $sync | Should -Match 'Sync-OmniThemeControl'
+        $brush = [regex]::Match($script:GuiSource, '(?s)function Set-OmniEffectiveBrush \{.*?\n\}\r?\n').Value
+        $brush | Should -Match 'Set-OmniTheme -Window \$ui\.Window -Name HighContrast'
+        $brush | Should -Match '\$ui\.HighContrast = Test-OmniHighContrast'
+        # High contrast keeps following Windows at runtime (both brushes and controls).
+        $factory = [regex]::Match($script:GuiSource, '(?s)function Initialize-OmniMainWindow \{.*?\n\}\r?\n').Value
+        $factory | Should -Match "PropertyName -ne 'HighContrast'"
+        $factory | Should -Match '(?s)add_StaticPropertyChanged.*Add_Activated'
+        ([regex]::Matches($factory, 'Sync-OmniEffectiveTheme')).Count | Should -BeGreaterOrEqual 3
+    }
+
     It 'gives the frame window an accessible, themed loading state' {
         $frame = [regex]::Match($script:GuiSource, '(?s)function New-OmniFrameWindow \{.*?\n\}\r?\n').Value
         $frame | Should -Not -BeNullOrEmpty

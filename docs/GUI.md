@@ -126,6 +126,9 @@ soon the user sees a responsive window instead of nothing.
    styles and KeyBindings are moved onto the frame window (the window's theme brushes win
    over the XAML's Light-palette fallbacks), its x:Names are looked up on the shell root,
    the top bar and navigation handlers are wired, and it becomes the window's Content.
+   The brushes are not applied again here: only the theme-dependent controls are updated
+   (`Sync-OmniThemeControl`); theme toggles and high-contrast changes at runtime apply
+   both (`Sync-OmniEffectiveTheme` = `Set-OmniEffectiveBrush` + `Sync-OmniThemeControl`).
    The next Background callback marks `ShellReady` (`Complete-OmniShellReady`).
 3. **After the shell is ready** (Background): open the GUI log and record the timings, set
    the help tooltip, register the group names, and load the Dashboard's Module Results
@@ -197,7 +200,12 @@ Test hooks used by it (no effect unless set):
 | Variable | Effect |
 |---|---|
 | `OMNIDIAG_GUI_EXIT_AFTER_RENDER=1` | close the window as soon as the shell is ready (the background startup runspace is not started) |
-| `OMNIDIAG_GUI_STARTUP_FILE=<path>` | when the shell is ready, write the timings (StartupMs, ShellReadyMs, process start, first-paint and shell-ready UTC times, all marks) to that file as JSON |
+| `OMNIDIAG_GUI_STARTUP_FILE=<path>` | when the shell is ready, write the timings (StartupMs, ShellReadyMs, process start, first-paint and shell-ready UTC times, all marks) to that file as JSON. The path is checked like every other OmniDiag output (`Resolve-OmniOutputPath`): device paths, named pipes, mailslots, and alternate data streams are refused |
+
+Neither hook is ever silent: when one is honored (or the startup file is refused), the GUI
+writes a Warn line to its log (`OmniDiagData\logs\omnidiag-gui-*.jsonl`) and a line to
+stderr when a console is attached, so a stray variable cannot make the window quietly
+close or write files.
 
 Other startup savings: the shell XAML is read once and parsed from text, and live-region
 announcements are skipped until the window is loaded.
