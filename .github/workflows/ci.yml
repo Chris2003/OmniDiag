@@ -101,7 +101,7 @@ jobs:
           exit $LASTEXITCODE
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-${{ matrix.os }}-${{ matrix.shell }}
           path: test-results/
@@ -128,7 +128,7 @@ jobs:
         run: ./build/Test-NoNetworkRuntime.ps1 -OutputDirectory test-results/no-network
       - name: Upload no-network report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: no-network-report
           path: test-results/no-network/
@@ -155,7 +155,7 @@ jobs:
         run: ./build/Measure-ScanPerformance.ps1 -Runs 3 -BudgetSeconds 60 -OutputDirectory test-results/performance
       - name: Upload performance summary
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: performance-summary
           path: test-results/performance/
@@ -180,7 +180,7 @@ jobs:
           "### Portable package`n`n| Version | Size (KB) | SHA256 |`n|---|---:|---|`n| $($result.Version) | $($result.SizeKB) | ``$($result.Sha256)`` |" |
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
       - name: Upload package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: omnidiag-portable
           path: |
